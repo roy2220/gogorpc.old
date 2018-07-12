@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+option go_package = "github.com/let-z-go/pbrpc/sample";
+
+import "github.com/let-z-go/pbrpc/pbrpc.proto";
+
+message GetNicknameResponse {
+    string name = 1;
+}
+
+service ClientService {
+    rpc GetNickname(pbrpc.Void) returns (GetNicknameResponse);
+}
+
+message SayHelloRequest {
+    string reply_format = 1;
+}
+
+message SayHelloResponse {
+    string reply = 1;
+}
+
+service ServerService {
+    rpc SayHello(SayHelloRequest) returns (SayHelloResponse);
+}

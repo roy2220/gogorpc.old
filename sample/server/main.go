@@ -1,0 +1,30 @@
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/let-z-go/pbrpc"
+	"github.com/let-z-go/pbrpc/sample"
+)
+
+type ServerServiceHandler struct {
+	sample.ServerServiceHandlerBase
+}
+
+func (ServerServiceHandler) SayHello(context_ context.Context, channel pbrpc.Channel, request *sample.SayHelloRequest) (*sample.SayHelloResponse, error) {
+	client := sample.ClientServiceClient{channel, nil}
+	response, _ := client.GetNickname(true)
+
+	response2 := &sample.SayHelloResponse{
+		Reply: fmt.Sprintf(request.ReplyFormat, response.Name),
+	}
+
+	return response2, nil
+}
+
+func main() {
+	channelPolicy := (&pbrpc.ChannelPolicy{}).RegisterServiceHandler(ServerServiceHandler{})
+	server := (&pbrpc.Server{}).Initialize("127.0.0.1:8888", channelPolicy, nil)
+	server.Run()
+}
