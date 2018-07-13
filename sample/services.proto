@@ -5,7 +5,7 @@ option go_package = "github.com/let-z-go/pbrpc/sample";
 import "github.com/let-z-go/pbrpc/pbrpc.proto";
 
 message GetNicknameResponse {
-    string name = 1;
+    string nickname = 1;
 }
 
 service ClientService {

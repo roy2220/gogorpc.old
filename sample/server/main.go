@@ -13,11 +13,11 @@ type ServerServiceHandler struct {
 }
 
 func (ServerServiceHandler) SayHello(context_ context.Context, channel pbrpc.Channel, request *sample.SayHelloRequest) (*sample.SayHelloResponse, error) {
-	client := sample.ClientServiceClient{channel, nil}
+	client := sample.ClientServiceClient{channel, context_}
 	response, _ := client.GetNickname(true)
 
 	response2 := &sample.SayHelloResponse{
-		Reply: fmt.Sprintf(request.ReplyFormat, response.Name),
+		Reply: fmt.Sprintf(request.ReplyFormat, response.Nickname),
 	}
 
 	return response2, nil

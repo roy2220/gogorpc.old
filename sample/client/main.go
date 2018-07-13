@@ -14,7 +14,7 @@ type ClientServiceHandler struct {
 
 func (ClientServiceHandler) GetNickname(context_ context.Context, channel pbrpc.Channel) (*sample.GetNicknameResponse, error) {
 	response := &sample.GetNicknameResponse{
-		Name: "007",
+		Nickname: "007",
 	}
 
 	return response, nil

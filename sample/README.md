@@ -1,5 +1,7 @@
 # Sample
 
+<img src="./sample.svg">
+
 ## Source
 
 - [services.proto](./services.proto)
