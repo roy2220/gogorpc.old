@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"unsafe"
 
 	"github.com/let-z-go/toolkit/delay_pool"
 )
@@ -118,15 +119,10 @@ func (self *ServerChannel) Run(connection net.Conn) error {
 }
 
 type channelBase struct {
-	impl    channelImpl
-	context context.Context
-	stop    context.CancelFunc
-}
-
-func (self *channelBase) Stop() {
-	if self.stop != nil {
-		self.stop()
-	}
+	impl     channelImpl
+	context  context.Context
+	stop     context.CancelFunc
+	userData unsafe.Pointer
 }
 
 func (self *channelBase) CallMethod(
@@ -197,6 +193,16 @@ func (self *channelBase) CallMethodWithoutReturn(
 		autoRetryMethodCall,
 		func(_ IncomingMessage, _ ErrorCode) {},
 	)
+}
+
+func (self *channelBase) Stop() {
+	if self.stop != nil {
+		self.stop()
+	}
+}
+
+func (self *channelBase) UserData() *unsafe.Pointer {
+	return &self.userData
 }
 
 func (self *channelBase) initialize(policy *ChannelPolicy, isClientSide bool, context_ context.Context) *channelBase {

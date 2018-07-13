@@ -3,14 +3,16 @@ package pbrpc
 import (
 	"context"
 	"reflect"
+	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
 )
 
 type Channel interface {
-	Stop()
 	CallMethod(context.Context, string, int32, OutgoingMessage, reflect.Type, bool) (IncomingMessage, error)
 	CallMethodWithoutReturn(context.Context, string, int32, OutgoingMessage, reflect.Type, bool) error
+	Stop()
+	UserData() *unsafe.Pointer
 }
 
 type IncomingMessage interface {
@@ -23,8 +25,9 @@ type OutgoingMessage interface {
 }
 
 type ServiceHandler interface {
-	GetName() string
-	GetMethodTable() MethodTable
+	X_GetName() string
+	X_GetMethodTable() MethodTable
+	X_InterceptMethodCall(int32, context.Context, Channel, IncomingMessage) (OutgoingMessage, ErrorCode)
 }
 
 type MethodTable []struct {

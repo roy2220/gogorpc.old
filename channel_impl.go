@@ -37,7 +37,7 @@ func (self *ChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler)
 		self.serviceHandlers = map[string]ServiceHandler{}
 	}
 
-	self.serviceHandlers[serviceHandler.GetName()] = serviceHandler
+	self.serviceHandlers[serviceHandler.X_GetName()] = serviceHandler
 	return self
 }
 
@@ -738,7 +738,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					continue
 				}
 
-				methodTable := serviceHandler.GetMethodTable()
+				methodTable := serviceHandler.X_GetMethodTable()
 
 				if requestHeader.MethodIndex < 0 || int(requestHeader.MethodIndex) >= len(methodTable) {
 					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorNotImplemented, nil)

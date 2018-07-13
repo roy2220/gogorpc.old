@@ -6,19 +6,22 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/let-z-go/toolkit/logger"
 )
 
 type Server struct {
-	serverAddress string
-	channelPolicy *ChannelPolicy
-	context1      context.Context
-	context2      context.Context
-	stop1         context.CancelFunc
-	stop2         context.CancelFunc
-	openness      int32
+	serverAddress  string
+	channelFactory func() *ServerChannel
+	channelPolicy  *ChannelPolicy
+	context1       context.Context
+	context2       context.Context
+	stop1          context.CancelFunc
+	stop2          context.CancelFunc
+	openness       int32
 }
 
-func (self *Server) Initialize(serverAddress string, channelPolicy *ChannelPolicy, context_ context.Context) *Server {
+func (self *Server) Initialize(serverAddress string, channelFactory func() *ServerChannel, channelPolicy *ChannelPolicy, context_ context.Context) *Server {
 	if self.openness != 0 {
 		panic(errors.New("pbrpc: server already initialized"))
 	}
@@ -28,6 +31,12 @@ func (self *Server) Initialize(serverAddress string, channelPolicy *ChannelPolic
 	}
 
 	self.serverAddress = serverAddress
+
+	if channelFactory == nil {
+		channelFactory = func() *ServerChannel { return &ServerChannel{} }
+	}
+
+	self.channelFactory = channelFactory
 	self.channelPolicy = channelPolicy.Validate()
 
 	if context_ == nil {
@@ -82,12 +91,14 @@ func (self *Server) Run() error {
 			break
 		}
 
+		channel := self.channelFactory().Initialize(self.channelPolicy, self.context1)
 		wg.Add(1)
-		go handleConnection(self.channelPolicy, self.context1, connection, &wg)
+		go handleConnection(channel, connection, &self.channelPolicy.Logger, &wg)
 	}
 
 	listener.Close()
 	self.serverAddress = ""
+	self.channelFactory = nil
 	self.channelPolicy = nil
 	self.context1 = nil
 	self.context2 = nil
@@ -116,9 +127,8 @@ const acceptTimeoutOfServer = 2 * time.Second
 
 var defaultServerAddress = "127.0.0.1:8888"
 
-func handleConnection(channelPolicy *ChannelPolicy, context_ context.Context, connection net.Conn, wg *sync.WaitGroup) {
-	channel := (&ServerChannel{}).Initialize(channelPolicy, context_)
+func handleConnection(channel *ServerChannel, connection net.Conn, logger_ *logger.Logger, wg *sync.WaitGroup) {
 	e := channel.Run(connection)
-	channelPolicy.Logger.Infof("connection handling: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
+	logger_.Infof("connection handling: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
 	wg.Done()
 }

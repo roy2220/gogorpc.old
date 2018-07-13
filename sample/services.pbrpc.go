@@ -14,14 +14,18 @@ import (
 
 // ClientService ///////////////////////////////////////////////////////////////
 
+const (
+    ClientService_GetNickname = 0
+)
+
 type ClientServiceClient struct {
     Channel pbrpc.Channel
     Context context.Context
 }
 
 func (self ClientServiceClient) GetNickname(autoRetry bool) (*GetNicknameResponse, error) {
-    responseType := methodTableOfClientService[0].ResponseType
-    response, e := self.Channel.CallMethod(self.Context, clientServiceName, 0, &pbrpc.Void{}, responseType, autoRetry)
+    responseType := methodTableOfClientService[ClientService_GetNickname].ResponseType
+    response, e := self.Channel.CallMethod(self.Context, clientServiceName, ClientService_GetNickname, &pbrpc.Void{}, responseType, autoRetry)
 
     if e != nil {
         return nil, e
@@ -32,8 +36,9 @@ func (self ClientServiceClient) GetNickname(autoRetry bool) (*GetNicknameRespons
 
 type ClientServiceHandlerBase struct {}
 
-func (ClientServiceHandlerBase) GetName() string { return clientServiceName }
-func (ClientServiceHandlerBase) GetMethodTable() pbrpc.MethodTable { return methodTableOfClientService }
+func (ClientServiceHandlerBase) X_GetName() string { return clientServiceName }
+func (ClientServiceHandlerBase) X_GetMethodTable() pbrpc.MethodTable { return methodTableOfClientService }
+func (ClientServiceHandlerBase) X_InterceptMethodCall(int32, context.Context, pbrpc.Channel, pbrpc.IncomingMessage) (pbrpc.OutgoingMessage, pbrpc.ErrorCode) { return nil, 0 }
 
 var _ = pbrpc.ServiceHandler(ClientServiceHandlerBase{})
 
@@ -43,16 +48,29 @@ var _ = pbrpc.ServiceHandler(ClientServiceHandlerBase{})
 //     ClientServiceHandlerBase
 // }
 //
+// func (ClientServiceHandler) X_InterceptMethodCall(methodIndex int32, context_ context.Context, channel pbrpc.Channel, request pbrpc.IncomingMessage) (pbrpc.OutgoingMessage, pbrpc.ErrorCode)
 // func (ClientServiceHandler) GetNickname(context_ context.Context, channel pbrpc.Channel) (*GetNicknameResponse, error)
 
 const clientServiceName = "CLIENT"
 
 var methodTableOfClientService = pbrpc.MethodTable{
-    /* [0]: ClientService.GetNickname */ {
+    /* ClientService.GetNickname */ {
         reflect.TypeOf(pbrpc.Void{}),
         reflect.TypeOf(GetNicknameResponse{}),
 
-        func(serviceHandler pbrpc.ServiceHandler, context_ context.Context, channel pbrpc.Channel, _ pbrpc.IncomingMessage) (pbrpc.OutgoingMessage, pbrpc.ErrorCode) {
+        func(serviceHandler pbrpc.ServiceHandler, context_ context.Context, channel pbrpc.Channel, request pbrpc.IncomingMessage) (pbrpc.OutgoingMessage, pbrpc.ErrorCode) {
+            {
+                response, errorCode := serviceHandler.X_InterceptMethodCall(ClientService_GetNickname, context_, channel, request)
+
+                if errorCode != 0 {
+                    return nil, errorCode
+                }
+
+                if response != nil {
+                    return response, 0
+                }
+            }
+
             methodHandler, ok := serviceHandler.(interface { GetNickname(context.Context, pbrpc.Channel) (*GetNicknameResponse, error) })
 
             if !ok {
@@ -76,14 +94,18 @@ var methodTableOfClientService = pbrpc.MethodTable{
 
 // ServerService ///////////////////////////////////////////////////////////////
 
+const (
+    ServerService_SayHello = 0
+)
+
 type ServerServiceClient struct {
     Channel pbrpc.Channel
     Context context.Context
 }
 
 func (self ServerServiceClient) SayHello(request *SayHelloRequest, autoRetry bool) (*SayHelloResponse, error) {
-    responseType := methodTableOfServerService[0].ResponseType
-    response, e := self.Channel.CallMethod(self.Context, serverServiceName, 0, request, responseType, autoRetry)
+    responseType := methodTableOfServerService[ServerService_SayHello].ResponseType
+    response, e := self.Channel.CallMethod(self.Context, serverServiceName, ServerService_SayHello, request, responseType, autoRetry)
 
     if e != nil {
         return nil, e
@@ -94,8 +116,9 @@ func (self ServerServiceClient) SayHello(request *SayHelloRequest, autoRetry boo
 
 type ServerServiceHandlerBase struct {}
 
-func (ServerServiceHandlerBase) GetName() string { return serverServiceName }
-func (ServerServiceHandlerBase) GetMethodTable() pbrpc.MethodTable { return methodTableOfServerService }
+func (ServerServiceHandlerBase) X_GetName() string { return serverServiceName }
+func (ServerServiceHandlerBase) X_GetMethodTable() pbrpc.MethodTable { return methodTableOfServerService }
+func (ServerServiceHandlerBase) X_InterceptMethodCall(int32, context.Context, pbrpc.Channel, pbrpc.IncomingMessage) (pbrpc.OutgoingMessage, pbrpc.ErrorCode) { return nil, 0 }
 
 var _ = pbrpc.ServiceHandler(ServerServiceHandlerBase{})
 
@@ -105,16 +128,29 @@ var _ = pbrpc.ServiceHandler(ServerServiceHandlerBase{})
 //     ServerServiceHandlerBase
 // }
 //
+// func (ServerServiceHandler) X_InterceptMethodCall(methodIndex int32, context_ context.Context, channel pbrpc.Channel, request pbrpc.IncomingMessage) (pbrpc.OutgoingMessage, pbrpc.ErrorCode)
 // func (ServerServiceHandler) SayHello(context_ context.Context, channel pbrpc.Channel, request *SayHelloRequest) (*SayHelloResponse, error)
 
 const serverServiceName = "SERVER"
 
 var methodTableOfServerService = pbrpc.MethodTable{
-    /* [0]: ServerService.SayHello */ {
+    /* ServerService.SayHello */ {
         reflect.TypeOf(SayHelloRequest{}),
         reflect.TypeOf(SayHelloResponse{}),
 
         func(serviceHandler pbrpc.ServiceHandler, context_ context.Context, channel pbrpc.Channel, request pbrpc.IncomingMessage) (pbrpc.OutgoingMessage, pbrpc.ErrorCode) {
+            {
+                response, errorCode := serviceHandler.X_InterceptMethodCall(ServerService_SayHello, context_, channel, request)
+
+                if errorCode != 0 {
+                    return nil, errorCode
+                }
+
+                if response != nil {
+                    return response, 0
+                }
+            }
+
             methodHandler, ok := serviceHandler.(interface { SayHello(context.Context, pbrpc.Channel, *SayHelloRequest) (*SayHelloResponse, error) })
 
             if !ok {
