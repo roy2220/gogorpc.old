@@ -1,4 +1,4 @@
-# PBRPC
+# pbrpc
 
 Lightweight RPC framework based on Protocol Buffers for Go
 
@@ -12,10 +12,10 @@ Lightweight RPC framework based on Protocol Buffers for Go
 
 ```bash
 # install library
-go get -v github.com/let-z-go/pbrpc
+go get -u -v github.com/let-z-go/pbrpc
 
 # install protoc-gen-gogofaster
-go get -v github.com/gogo/protobuf/protoc-gen-gogofaster
+go get -u -v github.com/gogo/protobuf/protoc-gen-gogofaster
 
 # install protoc-gen-pbrpc
 pip install -U git+https://github.com/let-z-go/protoc-gen-pbrpc

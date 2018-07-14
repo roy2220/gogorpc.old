@@ -17,7 +17,7 @@ func TestServer(t *testing.T) {
 		Logger:             *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
 	}
 
-	s := (&Server{}).Initialize("", cp1, nil)
+	s := (&Server{}).Initialize("", nil, cp1, nil)
 	var wg sync.WaitGroup
 	wg.Add(1)
 
@@ -36,8 +36,6 @@ func TestServer(t *testing.T) {
 			c.impl.transport.connection.Close()
 			time.Sleep(time.Second)
 			s.Stop(true)
-			time.Sleep(3 * time.Second)
-			c.Stop()
 		}()
 
 		time.Sleep(time.Second / 2)

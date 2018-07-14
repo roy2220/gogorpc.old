@@ -71,7 +71,7 @@ func (self *ClientChannel) Run() error {
 			continue
 		}
 
-		self.serverAddresses.Reset(nil, 9, self.impl.getTimeout())
+		self.serverAddresses.Reset(nil, 0, self.impl.getTimeout()/3)
 		e = self.impl.dispatch(self.context)
 
 		if e != nil {
