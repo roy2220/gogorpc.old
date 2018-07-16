@@ -21,13 +21,13 @@ const (
 )
 
 type Error struct {
-	isInitiative bool
-	code         ErrorCode
-	context      string
+	isPassive bool
+	code      ErrorCode
+	context   string
 }
 
-func (self Error) IsInitiative() bool {
-	return self.isInitiative
+func (self Error) IsPassive() bool {
+	return self.isPassive
 }
 
 func (self Error) GetCode() ErrorCode {
@@ -78,11 +78,7 @@ func RegisterError(errorCode ErrorCode, errorCodeName string, errorDescription s
 }
 
 func MakeError(errorCode ErrorCode) error {
-	if errorCode <= ErrorUserDefined {
-		panic(fmt.Errorf("pbrpc: error reserved: errorCode=%#v", errorCode))
-	}
-
-	return Error{true, errorCode, ""}
+	return Error{false, errorCode, ""}
 }
 
 var errorTable = map[ErrorCode][2]string{

@@ -91,9 +91,14 @@ func (self *Server) Run() error {
 			break
 		}
 
-		channel := self.channelFactory().Initialize(self.channelPolicy, self.context1)
+		channel := self.channelFactory().Initialize(self.channelPolicy, connection, self.context1)
 		wg.Add(1)
-		go handleConnection(channel, connection, &self.channelPolicy.Logger, &wg)
+
+		go func(logger_ *logger.Logger) {
+			e := channel.Run()
+			logger_.Infof("connection handling: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
+			wg.Done()
+		}(&self.channelPolicy.Logger)
 	}
 
 	listener.Close()
@@ -126,9 +131,3 @@ func (self *Server) Stop(force bool) {
 const acceptTimeoutOfServer = 2 * time.Second
 
 var defaultServerAddress = "127.0.0.1:8888"
-
-func handleConnection(channel *ServerChannel, connection net.Conn, logger_ *logger.Logger, wg *sync.WaitGroup) {
-	e := channel.Run(connection)
-	logger_.Infof("connection handling: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
-	wg.Done()
-}

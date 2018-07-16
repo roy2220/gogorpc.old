@@ -21,7 +21,7 @@ message Handshake {
 message RequestHeader {
     int32 sequence_number = 1;
     string service_name = 2;
-    int32 method_index = 3;
+    string method_name = 3;
 }
 
 enum ErrorCode {

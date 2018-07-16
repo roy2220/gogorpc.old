@@ -141,7 +141,7 @@ func (self *channelImpl) close() {
 }
 
 func (self *channelImpl) connect(context_ context.Context, serverAddress string) error {
-	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", representChannelID(self.id), serverAddress)
+	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", channelIDToString(self.id), serverAddress)
 	self.setState(channelConnecting)
 	var transport_ transport
 
@@ -206,7 +206,7 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 	self.transport.close()
 	self.transport = transport_
 	self.setState(channelConnected)
-	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, channelIDToString(&id), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
@@ -302,7 +302,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn) e
 	self.transport.close()
 	self.transport = transport_
 	self.setState(channelAccepted)
-	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, channelIDToString(&id), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
@@ -331,19 +331,19 @@ func (self *channelImpl) dispatch(context_ context.Context) error {
 func (self *channelImpl) callMethod(
 	context_ context.Context,
 	serviceName string,
-	methodIndex int32,
+	methodName string,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 	callback func(IncomingMessage, ErrorCode),
 ) error {
 	if self.isClosed() {
-		return Error{false, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodIndex), request)}
+		return Error{true, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
 	}
 
 	methodCall_ := methodCall{
 		serviceName:  serviceName,
-		methodIndex:  methodIndex,
+		methodName:   methodName,
 		request:      request,
 		responseType: responseType,
 		autoRetry:    autoRetryMethodCall,
@@ -352,7 +352,7 @@ func (self *channelImpl) callMethod(
 
 	if e := self.dequeOfMethodCalls.AppendNode(context_, &methodCall_.listNode); e != nil {
 		if e == semaphore.SemaphoreClosedError {
-			e = Error{false, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodIndex), request)}
+			e = Error{true, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
 		}
 
 		return e
@@ -425,7 +425,7 @@ func (self *channelImpl) setState(newState channelState) {
 	}
 
 	atomic.StoreInt32(&self.state, int32(newState))
-	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", representChannelID(self.id), oldState, newState)
+	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", channelIDToString(self.id), oldState, newState)
 
 	if errorCode != 0 {
 		methodCallsAreRetriable := errorCode == ErrorChannelBroken
@@ -571,7 +571,7 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 				requestHeader := protocol.RequestHeader{
 					SequenceNumber: sequenceNumber,
 					ServiceName:    methodCall_.serviceName,
-					MethodIndex:    methodCall_.methodIndex,
+					MethodName:     methodCall_.methodName,
 				}
 
 				requestHeaderSize := requestHeader.Size()
@@ -739,13 +739,13 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 				}
 
 				methodTable := serviceHandler.X_GetMethodTable()
+				methodRecord, ok := methodTable.Search(requestHeader.MethodName)
 
-				if requestHeader.MethodIndex < 0 || int(requestHeader.MethodIndex) >= len(methodTable) {
+				if !ok {
 					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorNotImplemented, nil)
 					continue
 				}
 
-				methodRecord := methodTable[requestHeader.MethodIndex]
 				request := reflect.New(methodRecord.RequestType).Interface().(IncomingMessage)
 
 				if e := request.Unmarshal(data2[2+messageHeaderSize:]); e != nil {
@@ -753,13 +753,46 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					continue
 				}
 
+				backup := struct {
+					holder               Channel
+					logger               *logger.Logger
+					id                   *uuid.UUID
+					dequeOfResultReturns *deque.Deque
+					sequenceNumber       int32
+					serviceName          string
+					methodName           string
+				}{
+					holder:               self.holder,
+					logger:               &self.policy.Logger,
+					id:                   self.id,
+					dequeOfResultReturns: self.dequeOfResultReturns,
+					sequenceNumber:       requestHeader.SequenceNumber,
+					serviceName:          requestHeader.ServiceName,
+					methodName:           requestHeader.MethodName,
+				}
+
 				self.wgOfPendingResultReturns.Add(1)
 
-				go func(dequeOfResultReturns *deque.Deque, sequenceNumber int32) {
-					response, errorCode := methodRecord.Handler(serviceHandler, context_, self.holder, request)
-					returnResult(dequeOfResultReturns, sequenceNumber, errorCode, response)
+				go func() {
+					response, errorCode := serviceHandler.X_InterceptMethodCall(methodRecord, context_, backup.holder, request)
+
+					if errorCode == 0 && response == nil {
+						var e error
+						response, e = methodRecord.Handler(serviceHandler, context_, backup.holder, request)
+
+						if e != nil {
+							if e2, ok := e.(Error); ok && !e2.isPassive {
+								errorCode = e2.code
+							} else {
+								backup.logger.Errorf("internal server error: id=%#v, methodID=%v, request=%#v, e=%#v", channelIDToString(backup.id), representMethodID(backup.serviceName, backup.methodName), request, e.Error())
+								errorCode = ErrorInternalServer
+							}
+						}
+					}
+
+					returnResult(backup.dequeOfResultReturns, backup.sequenceNumber, errorCode, response)
 					self.wgOfPendingResultReturns.Done()
-				}(self.dequeOfResultReturns, requestHeader.SequenceNumber)
+				}()
 			case protocol.MESSAGE_RESPONSE:
 				if e := responseHeader.Unmarshal(data2[2 : 2+messageHeaderSize]); e != nil {
 					return IllFormedMessageError
@@ -782,7 +815,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 						methodCall_.callback(nil, ErrorCode(responseHeader.ErrorCode))
 					}
 				} else {
-					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", self.id.Base64(), responseHeader)
+					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", channelIDToString(self.id), responseHeader)
 				}
 			case protocol.MESSAGE_HEARTBEAT:
 				if e := heartbeat.Unmarshal(data2[2 : 2+messageHeaderSize]); e != nil {
@@ -848,7 +881,7 @@ func (self channelState) GoString() string {
 type methodCall struct {
 	listNode     list.ListNode
 	serviceName  string
-	methodIndex  int32
+	methodName   string
 	request      OutgoingMessage
 	responseType reflect.Type
 	autoRetry    bool
@@ -887,7 +920,7 @@ var channelState2ErrorCode = [...]ErrorCode{
 	channelClosed:       ErrorChannelTimedOut,
 }
 
-func representChannelID(channelID *uuid.UUID) string {
+func channelIDToString(channelID *uuid.UUID) string {
 	if channelID == nil {
 		return ""
 	}
@@ -895,8 +928,8 @@ func representChannelID(channelID *uuid.UUID) string {
 	return channelID.Base64()
 }
 
-func representMethodID(serviceName string, methodIndex int32) string {
-	return fmt.Sprintf("<%v[%v]>", serviceName, methodIndex)
+func representMethodID(serviceName string, methodName string) string {
+	return fmt.Sprintf("<%v.%v>", serviceName, methodName)
 }
 
 func returnResult(dequeOfResultReturns *deque.Deque, sequenceNumber int32, errorCode ErrorCode, response OutgoingMessage) error {

@@ -17,7 +17,7 @@ type ClientChannel struct {
 }
 
 func (self *ClientChannel) Initialize(policy *ChannelPolicy, serverAddresses []string, context_ context.Context) *ClientChannel {
-	self.initialize(policy, true, context_)
+	self.initialize(self, policy, true, context_)
 
 	if serverAddresses == nil {
 		serverAddresses = []string{defaultServerAddress}
@@ -96,25 +96,28 @@ func (self *ClientChannel) Run() error {
 
 type ServerChannel struct {
 	channelBase
+	connection net.Conn
 }
 
-func (self *ServerChannel) Initialize(policy *ChannelPolicy, context_ context.Context) *ServerChannel {
-	self.initialize(policy, false, context_)
+func (self *ServerChannel) Initialize(policy *ChannelPolicy, connection net.Conn, context_ context.Context) *ServerChannel {
+	self.initialize(self, policy, false, context_)
+	self.connection = connection
 	return self
 }
 
-func (self *ServerChannel) Run(connection net.Conn) error {
+func (self *ServerChannel) Run() error {
 	if self.impl.isClosed() {
 		return nil
 	}
 
-	if e := self.impl.accept(self.context, connection); e != nil {
+	if e := self.impl.accept(self.context, self.connection); e != nil {
 		self.impl.close()
 		return e
 	}
 
 	e := self.impl.dispatch(self.context)
 	self.impl.close()
+	self.connection = nil
 	return e
 }
 
@@ -125,10 +128,16 @@ type channelBase struct {
 	userData unsafe.Pointer
 }
 
+func (self *channelBase) Stop() {
+	if self.stop != nil {
+		self.stop()
+	}
+}
+
 func (self *channelBase) CallMethod(
 	context_ context.Context,
 	serviceName string,
-	methodIndex int32,
+	methodName string,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
@@ -138,7 +147,7 @@ func (self *channelBase) CallMethod(
 
 	callback := func(response2 IncomingMessage, errorCode ErrorCode) {
 		if errorCode != 0 {
-			error_ <- Error{false, errorCode, fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodIndex), request)}
+			error_ <- Error{true, errorCode, fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
 			return
 		}
 
@@ -149,7 +158,7 @@ func (self *channelBase) CallMethod(
 	if e := self.impl.callMethod(
 		context_,
 		serviceName,
-		methodIndex,
+		methodName,
 		request,
 		responseType,
 		autoRetryMethodCall,
@@ -179,7 +188,7 @@ func (self *channelBase) CallMethod(
 func (self *channelBase) CallMethodWithoutReturn(
 	context_ context.Context,
 	serviceName string,
-	methodIndex int32,
+	methodName string,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
@@ -187,7 +196,7 @@ func (self *channelBase) CallMethodWithoutReturn(
 	return self.impl.callMethod(
 		context_,
 		serviceName,
-		methodIndex,
+		methodName,
 		request,
 		responseType,
 		autoRetryMethodCall,
@@ -195,18 +204,12 @@ func (self *channelBase) CallMethodWithoutReturn(
 	)
 }
 
-func (self *channelBase) Stop() {
-	if self.stop != nil {
-		self.stop()
-	}
-}
-
 func (self *channelBase) UserData() *unsafe.Pointer {
 	return &self.userData
 }
 
-func (self *channelBase) initialize(policy *ChannelPolicy, isClientSide bool, context_ context.Context) *channelBase {
-	self.impl.initialize(self, policy, isClientSide)
+func (self *channelBase) initialize(super Channel, policy *ChannelPolicy, isClientSide bool, context_ context.Context) *channelBase {
+	self.impl.initialize(super, policy, isClientSide)
 
 	if context_ == nil {
 		context_ = context.Background()
