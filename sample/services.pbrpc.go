@@ -21,13 +21,13 @@ const (
 )
 
 type ClientServiceClient struct {
-    Channel pbrpc.Channel
+    MethodCaller pbrpc.MethodCaller
     Context context.Context
 }
 
 func (self ClientServiceClient) GetNickname(autoRetry bool) (*GetNicknameResponse, error) {
     methodRecord := &methodTableOfClientService[ClientService_GetNickname]
-    response, e := self.Channel.CallMethod(self.Context, ClientServiceName, methodRecord.Name, &pbrpc.Void{}, methodRecord.ResponseType, autoRetry)
+    response, e := self.MethodCaller.CallMethod(self.Context, ClientServiceName, methodRecord.Name, &pbrpc.Void{}, methodRecord.ResponseType, autoRetry)
 
     if e != nil {
         return nil, e
@@ -81,13 +81,13 @@ const (
 )
 
 type ServerServiceClient struct {
-    Channel pbrpc.Channel
+    MethodCaller pbrpc.MethodCaller
     Context context.Context
 }
 
 func (self ServerServiceClient) SayHello(request *SayHelloRequest, autoRetry bool) (*SayHelloResponse, error) {
     methodRecord := &methodTableOfServerService[ServerService_SayHello]
-    response, e := self.Channel.CallMethod(self.Context, ServerServiceName, methodRecord.Name, request, methodRecord.ResponseType, autoRetry)
+    response, e := self.MethodCaller.CallMethod(self.Context, ServerServiceName, methodRecord.Name, request, methodRecord.ResponseType, autoRetry)
 
     if e != nil {
         return nil, e

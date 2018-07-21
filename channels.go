@@ -110,14 +110,18 @@ func (self *ServerChannel) Run() error {
 		return nil
 	}
 
-	if e := self.impl.accept(self.context, self.connection); e != nil {
+	cleanup := func() {
 		self.impl.close()
+		self.connection = nil
+	}
+
+	if e := self.impl.accept(self.context, self.connection); e != nil {
+		cleanup()
 		return e
 	}
 
 	e := self.impl.dispatch(self.context)
-	self.impl.close()
-	self.connection = nil
+	cleanup()
 	return e
 }
 

@@ -24,7 +24,7 @@ func (ServerServiceHandler) SayHello(context_ context.Context, channel pbrpc.Cha
 }
 
 func main() {
-	channelPolicy := (&pbrpc.ChannelPolicy{}).RegisterServiceHandler(ServerServiceHandler{})
-	server := (&pbrpc.Server{}).Initialize("127.0.0.1:8888", nil, channelPolicy, nil)
+	serverPolicy := (&pbrpc.ServerPolicy{}).RegisterServiceHandler(ServerServiceHandler{})
+	server := (&pbrpc.Server{}).Initialize(serverPolicy, "127.0.0.1:8888", "", nil)
 	server.Run()
 }

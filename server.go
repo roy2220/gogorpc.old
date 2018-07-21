@@ -11,33 +11,29 @@ import (
 )
 
 type Server struct {
-	serverAddress  string
-	channelFactory func() *ServerChannel
-	channelPolicy  *ChannelPolicy
-	context1       context.Context
-	context2       context.Context
-	stop1          context.CancelFunc
-	stop2          context.CancelFunc
-	openness       int32
+	policy           *ServerPolicy
+	bindAddress      string
+	discoveryAddress string
+	context1         context.Context
+	context2         context.Context
+	stop1            context.CancelFunc
+	stop2            context.CancelFunc
+	openness         int32
 }
 
-func (self *Server) Initialize(serverAddress string, channelFactory func() *ServerChannel, channelPolicy *ChannelPolicy, context_ context.Context) *Server {
+func (self *Server) Initialize(policy *ServerPolicy, bindAddress string, discoveryAddress string, context_ context.Context) *Server {
 	if self.openness != 0 {
 		panic(errors.New("pbrpc: server already initialized"))
 	}
 
-	if serverAddress == "" {
-		serverAddress = defaultServerAddress
+	self.policy = policy.Validate()
+
+	if bindAddress == "" {
+		bindAddress = defaultServerAddress
 	}
 
-	self.serverAddress = serverAddress
-
-	if channelFactory == nil {
-		channelFactory = func() *ServerChannel { return &ServerChannel{} }
-	}
-
-	self.channelFactory = channelFactory
-	self.channelPolicy = channelPolicy.Validate()
+	self.bindAddress = bindAddress
+	self.discoveryAddress = discoveryAddress
 
 	if context_ == nil {
 		context_ = context.Background()
@@ -54,13 +50,43 @@ func (self *Server) Run() error {
 		return nil
 	}
 
+	cleanup := func() {
+		self.policy = nil
+		self.bindAddress = ""
+		self.discoveryAddress = ""
+		self.openness = -1
+	}
+
 	var listener *net.TCPListener
 
-	if listener2, e := net.Listen("tcp", self.serverAddress); e == nil {
+	if listener2, e := net.Listen("tcp", self.bindAddress); e == nil {
 		listener = listener2.(*net.TCPListener)
 	} else {
-		self.openness = -1
+		cleanup()
 		return e
+	}
+
+	var serviceNames []string
+	var address string
+
+	if self.policy.Registry != nil {
+		serviceNames = nil
+
+		for serviceName := range self.policy.Channel.serviceHandlers {
+			serviceNames = append(serviceNames, serviceName)
+		}
+
+		address = self.discoveryAddress
+
+		if address == "" {
+			address = listener.Addr().String()
+		}
+
+		if e := self.policy.Registry.AddServiceProviders(serviceNames, address, self.policy.Weight); e != nil {
+			listener.Close()
+			cleanup()
+			return e
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -91,25 +117,22 @@ func (self *Server) Run() error {
 			break
 		}
 
-		channel := self.channelFactory().Initialize(self.channelPolicy, connection, self.context1)
+		channel := self.policy.ChannelFactory().Initialize(&self.policy.Channel, connection, self.context1)
 		wg.Add(1)
 
 		go func(logger_ *logger.Logger) {
 			e := channel.Run()
-			logger_.Infof("connection handling: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
+			logger_.Infof("channel run-out: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
 			wg.Done()
-		}(&self.channelPolicy.Logger)
+		}(&self.policy.Channel.Logger)
+	}
+
+	if self.policy.Registry != nil {
+		self.policy.Registry.RemoveServiceProviders(serviceNames, address, self.policy.Weight)
 	}
 
 	listener.Close()
-	self.serverAddress = ""
-	self.channelFactory = nil
-	self.channelPolicy = nil
-	self.context1 = nil
-	self.context2 = nil
-	self.stop1 = nil
-	self.stop2 = nil
-	self.openness = -1
+	cleanup()
 	wg.Wait()
 	return e
 }
@@ -128,6 +151,34 @@ func (self *Server) Stop(force bool) {
 	}
 }
 
-const acceptTimeoutOfServer = 2 * time.Second
+type ServerPolicy struct {
+	Registry       *Registry
+	Weight         int32
+	ChannelFactory func() *ServerChannel
+	Channel        ChannelPolicy
+	validateOnce   sync.Once
+}
 
-var defaultServerAddress = "127.0.0.1:8888"
+func (self *ServerPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ServerPolicy {
+	self.Channel.RegisterServiceHandler(serviceHandler)
+	return self
+}
+
+func (self *ServerPolicy) Validate() *ServerPolicy {
+	self.validateOnce.Do(func() {
+		if self.Registry != nil {
+			if self.Weight < 1 {
+				self.Weight = defaultWeight
+			}
+		}
+
+		if self.ChannelFactory == nil {
+			self.ChannelFactory = func() *ServerChannel { return &ServerChannel{} }
+		}
+	})
+
+	return self
+}
+
+const acceptTimeoutOfServer = 2 * time.Second
+const defaultWeight = 5

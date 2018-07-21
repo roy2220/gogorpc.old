@@ -9,11 +9,15 @@ import (
 )
 
 type Channel interface {
+	MethodCaller
 	Run() error
 	Stop()
+	UserData() *unsafe.Pointer
+}
+
+type MethodCaller interface {
 	CallMethod(context.Context, string, string, OutgoingMessage, reflect.Type, bool) (IncomingMessage, error)
 	CallMethodWithoutReturn(context.Context, string, string, OutgoingMessage, reflect.Type, bool) error
-	UserData() *unsafe.Pointer
 }
 
 type IncomingMessage interface {

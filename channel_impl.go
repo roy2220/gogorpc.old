@@ -181,6 +181,8 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 		return e
 	}
 
+	handshake.Reset()
+
 	if e := handshake.Unmarshal(data); e != nil {
 		transport_.close()
 		return e
@@ -291,8 +293,8 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn) e
 
 	self.id = &id
 	self.timeout = time.Duration(handshake.Timeout) * time.Millisecond
-	self.incomingWindowSize = handshake.IncomingWindowSize
-	self.outgoingWindowSize = handshake.OutgoingWindowSize
+	self.incomingWindowSize = handshake.OutgoingWindowSize
+	self.outgoingWindowSize = handshake.IncomingWindowSize
 
 	if e := self.dequeOfMethodCalls.CommitNodeRemovals(self.outgoingWindowSize - minChannelWindowSize); e != nil {
 		transport_.close()
@@ -341,14 +343,13 @@ func (self *channelImpl) callMethod(
 		return Error{true, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
 	}
 
-	methodCall_ := methodCall{
-		serviceName:  serviceName,
-		methodName:   methodName,
-		request:      request,
-		responseType: responseType,
-		autoRetry:    autoRetryMethodCall,
-		callback:     callback,
-	}
+	methodCall_ := poolOfMethodCalls.Get().(*methodCall)
+	methodCall_.serviceName = serviceName
+	methodCall_.methodName = methodName
+	methodCall_.request = request
+	methodCall_.responseType = responseType
+	methodCall_.autoRetry = autoRetryMethodCall
+	methodCall_.callback = callback
 
 	if e := self.dequeOfMethodCalls.AppendNode(context_, &methodCall_.listNode); e != nil {
 		if e == semaphore.SemaphoreClosedError {
@@ -443,6 +444,7 @@ func (self *channelImpl) setState(newState channelState) {
 					retriedMethodCallCount++
 				} else {
 					methodCall_.callback(nil, errorCode)
+					poolOfMethodCalls.Put(methodCall_)
 				}
 
 				return true
@@ -450,8 +452,15 @@ func (self *channelImpl) setState(newState channelState) {
 
 			self.dequeOfMethodCalls.DiscardNodeRemovals(list_, retriedMethodCallCount)
 			atomic.StoreInt32(&self.pendingResultReturnCount, 0)
-			self.dequeOfResultReturns.Close(nil)
+			list_.Initialize()
+			self.dequeOfResultReturns.Close(list_)
 			self.dequeOfResultReturns = (&deque.Deque{}).Initialize(math.MaxInt32)
+			getListNode := list_.GetNodesSafely()
+
+			for listNode := getListNode(); listNode != nil; listNode = getListNode() {
+				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
+				poolOfResultReturns.Put(resultReturn_)
+			}
 		} else {
 			self.holder = nil
 			self.policy = nil
@@ -461,11 +470,12 @@ func (self *channelImpl) setState(newState channelState) {
 			{
 				list_ := (&list.List{}).Initialize()
 				self.dequeOfMethodCalls.Close(list_)
-				getListNode := list_.GetNodes()
+				getListNode := list_.GetNodesSafely()
 
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
 					methodCall_.callback(nil, errorCode2)
+					poolOfMethodCalls.Put(methodCall_)
 				}
 			}
 
@@ -479,11 +489,22 @@ func (self *channelImpl) setState(newState channelState) {
 					methodCall_.callback(nil, errorCode)
 				}
 
+				poolOfMethodCalls.Put(methodCall_)
 				return true
 			})
 
-			self.dequeOfResultReturns.Close(nil)
-			self.dequeOfResultReturns = nil
+			{
+				list_ := (&list.List{}).Initialize()
+				self.dequeOfResultReturns.Close(list_)
+				self.dequeOfResultReturns = nil
+				getListNode := list_.GetNodesSafely()
+
+				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
+					resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
+					poolOfResultReturns.Put(resultReturn_)
+				}
+			}
+
 			self.wgOfPendingResultReturns.Wait()
 		}
 	}
@@ -492,56 +513,118 @@ func (self *channelImpl) setState(newState channelState) {
 func (self *channelImpl) sendMessages(context_ context.Context) error {
 	context2, cancel := context.WithCancel(context_)
 	errors_ := make(chan error, 2)
-	listsOfMethodCalls := make(chan *list.List)
-	listsOfResultReturns := make(chan *list.List)
+
+	type task struct {
+		list              *list.List
+		numberOfListNodes int32
+	}
+
+	tasksOfMethodCalls := make(chan task)
+	tasksOfResultReturns := make(chan task)
 
 	go func() {
-		list_ := (&list.List{}).Initialize()
+		list1 := (&list.List{}).Initialize()
+		list2 := (&list.List{}).Initialize()
 
 		for {
-			if _, e := self.dequeOfMethodCalls.RemoveAllNodes(context2, false, list_); e != nil {
+			numberOfListNodes, e := self.dequeOfMethodCalls.RemoveAllNodes(context2, false, list1)
+
+			if e != nil {
 				errors_ <- e
 				return
 			}
 
-			listsOfMethodCalls <- list_
-			listsOfMethodCalls <- nil
-			list_.Initialize()
+			select {
+			case tasksOfMethodCalls <- task{list1, numberOfListNodes}:
+			case <-context2.Done():
+				self.dequeOfMethodCalls.DiscardNodeRemovals(list1, numberOfListNodes)
+				errors_ <- context2.Err()
+				return
+			}
+
+			list1, list2 = list2, list1
+			list1.Initialize()
 		}
 	}()
 
 	go func() {
-		list_ := (&list.List{}).Initialize()
+		list1 := (&list.List{}).Initialize()
+		list2 := (&list.List{}).Initialize()
 
 		for {
-			if _, e := self.dequeOfResultReturns.RemoveAllNodes(context2, true, list_); e != nil {
+			numberOfListNodes, e := self.dequeOfResultReturns.RemoveAllNodes(context2, true, list1)
+
+			if e != nil {
 				errors_ <- e
 				return
 			}
 
-			listsOfResultReturns <- list_
-			listsOfResultReturns <- nil
-			list_.Initialize()
+			select {
+			case tasksOfResultReturns <- task{list1, numberOfListNodes}:
+			case <-context2.Done():
+				errors_ <- context2.Err()
+				return
+			}
+
+			list1, list2 = list2, list1
+			list1.Initialize()
 		}
 	}()
 
-	listOfMethodCalls := (*list.List)(nil)
-	listOfResultReturns := (*list.List)(nil)
+	var taskOfMethodCalls task
+	var taskOfResultReturns task
+
+	cleanup := func(ok bool) {
+		if taskOfMethodCalls.list != nil {
+			if ok {
+				getListNode := taskOfMethodCalls.list.GetNodes()
+
+				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
+					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
+					self.pendingMethodCalls.Store(methodCall_.sequenceNumber, methodCall_)
+				}
+			} else {
+				self.dequeOfMethodCalls.DiscardNodeRemovals(taskOfMethodCalls.list, taskOfMethodCalls.numberOfListNodes)
+			}
+		}
+
+		if taskOfResultReturns.list != nil {
+			getListNode := taskOfResultReturns.list.GetNodesSafely()
+
+			for listNode := getListNode(); listNode != nil; listNode = getListNode() {
+				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
+				poolOfResultReturns.Put(resultReturn_)
+			}
+
+			if ok {
+				atomic.AddInt32(&self.pendingResultReturnCount, -taskOfResultReturns.numberOfListNodes)
+			}
+		}
+
+		if !ok {
+			cancel()
+			<-errors_
+			<-errors_
+		}
+	}
 
 	for {
+		taskOfMethodCalls = task{nil, 0}
+		taskOfResultReturns = task{nil, 0}
+
 		select {
 		case e := <-errors_:
 			cancel()
 			<-errors_
 			return e
-		case listOfMethodCalls = <-listsOfMethodCalls:
+		case taskOfMethodCalls = <-tasksOfMethodCalls:
 			select {
-			case listOfResultReturns = <-listsOfResultReturns:
+			case taskOfResultReturns = <-tasksOfResultReturns:
 			default:
 			}
-		case listOfResultReturns = <-listsOfResultReturns:
+		case taskOfResultReturns = <-tasksOfResultReturns:
 			select {
-			case listOfMethodCalls = <-listsOfMethodCalls:
+			case taskOfMethodCalls = <-tasksOfMethodCalls:
 			default:
 			}
 		case <-time.After(self.getMinHeartbeatInterval()):
@@ -557,19 +640,21 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 				})
 			}); e != nil {
 				cancel()
+				<-errors_
+				<-errors_
 				return e
 			}
 		}
 
-		if listOfMethodCalls != nil {
-			getListNode := listOfMethodCalls.GetNodes()
+		if taskOfMethodCalls.list != nil {
+			getListNode := taskOfMethodCalls.list.GetNodesSafely()
 
 			for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 				methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
-				sequenceNumber := self.getSequenceNumber()
+				methodCall_.sequenceNumber = self.getSequenceNumber()
 
 				requestHeader := protocol.RequestHeader{
-					SequenceNumber: sequenceNumber,
+					SequenceNumber: methodCall_.sequenceNumber,
 					ServiceName:    methodCall_.serviceName,
 					MethodName:     methodCall_.methodName,
 				}
@@ -594,22 +679,20 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 				}); e != nil {
 					if e == PacketPayloadTooLargeError {
 						methodCall_.callback(nil, ErrorPacketPayloadTooLarge)
+						listNode.Remove()
+						taskOfMethodCalls.numberOfListNodes--
+						poolOfMethodCalls.Put(methodCall_)
 						continue
 					}
 
-					cancel()
+					cleanup(false)
 					return e
 				}
-
-				self.pendingMethodCalls.Store(sequenceNumber, methodCall_)
 			}
-
-			listOfMethodCalls = <-listsOfMethodCalls // nil
 		}
 
-		if listOfResultReturns != nil {
-			getListNode := listOfResultReturns.GetNodes()
-			completedResultReturnCount := int32(0)
+		if taskOfResultReturns.list != nil {
+			getListNode := taskOfResultReturns.list.GetNodes()
 
 			for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
@@ -646,16 +729,13 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 						})
 					}
 				}); e != nil {
-					cancel()
+					cleanup(false)
 					return e
 				}
-
-				completedResultReturnCount++
 			}
-
-			atomic.AddInt32(&self.pendingResultReturnCount, -completedResultReturnCount)
-			listOfResultReturns = <-listsOfResultReturns // nil
 		}
+
+		cleanup(true)
 
 		for {
 			if e := self.transport.flush(context_, self.getMinHeartbeatInterval()); e != nil {
@@ -664,6 +744,8 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 				}
 
 				cancel()
+				<-errors_
+				<-errors_
 				return e
 			}
 
@@ -673,10 +755,6 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 }
 
 func (self *channelImpl) receiveMessages(context_ context.Context) error {
-	var requestHeader protocol.RequestHeader
-	var responseHeader protocol.ResponseHeader
-	var heartbeat protocol.Heartbeat
-
 	for {
 		timeoutCount := 0
 		var data [][]byte
@@ -720,6 +798,8 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 
 			switch messageType {
 			case protocol.MESSAGE_REQUEST:
+				var requestHeader protocol.RequestHeader
+
 				if e := requestHeader.Unmarshal(data2[2 : 2+messageHeaderSize]); e != nil {
 					return IllFormedMessageError
 				}
@@ -794,6 +874,8 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					self.wgOfPendingResultReturns.Done()
 				}()
 			case protocol.MESSAGE_RESPONSE:
+				var responseHeader protocol.ResponseHeader
+
 				if e := responseHeader.Unmarshal(data2[2 : 2+messageHeaderSize]); e != nil {
 					return IllFormedMessageError
 				}
@@ -814,10 +896,14 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					} else {
 						methodCall_.callback(nil, ErrorCode(responseHeader.ErrorCode))
 					}
+
+					poolOfMethodCalls.Put(methodCall_)
 				} else {
 					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", channelIDToString(self.id), responseHeader)
 				}
 			case protocol.MESSAGE_HEARTBEAT:
+				var heartbeat protocol.Heartbeat
+
 				if e := heartbeat.Unmarshal(data2[2 : 2+messageHeaderSize]); e != nil {
 					return IllFormedMessageError
 				}
@@ -879,13 +965,14 @@ func (self channelState) GoString() string {
 }
 
 type methodCall struct {
-	listNode     list.ListNode
-	serviceName  string
-	methodName   string
-	request      OutgoingMessage
-	responseType reflect.Type
-	autoRetry    bool
-	callback     func(IncomingMessage, ErrorCode)
+	listNode       list.ListNode
+	sequenceNumber int32
+	serviceName    string
+	methodName     string
+	request        OutgoingMessage
+	responseType   reflect.Type
+	autoRetry      bool
+	callback       func(IncomingMessage, ErrorCode)
 }
 
 type resultReturn struct {
@@ -928,16 +1015,13 @@ func channelIDToString(channelID *uuid.UUID) string {
 	return channelID.Base64()
 }
 
-func representMethodID(serviceName string, methodName string) string {
-	return fmt.Sprintf("<%v.%v>", serviceName, methodName)
-}
-
 func returnResult(dequeOfResultReturns *deque.Deque, sequenceNumber int32, errorCode ErrorCode, response OutgoingMessage) error {
-	resultReturn_ := resultReturn{
-		sequenceNumber: sequenceNumber,
-		errorCode:      errorCode,
-		response:       response,
-	}
-
+	resultReturn_ := poolOfResultReturns.Get().(*resultReturn)
+	resultReturn_.sequenceNumber = sequenceNumber
+	resultReturn_.errorCode = errorCode
+	resultReturn_.response = response
 	return dequeOfResultReturns.AppendNode(nil, &resultReturn_.listNode)
 }
+
+var poolOfMethodCalls = sync.Pool{New: func() interface{} { return &methodCall{} }}
+var poolOfResultReturns = sync.Pool{New: func() interface{} { return &resultReturn{} }}
