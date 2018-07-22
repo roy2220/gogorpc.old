@@ -2,6 +2,15 @@
 
 Lightweight RPC framework based on Protocol Buffers for Go
 
+## Features
+
+- Full-duplex communication
+- Heartbeat detection
+- Flow control
+- Auto-reconnection
+- Service discovery
+- Load balancing
+
 ## Requirements
 
 - go 1.9+

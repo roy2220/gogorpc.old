@@ -129,7 +129,9 @@ func (self *Registry) FetchMethodCaller(lbType LBType, lbArgument uintptr) Metho
 }
 
 func (self *Registry) FetchMethodCallerWithoutLB(serverAddress string) MethodCaller {
-	return dynamicMethodCaller{func(serviceName string, excludedServerList *markingList) (string, MethodCaller, error) {
+	self.checkUninitialized()
+
+	return dynamicMethodCaller{func(_ string, excludedServerList *markingList) (string, MethodCaller, error) {
 		if excludedServerList.markItem(serverAddress) {
 			return "", nil, noServerError
 		}

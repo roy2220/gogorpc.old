@@ -220,8 +220,8 @@ func (self *channelBase) UserData() *unsafe.Pointer {
 	return &self.userData
 }
 
-func (self *channelBase) initialize(super Channel, policy *ChannelPolicy, isClientSide bool, context_ context.Context) *channelBase {
-	self.impl.initialize(super, policy, isClientSide)
+func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClientSide bool, context_ context.Context) *channelBase {
+	self.impl.initialize(sub, policy, isClientSide)
 
 	if context_ == nil {
 		context_ = context.Background()
