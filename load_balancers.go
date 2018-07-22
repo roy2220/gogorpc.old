@@ -10,7 +10,7 @@ import (
 )
 
 type loadBalancer interface {
-	selectServer(string, serviceProviderList, uint32) (string, bool)
+	selectServer(string, serviceProviderList, uintptr, *markingList) (string, bool)
 }
 
 type serviceProviderList struct {
@@ -33,7 +33,7 @@ type randomizedLoadBalancer struct {
 	serviceName2State sync.Map
 }
 
-func (self *randomizedLoadBalancer) selectServer(serviceName string, serviceProviderList_ serviceProviderList, _ uint32) (string, bool) {
+func (self *randomizedLoadBalancer) selectServer(serviceName string, serviceProviderList_ serviceProviderList, _ uintptr, excludedServerList *markingList) (string, bool) {
 	value, _ := self.serviceName2State.LoadOrStore(serviceName, &randomizedState{})
 	state := value.(*randomizedState)
 	var serviceProviderIndexes []int
@@ -61,9 +61,22 @@ func (self *randomizedLoadBalancer) selectServer(serviceName string, serviceProv
 		return "", false
 	}
 
-	serviceProviderIndex := serviceProviderIndexes[rand.Intn(len(serviceProviderIndexes))]
-	serviceProvider_ := &serviceProviderList_.items[serviceProviderIndex]
-	return serviceProvider_.serverAddress, true
+	excludedServerList.unmarkItems()
+
+	for {
+		serviceProviderIndex := serviceProviderIndexes[rand.Intn(len(serviceProviderIndexes))]
+		serviceProvider_ := &serviceProviderList_.items[serviceProviderIndex]
+
+		if excludedServerList.markItem(serviceProvider_.serverAddress) {
+			if excludedServerList.getNumberOfMarkedItems() == len(serviceProviderList_.items) {
+				return "", false
+			}
+
+			continue
+		}
+
+		return serviceProvider_.serverAddress, true
+	}
 }
 
 type roundRobinState struct {
@@ -71,25 +84,25 @@ type roundRobinState struct {
 	serviceProviderList      serviceProviderList
 	minWeight                int32
 	initialSumOfWeights      int32
-	lastServiceProviderIndex int
+	nextServiceProviderIndex int
 }
 
 type roundRobinLoadBalancer struct {
 	serviceName2State sync.Map
 }
 
-func (self *roundRobinLoadBalancer) selectServer(serviceName string, serviceProviderList_ serviceProviderList, _ uint32) (string, bool) {
+func (self *roundRobinLoadBalancer) selectServer(serviceName string, serviceProviderList_ serviceProviderList, _ uintptr, excludedServerList *markingList) (string, bool) {
 	value, _ := self.serviceName2State.LoadOrStore(serviceName, &roundRobinState{})
 	state := value.(*roundRobinState)
 	state.lock.Lock()
 
 	if state.serviceProviderList.version < serviceProviderList_.version {
 		var minWeight int32
-		var lastServiceProviderIndex int
+		var nextServiceProviderIndex int
 
 		if numberOfServiceProviders := len(serviceProviderList_.items); numberOfServiceProviders == 0 {
 			minWeight = 0
-			lastServiceProviderIndex = 0
+			nextServiceProviderIndex = 0
 		} else {
 			minWeight = math.MaxInt32
 
@@ -101,13 +114,13 @@ func (self *roundRobinLoadBalancer) selectServer(serviceName string, serviceProv
 				}
 			}
 
-			lastServiceProviderIndex = rand.Intn(numberOfServiceProviders)
+			nextServiceProviderIndex = rand.Intn(numberOfServiceProviders)
 		}
 
 		state.serviceProviderList = serviceProviderList_
 		state.minWeight = minWeight
 		state.initialSumOfWeights = 0
-		state.lastServiceProviderIndex = lastServiceProviderIndex
+		state.nextServiceProviderIndex = nextServiceProviderIndex
 	}
 
 	if len(state.serviceProviderList.items) == 0 {
@@ -115,29 +128,31 @@ func (self *roundRobinLoadBalancer) selectServer(serviceName string, serviceProv
 		return "", false
 	}
 
-	sumOfWeights := state.initialSumOfWeights
+	excludedServerList.unmarkItems()
 	n := len(state.serviceProviderList.items)
 
 	for {
-		for i := range state.serviceProviderList.items {
-			j := (state.lastServiceProviderIndex + i) % n
-			serviceProvider_ := &state.serviceProviderList.items[j]
-			sumOfWeights += serviceProvider_.weight
+		serviceProvider_ := &state.serviceProviderList.items[state.nextServiceProviderIndex]
+		sumOfWeights := state.initialSumOfWeights + serviceProvider_.weight
 
-			if sumOfWeights >= state.minWeight {
-				if state.lastServiceProviderIndex == j {
-					state.initialSumOfWeights -= state.minWeight
-				} else {
-					state.lastServiceProviderIndex = j
-					state.initialSumOfWeights = sumOfWeights - state.minWeight - serviceProvider_.weight
-				}
-
-				state.lock.Unlock()
-				return serviceProvider_.serverAddress, true
-			}
+		if sumOfWeights < 2*state.minWeight {
+			state.nextServiceProviderIndex = (state.nextServiceProviderIndex + 1) % n
+			state.initialSumOfWeights = sumOfWeights - state.minWeight
+		} else {
+			state.initialSumOfWeights -= state.minWeight
 		}
 
-		state.lastServiceProviderIndex += n
+		if excludedServerList.markItem(serviceProvider_.serverAddress) {
+			if excludedServerList.getNumberOfMarkedItems() == len(serviceProviderList_.items) {
+				state.lock.Unlock()
+				return "", false
+			}
+
+			continue
+		}
+
+		state.lock.Unlock()
+		return serviceProvider_.serverAddress, true
 	}
 }
 
@@ -152,7 +167,8 @@ type consistentHashingLoadBalancer struct {
 	serviceName2State sync.Map
 }
 
-func (self *consistentHashingLoadBalancer) selectServer(serviceName string, serviceProviderList_ serviceProviderList, hashCode uint32) (string, bool) {
+func (self *consistentHashingLoadBalancer) selectServer(serviceName string, serviceProviderList_ serviceProviderList, lbArgument uintptr, excludedServerList *markingList) (string, bool) {
+	hashCode := uint32(lbArgument)
 	value, _ := self.serviceName2State.LoadOrStore(serviceName, &consistentHashingState{})
 	state := value.(*consistentHashingState)
 	var hashCodes []uint32
@@ -166,7 +182,7 @@ func (self *consistentHashingLoadBalancer) selectServer(serviceName string, serv
 
 			for n := 16 * int(serviceProvider_.weight); n >= 1; n-- {
 				hash := fnv.New64a()
-				hash.Write([]byte(serviceProvider_.serverAddress + "-" + strconv.Itoa(n)))
+				hash.Write([]byte(strconv.Itoa(n) + "-" + serviceProvider_.serverAddress))
 				hashCode := uint32(hash.Sum64())
 				hashCodes = append(hashCodes, hashCode)
 				hashCode2ServiceProviderIndex[hashCode] = i
@@ -192,6 +208,7 @@ func (self *consistentHashingLoadBalancer) selectServer(serviceName string, serv
 		return "", false
 	}
 
+	excludedServerList.unmarkItems()
 	n := len(hashCodes)
 
 	i := sort.Search(n, func(i int) bool {
@@ -202,7 +219,19 @@ func (self *consistentHashingLoadBalancer) selectServer(serviceName string, serv
 		i = 0
 	}
 
-	serviceProviderIndex := hashCode2ServiceProviderIndex[hashCodes[i]]
-	serviceProvider_ := &serviceProviderList_.items[serviceProviderIndex]
-	return serviceProvider_.serverAddress, true
+	for {
+		serviceProviderIndex := hashCode2ServiceProviderIndex[hashCodes[i]]
+		serviceProvider_ := &serviceProviderList_.items[serviceProviderIndex]
+
+		if excludedServerList.markItem(serviceProvider_.serverAddress) {
+			if excludedServerList.getNumberOfMarkedItems() == len(serviceProviderList_.items) {
+				return "", false
+			}
+
+			i = (i + 1) % n
+			continue
+		}
+
+		return serviceProvider_.serverAddress, true
+	}
 }

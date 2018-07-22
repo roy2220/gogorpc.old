@@ -100,7 +100,7 @@ func TestRegistry(t *testing.T) {
 
 	go func() {
 		time.Sleep(3 * time.Second)
-		mc := reg.FetchMethodCaller(ServerServiceName, pbrpc.LBRoundRobin, 0)
+		mc := reg.FetchMethodCaller(pbrpc.LBRoundRobin, 0)
 		r := SayHelloRequest{"%v"}
 		var a, b, c int32
 		cs := []*int32{&a, &b, &c}
@@ -119,6 +119,10 @@ func TestRegistry(t *testing.T) {
 					} else {
 						t.Errorf("%v", e)
 					}
+
+					// if m*n == 3330 {
+					//	s2.Stop(true)
+					// }
 				}
 
 				wg3.Done()
@@ -138,7 +142,7 @@ func TestRegistry(t *testing.T) {
 
 	go func() {
 		time.Sleep(3 * time.Second)
-		mc := reg.FetchMethodCaller(ServerServiceName, pbrpc.LBRandomized, 0)
+		mc := reg.FetchMethodCaller(pbrpc.LBRandomized, 0)
 		r := SayHelloRequest{"%v"}
 		var a, b, c int32
 		cs := []*int32{&a, &b, &c}
@@ -157,6 +161,10 @@ func TestRegistry(t *testing.T) {
 					} else {
 						t.Errorf("%v", e)
 					}
+
+					// if m*n == 4440 {
+					//	s3.Stop(true)
+					// }
 				}
 
 				wg3.Done()
@@ -176,7 +184,7 @@ func TestRegistry(t *testing.T) {
 
 	go func() {
 		time.Sleep(3 * time.Second)
-		mc := reg.FetchMethodCaller(ServerServiceName, pbrpc.LBConsistentHashing, uint32(time.Now().Unix()))
+		mc := reg.FetchMethodCaller(pbrpc.LBConsistentHashing, uintptr(time.Now().Unix()))
 		r := SayHelloRequest{"%v"}
 		var a, b, c int32
 		cs := []*int32{&a, &b, &c}
@@ -195,6 +203,10 @@ func TestRegistry(t *testing.T) {
 					} else {
 						t.Errorf("%v", e)
 					}
+
+					// if m*n == 2220 {
+					//	s1.Stop(true)
+					// }
 				}
 
 				wg3.Done()
@@ -276,7 +288,7 @@ func BenchmarkRegistry(b *testing.B) {
 
 	go func() {
 		time.Sleep(3 * time.Second)
-		mc := reg.FetchMethodCaller(ServerServiceName, pbrpc.LBRoundRobin, 0)
+		mc := reg.FetchMethodCaller(pbrpc.LBRoundRobin, 0)
 		r := SayHelloRequest{"%v"}
 		var wg2 sync.WaitGroup
 

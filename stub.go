@@ -10,6 +10,8 @@ import (
 
 type Channel interface {
 	MethodCaller
+	AddListener(int) (*ChannelListener, error)
+	RemoveListener(listener *ChannelListener) error
 	Run() error
 	Stop()
 	UserData() *unsafe.Pointer

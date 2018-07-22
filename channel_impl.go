@@ -22,6 +22,17 @@ import (
 	"github.com/let-z-go/pbrpc/protocol"
 )
 
+const (
+	ChannelNo ChannelState = iota
+	ChannelNotConnected
+	ChannelConnecting
+	ChannelConnected
+	ChannelNotAccepted
+	ChannelAccepting
+	ChannelAccepted
+	ChannelClosed
+)
+
 type ChannelPolicy struct {
 	Logger             logger.Logger
 	Timeout            time.Duration
@@ -77,18 +88,41 @@ func (self *ChannelPolicy) Validate() *ChannelPolicy {
 	return self
 }
 
-var IllFormedMessageError = errors.New("pbrpc: ill-formed message")
+type ChannelListener struct {
+	stateChanges chan ChannelState
+}
 
-const (
-	channelNo channelState = iota
-	channelNotConnected
-	channelConnecting
-	channelConnected
-	channelNotAccepted
-	channelAccepting
-	channelAccepted
-	channelClosed
-)
+func (self *ChannelListener) StateChanges() <-chan ChannelState {
+	return self.stateChanges
+}
+
+type ChannelState uint8
+
+func (self ChannelState) GoString() string {
+	switch self {
+	case ChannelNo:
+		return "<ChannelNo>"
+	case ChannelNotConnected:
+		return "<ChannelNotConnected>"
+	case ChannelConnecting:
+		return "<ChannelConnecting>"
+	case ChannelConnected:
+		return "<ChannelConnected>"
+	case ChannelNotAccepted:
+		return "<ChannelNotAccepted>"
+	case ChannelAccepting:
+		return "<ChannelAccepting>"
+	case ChannelAccepted:
+		return "<ChannelAccepted>"
+	case ChannelClosed:
+		return "<ChannelClosed>"
+	default:
+		return fmt.Sprintf("<ChannelState:%d>", self)
+	}
+}
+
+var ChannelClosedError = errors.New("pbrpc: channel closed")
+var IllFormedMessageError = errors.New("pbrpc: ill-formed message")
 
 const defaultChannelTimeout = 6 * time.Second
 const minChannelTimeout = 4 * time.Second
@@ -101,6 +135,8 @@ type channelImpl struct {
 	holder                   Channel
 	policy                   *ChannelPolicy
 	state                    int32
+	lockOfListeners          sync.Mutex
+	listeners                map[*ChannelListener]struct{}
 	id                       *uuid.UUID
 	timeout                  time.Duration
 	incomingWindowSize       int32
@@ -123,9 +159,9 @@ func (self *channelImpl) initialize(holder Channel, policy *ChannelPolicy, isCli
 	self.policy = policy.Validate()
 
 	if isClientSide {
-		self.state = int32(channelNotConnected)
+		self.state = int32(ChannelNotConnected)
 	} else {
-		self.state = int32(channelNotAccepted)
+		self.state = int32(ChannelNotAccepted)
 	}
 
 	self.timeout = policy.Timeout
@@ -137,12 +173,60 @@ func (self *channelImpl) initialize(holder Channel, policy *ChannelPolicy, isCli
 }
 
 func (self *channelImpl) close() {
-	self.setState(channelClosed)
+	self.setState(ChannelClosed)
+}
+
+func (self *channelImpl) addListener(maxNumberOfStateChanges int) (*ChannelListener, error) {
+	if self.isClosed() {
+		return nil, ChannelClosedError
+	}
+
+	self.lockOfListeners.Lock()
+
+	if self.isClosed() {
+		self.lockOfListeners.Unlock()
+		return nil, ChannelClosedError
+	}
+
+	listener := &ChannelListener{
+		stateChanges: make(chan ChannelState, maxNumberOfStateChanges),
+	}
+
+	if self.listeners == nil {
+		self.listeners = map[*ChannelListener]struct{}{}
+	}
+
+	self.listeners[listener] = struct{}{}
+	self.lockOfListeners.Unlock()
+	return listener, nil
+}
+
+func (self *channelImpl) removeListener(listener *ChannelListener) error {
+	if self.isClosed() {
+		return ChannelClosedError
+	}
+
+	close(listener.stateChanges)
+	self.lockOfListeners.Lock()
+
+	if self.isClosed() {
+		self.lockOfListeners.Unlock()
+		return ChannelClosedError
+	}
+
+	delete(self.listeners, listener)
+
+	if len(self.listeners) == 0 {
+		self.listeners = nil
+	}
+
+	self.lockOfListeners.Unlock()
+	return nil
 }
 
 func (self *channelImpl) connect(context_ context.Context, serverAddress string) error {
 	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", channelIDToString(self.id), serverAddress)
-	self.setState(channelConnecting)
+	self.setState(ChannelConnecting)
 	var transport_ transport
 
 	if e := transport_.connect(context_, &self.policy.Transport, serverAddress); e != nil {
@@ -207,7 +291,7 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 
 	self.transport.close()
 	self.transport = transport_
-	self.setState(channelConnected)
+	self.setState(ChannelConnected)
 	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, channelIDToString(&id), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
@@ -215,7 +299,7 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 func (self *channelImpl) accept(context_ context.Context, connection net.Conn) error {
 	clientAddress := connection.RemoteAddr().String()
 	self.policy.Logger.Infof("channel acceptance: clientAddress=%#v", clientAddress)
-	self.setState(channelAccepting)
+	self.setState(ChannelAccepting)
 	var transport_ transport
 	transport_.accept(&self.policy.Transport, connection)
 	data, e := transport_.peek(context_, minChannelTimeout)
@@ -303,13 +387,13 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn) e
 
 	self.transport.close()
 	self.transport = transport_
-	self.setState(channelAccepted)
+	self.setState(ChannelAccepted)
 	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, channelIDToString(&id), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
 func (self *channelImpl) dispatch(context_ context.Context) error {
-	if state := self.getState(); state != channelConnected && state != channelAccepted {
+	if state := self.getState(); state != ChannelConnected && state != ChannelAccepted {
 		panic(invalidChannelStateError{fmt.Sprintf("state=%#v", state)})
 	}
 
@@ -370,53 +454,53 @@ func (self *channelImpl) getTimeout() time.Duration {
 	return self.timeout
 }
 
-func (self *channelImpl) setState(newState channelState) {
+func (self *channelImpl) setState(newState ChannelState) {
 	oldState := self.getState()
 	errorCode := ErrorCode(0)
 
 	switch oldState {
-	case channelNotConnected:
+	case ChannelNotConnected:
 		switch newState {
-		case channelConnecting:
+		case ChannelConnecting:
 		default:
 			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 		}
-	case channelConnecting:
+	case ChannelConnecting:
 		switch newState {
-		case channelConnecting:
+		case ChannelConnecting:
 			return
-		case channelConnected:
-		case channelClosed:
+		case ChannelConnected:
+		case ChannelClosed:
 			errorCode = ErrorChannelBroken
 		default:
 			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 		}
-	case channelConnected:
+	case ChannelConnected:
 		switch newState {
-		case channelConnecting:
+		case ChannelConnecting:
 			errorCode = ErrorChannelBroken
-		case channelClosed:
-			errorCode = ErrorChannelBroken
-		default:
-			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
-		}
-	case channelNotAccepted:
-		switch newState {
-		case channelAccepting:
-		default:
-			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
-		}
-	case channelAccepting:
-		switch newState {
-		case channelAccepted:
-		case channelClosed:
+		case ChannelClosed:
 			errorCode = ErrorChannelBroken
 		default:
 			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 		}
-	case channelAccepted:
+	case ChannelNotAccepted:
 		switch newState {
-		case channelClosed:
+		case ChannelAccepting:
+		default:
+			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
+		}
+	case ChannelAccepting:
+		switch newState {
+		case ChannelAccepted:
+		case ChannelClosed:
+			errorCode = ErrorChannelBroken
+		default:
+			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
+		}
+	case ChannelAccepted:
+		switch newState {
+		case ChannelClosed:
 			errorCode = ErrorChannelBroken
 		default:
 			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
@@ -427,6 +511,13 @@ func (self *channelImpl) setState(newState channelState) {
 
 	atomic.StoreInt32(&self.state, int32(newState))
 	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", channelIDToString(self.id), oldState, newState)
+	self.lockOfListeners.Lock()
+
+	for listener := range self.listeners {
+		listener.stateChanges <- newState
+	}
+
+	self.lockOfListeners.Unlock()
 
 	if errorCode != 0 {
 		methodCallsAreRetriable := errorCode == ErrorChannelBroken
@@ -464,6 +555,18 @@ func (self *channelImpl) setState(newState channelState) {
 		} else {
 			self.holder = nil
 			self.policy = nil
+
+			{
+				self.lockOfListeners.Lock()
+				listeners := self.listeners
+				self.listeners = nil
+				self.lockOfListeners.Unlock()
+
+				for listener := range listeners {
+					close(listener.stateChanges)
+				}
+			}
+
 			self.id = nil
 			self.transport.close()
 
@@ -925,8 +1028,8 @@ func (self *channelImpl) getErrorCode() ErrorCode {
 	return channelState2ErrorCode[self.getState()]
 }
 
-func (self *channelImpl) getState() channelState {
-	return channelState(atomic.LoadInt32(&self.state))
+func (self *channelImpl) getState() ChannelState {
+	return ChannelState(atomic.LoadInt32(&self.state))
 }
 
 func (self *channelImpl) getMinHeartbeatInterval() time.Duration {
@@ -937,31 +1040,6 @@ func (self *channelImpl) getSequenceNumber() int32 {
 	sequenceNumber := self.nextSequenceNumber
 	self.nextSequenceNumber = int32(uint32(sequenceNumber+1) & 0xFFFFFFF)
 	return sequenceNumber
-}
-
-type channelState uint8
-
-func (self channelState) GoString() string {
-	switch self {
-	case channelNo:
-		return "<channelNo>"
-	case channelNotConnected:
-		return "<channelNotConnected>"
-	case channelConnecting:
-		return "<channelConnecting>"
-	case channelConnected:
-		return "<channelConnected>"
-	case channelNotAccepted:
-		return "<channelNotAccepted>"
-	case channelAccepting:
-		return "<channelAccepting>"
-	case channelAccepted:
-		return "<channelAccepted>"
-	case channelClosed:
-		return "<channelClosed>"
-	default:
-		return fmt.Sprintf("<channelState:%d>", self)
-	}
 }
 
 type methodCall struct {
@@ -997,14 +1075,14 @@ func (self invalidChannelStateError) Error() string {
 }
 
 var channelState2ErrorCode = [...]ErrorCode{
-	channelNo:           ErrorChannelTimedOut,
-	channelNotConnected: 0,
-	channelConnecting:   0,
-	channelConnected:    0,
-	channelNotAccepted:  0,
-	channelAccepting:    0,
-	channelAccepted:     0,
-	channelClosed:       ErrorChannelTimedOut,
+	ChannelNo:           ErrorChannelTimedOut,
+	ChannelNotConnected: 0,
+	ChannelConnecting:   0,
+	ChannelConnected:    0,
+	ChannelNotAccepted:  0,
+	ChannelAccepting:    0,
+	ChannelAccepted:     0,
+	ChannelClosed:       ErrorChannelTimedOut,
 }
 
 func channelIDToString(channelID *uuid.UUID) string {

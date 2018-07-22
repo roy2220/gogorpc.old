@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -92,7 +91,7 @@ func (self *Registry) RemoveServiceProviders(serviceNames []string, serverAddres
 	return nil
 }
 
-func (self *Registry) FetchMethodCaller(serviceName string, lbType LBType, lbArgument uint32) MethodCaller {
+func (self *Registry) FetchMethodCaller(lbType LBType, lbArgument uintptr) MethodCaller {
 	self.checkUninitialized()
 	var loadBalancer_ loadBalancer
 
@@ -107,7 +106,7 @@ func (self *Registry) FetchMethodCaller(serviceName string, lbType LBType, lbArg
 		panic(fmt.Errorf("pbrpc: method caller fetching: lbType=%#v", lbType))
 	}
 
-	return clusterMethodCaller{func() (MethodCaller, error) {
+	return dynamicMethodCaller{func(serviceName string, excludedServerList *markingList) (string, MethodCaller, error) {
 		serviceProviderList_, e := self.fetchServiceProviderList(serviceName)
 
 		if e != nil {
@@ -115,17 +114,28 @@ func (self *Registry) FetchMethodCaller(serviceName string, lbType LBType, lbArg
 				e = noServerError
 			}
 
-			return nil, e
+			return "", nil, e
 		}
 
-		serverAddress, ok := loadBalancer_.selectServer(serviceName, serviceProviderList_, lbArgument)
+		serverAddress, ok := loadBalancer_.selectServer(serviceName, serviceProviderList_, lbArgument, excludedServerList)
 
 		if !ok {
-			return nil, noServerError
+			return "", nil, noServerError
 		}
 
 		channel := self.fetchChannel(serverAddress)
-		return channel, nil
+		return serverAddress, channel, nil
+	}}
+}
+
+func (self *Registry) FetchMethodCallerWithoutLB(serverAddress string) MethodCaller {
+	return dynamicMethodCaller{func(serviceName string, excludedServerList *markingList) (string, MethodCaller, error) {
+		if excludedServerList.markItem(serverAddress) {
+			return "", nil, noServerError
+		}
+
+		channel := self.fetchChannel(serverAddress)
+		return serverAddress, channel, nil
 	}}
 }
 
@@ -215,8 +225,19 @@ retry1:
 			lock.Unlock()
 
 			go func() {
-				e := channel.Run()
-				self.channelPolicy.Logger.Infof("channel run-out: serverAddress=%#v, e=%#v", serverAddress, e.Error())
+				channelListener, _ := channel.AddListener(64)
+
+				go func() {
+					e := channel.Run()
+					self.channelPolicy.Logger.Infof("channel run-out: serverAddress=%#v, e=%#v", serverAddress, e.Error())
+				}()
+
+				for channelState := range channelListener.StateChanges() {
+					if channelState == ChannelClosed {
+						break
+					}
+				}
+
 				self.serverAddress2Channel.Delete(serverAddress)
 			}()
 
@@ -246,17 +267,15 @@ func (self LBType) GoString() string {
 	}
 }
 
-const maxNumberOfMethodCallRetries = 3
-
-type clusterMethodCaller struct {
-	fetcher func() (MethodCaller, error)
+type dynamicMethodCaller struct {
+	fetcher func(string, *markingList) (string, MethodCaller, error)
 }
 
-func (self clusterMethodCaller) CallMethod(context_ context.Context, serviceName string, methodName string, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) (IncomingMessage, error) {
-	methodCallRetryCount := 0
+func (self dynamicMethodCaller) CallMethod(context_ context.Context, serviceName string, methodName string, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) (IncomingMessage, error) {
+	var excludedServerList markingList
 
 	for {
-		methodCaller, e := self.fetcher()
+		serverAddress, methodCaller, e := self.fetcher(serviceName, &excludedServerList)
 
 		if e != nil {
 			if e == noServerError {
@@ -268,15 +287,9 @@ func (self clusterMethodCaller) CallMethod(context_ context.Context, serviceName
 
 		response, e := methodCaller.CallMethod(context_, serviceName, methodName, request, responseType, autoRetryMethodCall)
 
-		if autoRetryMethodCall && e != nil {
+		if e != nil {
 			if e, ok := e.(Error); ok && e.code == ErrorChannelTimedOut {
-				methodCallRetryCount++
-
-				if methodCallRetryCount == maxNumberOfMethodCallRetries {
-					return nil, Error{true, ErrorNotImplemented, fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
-				}
-
-				runtime.Gosched()
+				excludedServerList.addItem(serverAddress)
 				continue
 			}
 		}
@@ -285,18 +298,31 @@ func (self clusterMethodCaller) CallMethod(context_ context.Context, serviceName
 	}
 }
 
-func (self clusterMethodCaller) CallMethodWithoutReturn(context_ context.Context, serviceName string, methodName string, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) error {
-	methodCaller, e := self.fetcher()
+func (self dynamicMethodCaller) CallMethodWithoutReturn(context_ context.Context, serviceName string, methodName string, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) error {
+	var excludedServerList markingList
 
-	if e != nil {
-		if e == noServerError {
-			e = Error{true, ErrorNotImplemented, fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
+	for {
+		serverAddress, methodCaller, e := self.fetcher(serviceName, &excludedServerList)
+
+		if e != nil {
+			if e == noServerError {
+				e = Error{true, ErrorNotImplemented, fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
+			}
+
+			return e
+		}
+
+		e = methodCaller.CallMethodWithoutReturn(context_, serviceName, methodName, request, responseType, autoRetryMethodCall)
+
+		if e != nil {
+			if e, ok := e.(Error); ok && e.code == ErrorChannelTimedOut {
+				excludedServerList.addItem(serverAddress)
+				continue
+			}
 		}
 
 		return e
 	}
-
-	return methodCaller.CallMethodWithoutReturn(context_, serviceName, methodName, request, responseType, autoRetryMethodCall)
 }
 
 var noServerError = errors.New("pbrpc: no server")

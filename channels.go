@@ -132,6 +132,14 @@ type channelBase struct {
 	userData unsafe.Pointer
 }
 
+func (self *channelBase) AddListener(maxNumberOfStateChanges int) (*ChannelListener, error) {
+	return self.impl.addListener(maxNumberOfStateChanges)
+}
+
+func (self *channelBase) RemoveListener(listener *ChannelListener) error {
+	return self.impl.removeListener(listener)
+}
+
 func (self *channelBase) Stop() {
 	if self.stop != nil {
 		self.stop()
