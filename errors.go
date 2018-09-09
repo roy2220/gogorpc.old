@@ -54,6 +54,17 @@ func (self Error) Error() string {
 
 type ErrorCode int32
 
+func (self ErrorCode) GetName() string {
+	errorRecord, ok := errorTable[self]
+
+	if ok {
+		errorCodeName := errorRecord[0]
+		return errorCodeName
+	} else {
+		return fmt.Sprintf("E%d", self)
+	}
+}
+
 func (self ErrorCode) GoString() string {
 	errorRecord, ok := errorTable[self]
 
@@ -66,7 +77,7 @@ func (self ErrorCode) GoString() string {
 }
 
 func RegisterError(errorCode ErrorCode, errorCodeName string, errorDescription string) {
-	if errorCode <= ErrorUserDefined {
+	if errorCode < ErrorUserDefined {
 		panic(fmt.Errorf("pbrpc: error reserved: errorCode=%#v", errorCode))
 	}
 
@@ -90,5 +101,4 @@ var errorTable = map[ErrorCode][2]string{
 	ErrorNotImplemented: {"ErrorNotImplemented", "not implemented"},
 	ErrorBadRequest:     {"ErrorBadRequest", "bad request"},
 	ErrorInternalServer: {"ErrorInternalServer", "internal server"},
-	ErrorUserDefined:    {"ErrorUserDefined", "user defined"},
 }

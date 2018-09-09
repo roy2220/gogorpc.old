@@ -40,8 +40,8 @@ func (self *TransportPolicy) Validate() *TransportPolicy {
 var TransportClosedError = errors.New("pbrpc: transport closed")
 var PacketPayloadTooLargeError = errors.New("pbrpc: packet payload too large")
 
-const defaultInitialReadBufferSizeOfTransport = 1 << 10
-const minInitialReadBufferSizeOfTransport = 1 << 4
+const defaultInitialReadBufferSizeOfTransport = 1 << 12
+const minInitialReadBufferSizeOfTransport = 1 << 8
 const maxInitialReadBufferSizeOfTransport = 1 << 16
 const minMaxPacketPayloadSize = 1 << 16
 const packetHeaderSize = 4

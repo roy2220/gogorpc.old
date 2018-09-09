@@ -5,8 +5,38 @@ import (
 	"reflect"
 	"unsafe"
 
+	"github.com/let-z-go/toolkit/logger"
+
 	"github.com/gogo/protobuf/proto"
 )
+
+type ServiceHandler interface {
+	X_RegisterMethodInterceptor(MethodInterceptor)
+	X_HandleMethod(*MethodHandlingInfo) (OutgoingMessage, ErrorCode)
+	X_GetName() string
+	X_GetMethodTable() MethodTable
+}
+
+type MethodInterceptor func(*MethodHandlingInfo, MethodHandler) (OutgoingMessage, ErrorCode)
+type MethodHandler func(*MethodHandlingInfo) (OutgoingMessage, ErrorCode)
+
+type MethodHandlingInfo struct {
+	ServiceHandler ServiceHandler
+	MethodRecord   *MethodRecord
+	Context        context.Context
+	ContextVars    ContextVars
+	Request        interface{}
+
+	logger *logger.Logger
+}
+
+func (self *MethodHandlingInfo) setContext(context_ context.Context) {
+	self.Context = context.WithValue(context_, contextVars{}, &self.ContextVars)
+}
+
+type ContextVars struct {
+	Channel Channel
+}
 
 type Channel interface {
 	MethodCaller
@@ -14,11 +44,12 @@ type Channel interface {
 	RemoveListener(listener *ChannelListener) error
 	Run() error
 	Stop()
+	GetIDString() string
 	UserData() *unsafe.Pointer
 }
 
 type MethodCaller interface {
-	CallMethod(context.Context, string, string, OutgoingMessage, reflect.Type, bool) (IncomingMessage, error)
+	CallMethod(context.Context, string, string, OutgoingMessage, reflect.Type, bool) (interface{}, error)
 	CallMethodWithoutReturn(context.Context, string, string, OutgoingMessage, reflect.Type, bool) error
 }
 
@@ -29,12 +60,6 @@ type IncomingMessage interface {
 type OutgoingMessage interface {
 	proto.Sizer
 	MarshalTo([]byte) (int, error)
-}
-
-type ServiceHandler interface {
-	X_GetName() string
-	X_GetMethodTable() MethodTable
-	X_InterceptMethodCall(*MethodRecord, context.Context, Channel, IncomingMessage) (OutgoingMessage, ErrorCode)
 }
 
 type MethodTable []MethodRecord
@@ -67,5 +92,80 @@ type MethodRecord struct {
 	Name         string
 	RequestType  reflect.Type
 	ResponseType reflect.Type
-	Handler      func(ServiceHandler, context.Context, Channel, IncomingMessage) (OutgoingMessage, error)
+	Handler      func(ServiceHandler, context.Context, interface{}) (OutgoingMessage, error)
+}
+
+type ServiceHandlerBase struct {
+	methodInterceptors []MethodInterceptor
+}
+
+func (self *ServiceHandlerBase) X_RegisterMethodInterceptor(methodInterceptor MethodInterceptor) {
+	self.methodInterceptors = append(self.methodInterceptors, methodInterceptor)
+}
+
+func (self *ServiceHandlerBase) X_HandleMethod(methodHandlingInfo *MethodHandlingInfo) (OutgoingMessage, ErrorCode) {
+	if self.methodInterceptors == nil {
+		return handleMethod(methodHandlingInfo)
+	}
+
+	methodInterceptor := self.methodInterceptors[0]
+	nextMethodInterceptorIndex := 1
+	var methodHandler MethodHandler
+
+	methodHandler = func(methodHandlingInfo *MethodHandlingInfo) (OutgoingMessage, ErrorCode) {
+		if nextMethodInterceptorIndex == len(self.methodInterceptors) {
+			return handleMethod(methodHandlingInfo)
+		}
+
+		nextMethodInterceptor := self.methodInterceptors[nextMethodInterceptorIndex]
+		nextMethodInterceptorIndex++
+		return nextMethodInterceptor(methodHandlingInfo, methodHandler)
+	}
+
+	return methodInterceptor(methodHandlingInfo, methodHandler)
+}
+
+func RegisterMethodInterceptors(serviceHandler ServiceHandler, methodInterceptors ...MethodInterceptor) ServiceHandler {
+	for _, methodInterceptor := range methodInterceptors {
+		serviceHandler.X_RegisterMethodInterceptor(methodInterceptor)
+	}
+
+	return serviceHandler
+}
+
+func GetContextVars(context_ context.Context) (*ContextVars, bool) {
+	value := context_.Value(contextVars{})
+
+	if value == nil {
+		return nil, false
+	}
+
+	return value.(*ContextVars), true
+}
+
+func MustGetContextVars(context_ context.Context) *ContextVars {
+	return context_.Value(contextVars{}).(*ContextVars)
+}
+
+type contextVars struct{}
+
+func handleMethod(methodHandlingInfo *MethodHandlingInfo) (OutgoingMessage, ErrorCode) {
+	response, e := methodHandlingInfo.MethodRecord.Handler(methodHandlingInfo.ServiceHandler, methodHandlingInfo.Context, methodHandlingInfo.Request)
+	var errorCode ErrorCode
+
+	if e == nil {
+		errorCode = 0
+	} else {
+		if e2, ok := e.(Error); ok && !e2.isPassive {
+			errorCode = e2.code
+		} else {
+			channel := methodHandlingInfo.ContextVars.Channel
+			serviceName := methodHandlingInfo.ServiceHandler.X_GetName()
+			methodName := methodHandlingInfo.MethodRecord.Name
+			methodHandlingInfo.logger.Errorf("internal server error: channelID=%#v, methodID=%v, request=%#v, e=%#v", channel.GetIDString(), representMethodID(serviceName, methodName), methodHandlingInfo.Request, e.Error())
+			errorCode = ErrorInternalServer
+		}
+	}
+
+	return response, errorCode
 }

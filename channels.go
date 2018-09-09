@@ -153,11 +153,11 @@ func (self *channelBase) CallMethod(
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
-) (IncomingMessage, error) {
-	var response IncomingMessage
+) (interface{}, error) {
+	var response interface{}
 	error_ := make(chan error, 1)
 
-	callback := func(response2 IncomingMessage, errorCode ErrorCode) {
+	callback := func(response2 interface{}, errorCode ErrorCode) {
 		if errorCode != 0 {
 			error_ <- Error{true, errorCode, fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
 			return
@@ -212,8 +212,12 @@ func (self *channelBase) CallMethodWithoutReturn(
 		request,
 		responseType,
 		autoRetryMethodCall,
-		func(_ IncomingMessage, _ ErrorCode) {},
+		func(_ interface{}, _ ErrorCode) {},
 	)
+}
+
+func (self *channelBase) GetIDString() string {
+	return self.impl.getIDString()
 }
 
 func (self *channelBase) UserData() *unsafe.Pointer {

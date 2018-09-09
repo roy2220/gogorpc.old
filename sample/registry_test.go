@@ -100,7 +100,7 @@ func TestRegistry(t *testing.T) {
 
 	go func() {
 		time.Sleep(3 * time.Second)
-		mc := reg.FetchMethodCaller(pbrpc.LBRoundRobin, 0)
+		mc := reg.GetMethodCaller(pbrpc.LBRoundRobin, 0)
 		r := SayHelloRequest{"%v"}
 		var a, b, c int32
 		cs := []*int32{&a, &b, &c}
@@ -142,7 +142,7 @@ func TestRegistry(t *testing.T) {
 
 	go func() {
 		time.Sleep(3 * time.Second)
-		mc := reg.FetchMethodCaller(pbrpc.LBRandomized, 0)
+		mc := reg.GetMethodCaller(pbrpc.LBRandomized, 0)
 		r := SayHelloRequest{"%v"}
 		var a, b, c int32
 		cs := []*int32{&a, &b, &c}
@@ -184,7 +184,7 @@ func TestRegistry(t *testing.T) {
 
 	go func() {
 		time.Sleep(3 * time.Second)
-		mc := reg.FetchMethodCaller(pbrpc.LBConsistentHashing, uintptr(time.Now().Unix()))
+		mc := reg.GetMethodCaller(pbrpc.LBConsistentHashing, uintptr(time.Now().Unix()))
 		r := SayHelloRequest{"%v"}
 		var a, b, c int32
 		cs := []*int32{&a, &b, &c}
@@ -288,7 +288,7 @@ func BenchmarkRegistry(b *testing.B) {
 
 	go func() {
 		time.Sleep(3 * time.Second)
-		mc := reg.FetchMethodCaller(pbrpc.LBRoundRobin, 0)
+		mc := reg.GetMethodCaller(pbrpc.LBRoundRobin, 0)
 		r := SayHelloRequest{"%v"}
 		var wg2 sync.WaitGroup
 

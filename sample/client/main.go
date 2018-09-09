@@ -12,7 +12,7 @@ type ClientServiceHandler struct {
 	sample.ClientServiceHandlerBase
 }
 
-func (ClientServiceHandler) GetNickname(context_ context.Context, channel pbrpc.Channel) (*sample.GetNicknameResponse, error) {
+func (ClientServiceHandler) GetNickname(context_ context.Context) (*sample.GetNicknameResponse, error) {
 	response := &sample.GetNicknameResponse{
 		Nickname: "007",
 	}
@@ -21,7 +21,7 @@ func (ClientServiceHandler) GetNickname(context_ context.Context, channel pbrpc.
 }
 
 func main() {
-	channelPolicy := (&pbrpc.ChannelPolicy{}).RegisterServiceHandler(ClientServiceHandler{})
+	channelPolicy := (&pbrpc.ChannelPolicy{}).RegisterServiceHandler(&ClientServiceHandler{})
 	channel := (&pbrpc.ClientChannel{}).Initialize(channelPolicy, []string{"127.0.0.1:8888"}, nil)
 
 	go func() {

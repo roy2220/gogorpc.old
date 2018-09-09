@@ -91,7 +91,7 @@ func (self *Registry) RemoveServiceProviders(serviceNames []string, serverAddres
 	return nil
 }
 
-func (self *Registry) FetchMethodCaller(lbType LBType, lbArgument uintptr) MethodCaller {
+func (self *Registry) GetMethodCaller(lbType LBType, lbArgument uintptr) MethodCaller {
 	self.checkUninitialized()
 	var loadBalancer_ loadBalancer
 
@@ -103,10 +103,10 @@ func (self *Registry) FetchMethodCaller(lbType LBType, lbArgument uintptr) Metho
 	case LBConsistentHashing:
 		loadBalancer_ = &self.consistentHashingLoadBalancer
 	default:
-		panic(fmt.Errorf("pbrpc: method caller fetching: lbType=%#v", lbType))
+		panic(fmt.Errorf("pbrpc: method caller getting: lbType=%#v", lbType))
 	}
 
-	return dynamicMethodCaller{func(serviceName string, excludedServerList *markingList) (string, MethodCaller, error) {
+	return methodCallerProxy{func(serviceName string, excludedServerList *markingList) (string, MethodCaller, error) {
 		serviceProviderList_, e := self.fetchServiceProviderList(serviceName)
 
 		if e != nil {
@@ -128,10 +128,10 @@ func (self *Registry) FetchMethodCaller(lbType LBType, lbArgument uintptr) Metho
 	}}
 }
 
-func (self *Registry) FetchMethodCallerWithoutLB(serverAddress string) MethodCaller {
+func (self *Registry) GetMethodCallerWithoutLB(serverAddress string) MethodCaller {
 	self.checkUninitialized()
 
-	return dynamicMethodCaller{func(_ string, excludedServerList *markingList) (string, MethodCaller, error) {
+	return methodCallerProxy{func(_ string, excludedServerList *markingList) (string, MethodCaller, error) {
 		if excludedServerList.markItem(serverAddress) {
 			return "", nil, noServerError
 		}
@@ -176,7 +176,7 @@ retry1:
 				return serviceProviderList{}, e
 			}
 
-			serviceProviderList_ := parseServiceProviderList(response)
+			serviceProviderList_ := convertToServiceProviderList(response)
 			self.serviceName2ServiceProviderList.Store(serviceName, serviceProviderList_)
 			lock.Unlock()
 
@@ -269,15 +269,15 @@ func (self LBType) GoString() string {
 	}
 }
 
-type dynamicMethodCaller struct {
-	fetcher func(string, *markingList) (string, MethodCaller, error)
+type methodCallerProxy struct {
+	methodCallerFetcher func(string, *markingList) (string, MethodCaller, error)
 }
 
-func (self dynamicMethodCaller) CallMethod(context_ context.Context, serviceName string, methodName string, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) (IncomingMessage, error) {
+func (self methodCallerProxy) CallMethod(context_ context.Context, serviceName string, methodName string, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) (interface{}, error) {
 	var excludedServerList markingList
 
 	for {
-		serverAddress, methodCaller, e := self.fetcher(serviceName, &excludedServerList)
+		serverAddress, methodCaller, e := self.methodCallerFetcher(serviceName, &excludedServerList)
 
 		if e != nil {
 			if e == noServerError {
@@ -300,11 +300,11 @@ func (self dynamicMethodCaller) CallMethod(context_ context.Context, serviceName
 	}
 }
 
-func (self dynamicMethodCaller) CallMethodWithoutReturn(context_ context.Context, serviceName string, methodName string, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) error {
+func (self methodCallerProxy) CallMethodWithoutReturn(context_ context.Context, serviceName string, methodName string, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) error {
 	var excludedServerList markingList
 
 	for {
-		serverAddress, methodCaller, e := self.fetcher(serviceName, &excludedServerList)
+		serverAddress, methodCaller, e := self.methodCallerFetcher(serviceName, &excludedServerList)
 
 		if e != nil {
 			if e == noServerError {
@@ -337,11 +337,11 @@ func makeServiceProviderKey(serverAddress string, weight int32) string {
 	return serverAddress + "|" + strconv.Itoa(int(weight))
 }
 
-func parseServiceProviderList(response *zk.GetChildren2Response) serviceProviderList {
+func convertToServiceProviderList(response *zk.GetChildren2Response) serviceProviderList {
 	var serviceProviderList_ serviceProviderList
 
 	for _, serviceProviderKey := range response.Children {
-		serviceProvider, ok := parseServiceProvider(serviceProviderKey)
+		serviceProvider, ok := parseServiceProviderKey(serviceProviderKey)
 
 		if !ok {
 			continue
@@ -354,7 +354,7 @@ func parseServiceProviderList(response *zk.GetChildren2Response) serviceProvider
 	return serviceProviderList_
 }
 
-func parseServiceProvider(serviceProviderKey string) (serviceProvider, bool) {
+func parseServiceProviderKey(serviceProviderKey string) (serviceProvider, bool) {
 	i := strings.IndexByte(serviceProviderKey, '|')
 
 	if i < 0 {

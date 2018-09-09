@@ -127,9 +127,9 @@ var IllFormedMessageError = errors.New("pbrpc: ill-formed message")
 const defaultChannelTimeout = 6 * time.Second
 const minChannelTimeout = 4 * time.Second
 const maxChannelTimeout = 40 * time.Second
-const defaultChannelWindowSize = 1 << 10
-const minChannelWindowSize = 1 << 4
-const maxChannelWindowSize = 1 << 16
+const defaultChannelWindowSize = 1 << 17
+const minChannelWindowSize = 1
+const maxChannelWindowSize = 1 << 20
 
 type channelImpl struct {
 	holder                   Channel
@@ -225,7 +225,7 @@ func (self *channelImpl) removeListener(listener *ChannelListener) error {
 }
 
 func (self *channelImpl) connect(context_ context.Context, serverAddress string) error {
-	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", channelIDToString(self.id), serverAddress)
+	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", self.getIDString(), serverAddress)
 	self.setState(ChannelConnecting)
 	var transport_ transport
 
@@ -292,7 +292,7 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 	self.transport.close()
 	self.transport = transport_
 	self.setState(ChannelConnected)
-	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, channelIDToString(&id), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.getIDString(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
@@ -388,7 +388,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn) e
 	self.transport.close()
 	self.transport = transport_
 	self.setState(ChannelAccepted)
-	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, channelIDToString(&id), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.getIDString(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
@@ -421,7 +421,7 @@ func (self *channelImpl) callMethod(
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
-	callback func(IncomingMessage, ErrorCode),
+	callback func(interface{}, ErrorCode),
 ) error {
 	if self.isClosed() {
 		return Error{true, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
@@ -448,6 +448,14 @@ func (self *channelImpl) callMethod(
 
 func (self *channelImpl) isClosed() bool {
 	return self.getErrorCode() != 0
+}
+
+func (self *channelImpl) getIDString() string {
+	if self.id == nil {
+		return ""
+	}
+
+	return self.id.Base64()
 }
 
 func (self *channelImpl) getTimeout() time.Duration {
@@ -510,7 +518,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 	}
 
 	atomic.StoreInt32(&self.state, int32(newState))
-	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", channelIDToString(self.id), oldState, newState)
+	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", self.getIDString(), oldState, newState)
 	self.lockOfListeners.Lock()
 
 	for listener := range self.listeners {
@@ -936,43 +944,33 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					continue
 				}
 
+				methodHandlingInfo := MethodHandlingInfo{
+					ServiceHandler: serviceHandler,
+					MethodRecord:   methodRecord,
+
+					ContextVars: ContextVars{
+						Channel: self.holder,
+					},
+
+					Request: request,
+
+					logger: &self.policy.Logger,
+				}
+
+				methodHandlingInfo.setContext(context_)
+
 				backup := struct {
-					holder               Channel
-					logger               *logger.Logger
-					id                   *uuid.UUID
 					dequeOfResultReturns *deque.Deque
 					sequenceNumber       int32
-					serviceName          string
-					methodName           string
 				}{
-					holder:               self.holder,
-					logger:               &self.policy.Logger,
-					id:                   self.id,
 					dequeOfResultReturns: self.dequeOfResultReturns,
 					sequenceNumber:       requestHeader.SequenceNumber,
-					serviceName:          requestHeader.ServiceName,
-					methodName:           requestHeader.MethodName,
 				}
 
 				self.wgOfPendingResultReturns.Add(1)
 
 				go func() {
-					response, errorCode := serviceHandler.X_InterceptMethodCall(methodRecord, context_, backup.holder, request)
-
-					if errorCode == 0 && response == nil {
-						var e error
-						response, e = methodRecord.Handler(serviceHandler, context_, backup.holder, request)
-
-						if e != nil {
-							if e2, ok := e.(Error); ok && !e2.isPassive {
-								errorCode = e2.code
-							} else {
-								backup.logger.Errorf("internal server error: id=%#v, methodID=%v, request=%#v, e=%#v", channelIDToString(backup.id), representMethodID(backup.serviceName, backup.methodName), request, e.Error())
-								errorCode = ErrorInternalServer
-							}
-						}
-					}
-
+					response, errorCode := methodHandlingInfo.ServiceHandler.X_HandleMethod(&methodHandlingInfo)
 					returnResult(backup.dequeOfResultReturns, backup.sequenceNumber, errorCode, response)
 					self.wgOfPendingResultReturns.Done()
 				}()
@@ -1002,7 +1000,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 
 					poolOfMethodCalls.Put(methodCall_)
 				} else {
-					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", channelIDToString(self.id), responseHeader)
+					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", self.getIDString(), responseHeader)
 				}
 			case protocol.MESSAGE_HEARTBEAT:
 				var heartbeat protocol.Heartbeat
@@ -1050,7 +1048,7 @@ type methodCall struct {
 	request        OutgoingMessage
 	responseType   reflect.Type
 	autoRetry      bool
-	callback       func(IncomingMessage, ErrorCode)
+	callback       func(interface{}, ErrorCode)
 }
 
 type resultReturn struct {
@@ -1083,14 +1081,6 @@ var channelState2ErrorCode = [...]ErrorCode{
 	ChannelAccepting:    0,
 	ChannelAccepted:     0,
 	ChannelClosed:       ErrorChannelTimedOut,
-}
-
-func channelIDToString(channelID *uuid.UUID) string {
-	if channelID == nil {
-		return ""
-	}
-
-	return channelID.Base64()
 }
 
 func returnResult(dequeOfResultReturns *deque.Deque, sequenceNumber int32, errorCode ErrorCode, response OutgoingMessage) error {
