@@ -28,6 +28,7 @@ func InterceptMethod(methodHandlingInfo *pbrpc.MethodHandlingInfo, methodhandler
 	serviceName := methodHandlingInfo.ServiceHandler.X_GetName()
 	methodName := methodHandlingInfo.MethodRecord.Name
 	fmt.Printf("%v.%v begin\n", serviceName, methodName)
+	fmt.Printf("trace_id=%#v\n", methodHandlingInfo.ContextVars.TraceID.Base64())
 	fmt.Printf("request=%#v\n", methodHandlingInfo.Request)
 	response, e := methodhandler(methodHandlingInfo)
 	fmt.Printf("response=%#v\n", response)
@@ -38,6 +39,6 @@ func InterceptMethod(methodHandlingInfo *pbrpc.MethodHandlingInfo, methodhandler
 func main() {
 	serviceHandler := pbrpc.RegisterMethodInterceptors(&ServerServiceHandler{}, InterceptMethod)
 	serverPolicy := (&pbrpc.ServerPolicy{}).RegisterServiceHandler(serviceHandler)
-	server := (&pbrpc.Server{}).Initialize(serverPolicy, "127.0.0.1:8888", "", nil)
+	server := (&pbrpc.Server{}).Initialize(serverPolicy, "127.0.0.1:8888", "", context.Background())
 	server.Run()
 }

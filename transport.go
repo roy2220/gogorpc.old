@@ -55,18 +55,11 @@ type transport struct {
 }
 
 func (self *transport) connect(context_ context.Context, policy *TransportPolicy, serverAddress string) error {
-	var connection net.Conn
-	var e error
-
-	if context_ == nil {
-		connection, e = (&net.Dialer{}).Dial("tcp", serverAddress)
-	} else {
-		if e := context_.Err(); e != nil {
-			return e
-		}
-
-		connection, e = (&net.Dialer{}).DialContext(context_, "tcp", serverAddress)
+	if e := context_.Err(); e != nil {
+		return e
 	}
+
+	connection, e := (&net.Dialer{}).DialContext(context_, "tcp", serverAddress)
 
 	if e != nil {
 		return e

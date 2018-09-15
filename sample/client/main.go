@@ -22,10 +22,10 @@ func (ClientServiceHandler) GetNickname(context_ context.Context) (*sample.GetNi
 
 func main() {
 	channelPolicy := (&pbrpc.ChannelPolicy{}).RegisterServiceHandler(&ClientServiceHandler{})
-	channel := (&pbrpc.ClientChannel{}).Initialize(channelPolicy, []string{"127.0.0.1:8888"}, nil)
+	channel := (&pbrpc.ClientChannel{}).Initialize(channelPolicy, []string{"127.0.0.1:8888"}, context.Background())
 
 	go func() {
-		client := sample.ServerServiceClient{channel, nil}
+		client := sample.ServerServiceClient{channel, context.Background()}
 
 		request := &sample.SayHelloRequest{
 			ReplyFormat: "Hello, %v!",

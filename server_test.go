@@ -1,6 +1,7 @@
 package pbrpc
 
 import (
+	"context"
 	"os"
 	"sync"
 	"testing"
@@ -20,7 +21,7 @@ func TestServer(t *testing.T) {
 	}
 
 	cp1 := &sp.Channel
-	s := (&Server{}).Initialize(sp, "", "", nil)
+	s := (&Server{}).Initialize(sp, "", "", context.Background())
 
 	cp2 := &ChannelPolicy{
 		Timeout:            5 * time.Second,
@@ -29,7 +30,7 @@ func TestServer(t *testing.T) {
 		Logger:             *(&logger.Logger{}).Initialize("pbrpctest-cli", logger.SeverityInfo, os.Stdout, os.Stderr),
 	}
 
-	c := (&ClientChannel{}).Initialize(cp2, nil, nil)
+	c := (&ClientChannel{}).Initialize(cp2, nil, context.Background())
 	var wg sync.WaitGroup
 	wg.Add(1)
 

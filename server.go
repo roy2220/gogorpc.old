@@ -34,11 +34,6 @@ func (self *Server) Initialize(policy *ServerPolicy, bindAddress string, discove
 
 	self.bindAddress = bindAddress
 	self.discoveryAddress = discoveryAddress
-
-	if context_ == nil {
-		context_ = context.Background()
-	}
-
 	self.context1, self.stop1 = context.WithCancel(context_)
 	self.context2, self.stop2 = context.WithCancel(self.context1)
 	self.openness = 1

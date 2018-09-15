@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"reflect"
-	"unsafe"
 
 	"github.com/let-z-go/toolkit/delay_pool"
 )
@@ -178,19 +177,13 @@ func (self *channelBase) CallMethod(
 		return nil, e
 	}
 
-	if context_ == nil {
-		if e := <-error_; e != nil {
+	select {
+	case e := <-error_:
+		if e != nil {
 			return nil, e
 		}
-	} else {
-		select {
-		case e := <-error_:
-			if e != nil {
-				return nil, e
-			}
-		case <-context_.Done():
-			return nil, context_.Err()
-		}
+	case <-context_.Done():
+		return nil, context_.Err()
 	}
 
 	return response, nil
@@ -215,17 +208,8 @@ func (self *channelBase) CallMethodWithoutReturn(
 	)
 }
 
-func (self *channelBase) GetIDString() string {
-	return self.impl.getIDString()
-}
-
 func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClientSide bool, context_ context.Context) *channelBase {
 	self.impl.initialize(sub, policy, isClientSide)
-
-	if context_ == nil {
-		context_ = context.Background()
-	}
-
 	self.context, self.stop = context.WithCancel(context_)
 	return self
 }

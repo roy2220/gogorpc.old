@@ -3,9 +3,9 @@ package pbrpc
 import (
 	"context"
 	"reflect"
-	"unsafe"
 
 	"github.com/let-z-go/toolkit/logger"
+	"github.com/let-z-go/toolkit/uuid"
 
 	"github.com/gogo/protobuf/proto"
 )
@@ -32,6 +32,7 @@ type MethodHandlingInfo struct {
 
 type ContextVars struct {
 	Channel Channel
+	TraceID uuid.UUID
 }
 
 type Channel interface {
@@ -40,7 +41,6 @@ type Channel interface {
 	RemoveListener(listener *ChannelListener) error
 	Run() error
 	Stop()
-	GetIDString() string
 }
 
 type MethodCaller interface {
@@ -158,10 +158,10 @@ func handleMethod(methodHandlingInfo *MethodHandlingInfo) (OutgoingMessage, Erro
 		if e2, ok := e.(Error); ok && !e2.isPassive {
 			errorCode = e2.code
 		} else {
-			channel := methodHandlingInfo.ContextVars.Channel
+			traceID := &methodHandlingInfo.ContextVars.TraceID
 			serviceName := methodHandlingInfo.ServiceHandler.X_GetName()
 			methodName := methodHandlingInfo.MethodRecord.Name
-			methodHandlingInfo.logger.Errorf("internal server error: channelID=%#v, methodID=%v, request=%#v, e=%#v", channel.GetIDString(), representMethodID(serviceName, methodName), methodHandlingInfo.Request, e.Error())
+			methodHandlingInfo.logger.Errorf("internal server error: traceID=%#v, methodID=%v, request=%#v, e=%#v", traceID.Base64(), representMethodID(serviceName, methodName), methodHandlingInfo.Request, e.Error())
 			errorCode = ErrorInternalServer
 		}
 	}

@@ -38,11 +38,6 @@ func (self *Registry) Initialize(client *zk.Client, channelPolicy *ChannelPolicy
 
 	self.client = client
 	self.channelPolicy = channelPolicy
-
-	if context_ == nil {
-		context_ = context.Background()
-	}
-
 	self.context, self.exit = context.WithCancel(context_)
 	return self
 }

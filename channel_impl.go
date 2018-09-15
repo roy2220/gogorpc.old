@@ -137,7 +137,7 @@ type channelImpl struct {
 	state                    int32
 	lockOfListeners          sync.Mutex
 	listeners                map[*ChannelListener]struct{}
-	id                       *uuid.UUID
+	id                       uuid.UUID
 	timeout                  time.Duration
 	incomingWindowSize       int32
 	outgoingWindowSize       int32
@@ -225,7 +225,7 @@ func (self *channelImpl) removeListener(listener *ChannelListener) error {
 }
 
 func (self *channelImpl) connect(context_ context.Context, serverAddress string) error {
-	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", self.getIDString(), serverAddress)
+	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", self.id.Base64(), serverAddress)
 	self.setState(ChannelConnecting)
 	var transport_ transport
 
@@ -239,8 +239,8 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 		OutgoingWindowSize: self.policy.OutgoingWindowSize,
 	}
 
-	if self.id != nil {
-		handshake.Id = (*self.id)[:]
+	if !self.id.IsZero() {
+		handshake.Id = self.id[:]
 	}
 
 	if e := transport_.write(func(byteStream *byte_stream.ByteStream) error {
@@ -277,9 +277,7 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 		return e
 	}
 
-	var id uuid.UUID
-	copy(id[:], handshake.Id)
-	self.id = &id
+	copy(self.id[:], handshake.Id)
 	self.timeout = time.Duration(handshake.Timeout) * time.Millisecond
 	self.incomingWindowSize = handshake.IncomingWindowSize
 	self.outgoingWindowSize = handshake.OutgoingWindowSize
@@ -292,7 +290,7 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 	self.transport.close()
 	self.transport = transport_
 	self.setState(ChannelConnected)
-	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.getIDString(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
@@ -375,7 +373,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn) e
 		return e
 	}
 
-	self.id = &id
+	self.id = id
 	self.timeout = time.Duration(handshake.Timeout) * time.Millisecond
 	self.incomingWindowSize = handshake.OutgoingWindowSize
 	self.outgoingWindowSize = handshake.IncomingWindowSize
@@ -388,7 +386,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn) e
 	self.transport.close()
 	self.transport = transport_
 	self.setState(ChannelAccepted)
-	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.getIDString(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
@@ -428,6 +426,20 @@ func (self *channelImpl) callMethod(
 	}
 
 	methodCall_ := poolOfMethodCalls.Get().(*methodCall)
+
+	if contextVars_, ok := GetContextVars(context_); ok {
+		methodCall_.traceID = contextVars_.TraceID
+	} else {
+		traceID, e := uuid.GenerateUUID4()
+
+		if e != nil {
+			poolOfMethodCalls.Put(methodCall_)
+			return e
+		}
+
+		methodCall_.traceID = traceID
+	}
+
 	methodCall_.serviceName = serviceName
 	methodCall_.methodName = methodName
 	methodCall_.request = request
@@ -448,14 +460,6 @@ func (self *channelImpl) callMethod(
 
 func (self *channelImpl) isClosed() bool {
 	return self.getErrorCode() != 0
-}
-
-func (self *channelImpl) getIDString() string {
-	if self.id == nil {
-		return ""
-	}
-
-	return self.id.Base64()
 }
 
 func (self *channelImpl) getTimeout() time.Duration {
@@ -518,7 +522,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 	}
 
 	atomic.StoreInt32(&self.state, int32(newState))
-	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", self.getIDString(), oldState, newState)
+	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", self.id.Base64(), oldState, newState)
 	self.lockOfListeners.Lock()
 
 	for listener := range self.listeners {
@@ -575,7 +579,6 @@ func (self *channelImpl) setState(newState ChannelState) {
 				}
 			}
 
-			self.id = nil
 			self.transport.close()
 
 			{
@@ -765,6 +768,7 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 				methodCall_.sequenceNumber = self.getSequenceNumber()
 
 				requestHeader := protocol.RequestHeader{
+					TraceId:        methodCall_.traceID[:],
 					SequenceNumber: methodCall_.sequenceNumber,
 					ServiceName:    methodCall_.serviceName,
 					MethodName:     methodCall_.methodName,
@@ -963,6 +967,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 
 						ContextVars: ContextVars{
 							Channel: self.holder,
+							TraceID: uuid.UUIDFromBytes(requestHeader.TraceId),
 						},
 
 						Request: request,
@@ -999,7 +1004,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 
 					poolOfMethodCalls.Put(methodCall_)
 				} else {
-					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", self.getIDString(), responseHeader)
+					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", self.id.Base64(), responseHeader)
 				}
 			case protocol.MESSAGE_HEARTBEAT:
 				var heartbeat protocol.Heartbeat
@@ -1041,6 +1046,7 @@ func (self *channelImpl) getSequenceNumber() int32 {
 
 type methodCall struct {
 	listNode       list.ListNode
+	traceID        uuid.UUID
 	sequenceNumber int32
 	serviceName    string
 	methodName     string
