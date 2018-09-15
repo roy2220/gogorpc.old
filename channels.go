@@ -126,10 +126,9 @@ func (self *ServerChannel) Run() error {
 }
 
 type channelBase struct {
-	impl     channelImpl
-	context  context.Context
-	stop     context.CancelFunc
-	userData unsafe.Pointer
+	impl    channelImpl
+	context context.Context
+	stop    context.CancelFunc
 }
 
 func (self *channelBase) AddListener(maxNumberOfStateChanges int) (*ChannelListener, error) {
@@ -218,10 +217,6 @@ func (self *channelBase) CallMethodWithoutReturn(
 
 func (self *channelBase) GetIDString() string {
 	return self.impl.getIDString()
-}
-
-func (self *channelBase) UserData() *unsafe.Pointer {
-	return &self.userData
 }
 
 func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClientSide bool, context_ context.Context) *channelBase {

@@ -18,7 +18,7 @@ type ServerServiceHandler1 struct {
 	ServerServiceHandlerBase
 }
 
-func (ServerServiceHandler1) SayHello(context_ context.Context, channel pbrpc.Channel, request *SayHelloRequest) (*SayHelloResponse, error) {
+func (ServerServiceHandler1) SayHello(context_ context.Context, request *SayHelloRequest) (*SayHelloResponse, error) {
 	response := &SayHelloResponse{
 		Reply: fmt.Sprintf(request.ReplyFormat, "0"),
 	}
@@ -30,7 +30,7 @@ type ServerServiceHandler2 struct {
 	ServerServiceHandlerBase
 }
 
-func (ServerServiceHandler2) SayHello(context_ context.Context, channel pbrpc.Channel, request *SayHelloRequest) (*SayHelloResponse, error) {
+func (ServerServiceHandler2) SayHello(context_ context.Context, request *SayHelloRequest) (*SayHelloResponse, error) {
 	response := &SayHelloResponse{
 		Reply: fmt.Sprintf(request.ReplyFormat, "1"),
 	}
@@ -42,7 +42,7 @@ type ServerServiceHandler3 struct {
 	ServerServiceHandlerBase
 }
 
-func (ServerServiceHandler3) SayHello(context_ context.Context, channel pbrpc.Channel, request *SayHelloRequest) (*SayHelloResponse, error) {
+func (ServerServiceHandler3) SayHello(context_ context.Context, request *SayHelloRequest) (*SayHelloResponse, error) {
 	response := &SayHelloResponse{
 		Reply: fmt.Sprintf(request.ReplyFormat, "2"),
 	}
@@ -57,13 +57,13 @@ func TestRegistry(t *testing.T) {
 	cp := &pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-cli", logger.SeverityInfo, os.Stdout, os.Stderr)}
 	reg := (&pbrpc.Registry{}).Initialize(zkc, cp, ctx)
 	sp1 := (&pbrpc.ServerPolicy{Registry: reg, Channel: pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv1", logger.SeverityInfo, os.Stdout, os.Stderr)}}).
-		RegisterServiceHandler(ServerServiceHandler1{})
+		RegisterServiceHandler(&ServerServiceHandler1{})
 	s1 := (&pbrpc.Server{}).Initialize(sp1, "127.0.0.1:0", "", ctx)
 	sp2 := (&pbrpc.ServerPolicy{Registry: reg, Channel: pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv2", logger.SeverityInfo, os.Stdout, os.Stderr)}}).
-		RegisterServiceHandler(ServerServiceHandler2{})
+		RegisterServiceHandler(&ServerServiceHandler2{})
 	s2 := (&pbrpc.Server{}).Initialize(sp2, "127.0.0.1:0", "", ctx)
 	sp3 := (&pbrpc.ServerPolicy{Registry: reg, Channel: pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv3", logger.SeverityInfo, os.Stdout, os.Stderr)}}).
-		RegisterServiceHandler(ServerServiceHandler3{})
+		RegisterServiceHandler(&ServerServiceHandler3{})
 	s3 := (&pbrpc.Server{}).Initialize(sp3, "127.0.0.1:0", "", ctx)
 
 	var wg sync.WaitGroup
@@ -246,13 +246,13 @@ func BenchmarkRegistry(b *testing.B) {
 	cp := &pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-cli", logger.SeverityInfo, os.Stdout, os.Stderr)}
 	reg := (&pbrpc.Registry{}).Initialize(zkc, cp, ctx)
 	sp1 := (&pbrpc.ServerPolicy{Registry: reg, Channel: pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv1", logger.SeverityInfo, os.Stdout, os.Stderr)}}).
-		RegisterServiceHandler(ServerServiceHandler1{})
+		RegisterServiceHandler(&ServerServiceHandler1{})
 	s1 := (&pbrpc.Server{}).Initialize(sp1, "127.0.0.1:0", "", ctx)
 	sp2 := (&pbrpc.ServerPolicy{Registry: reg, Channel: pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv2", logger.SeverityInfo, os.Stdout, os.Stderr)}}).
-		RegisterServiceHandler(ServerServiceHandler2{})
+		RegisterServiceHandler(&ServerServiceHandler2{})
 	s2 := (&pbrpc.Server{}).Initialize(sp2, "127.0.0.1:0", "", ctx)
 	sp3 := (&pbrpc.ServerPolicy{Registry: reg, Channel: pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv3", logger.SeverityInfo, os.Stdout, os.Stderr)}}).
-		RegisterServiceHandler(ServerServiceHandler3{})
+		RegisterServiceHandler(&ServerServiceHandler3{})
 	s3 := (&pbrpc.Server{}).Initialize(sp3, "127.0.0.1:0", "", ctx)
 
 	var wg sync.WaitGroup

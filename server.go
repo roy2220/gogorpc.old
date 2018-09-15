@@ -117,14 +117,34 @@ func (self *Server) Run() error {
 			break
 		}
 
-		channel := self.policy.ChannelFactory().Initialize(&self.policy.Channel, connection, self.context1)
 		wg.Add(1)
 
-		go func(logger_ *logger.Logger) {
-			e := channel.Run()
+		go func(
+			policy *ServerPolicy,
+			connection net.Conn,
+			context_ context.Context,
+			logger_ *logger.Logger,
+		) {
+			channel, e := policy.ChannelFactory.CreateProduct(&policy.Channel, connection, context_)
+
+			if e != nil {
+				logger_.Errorf("channel creation failure: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
+				connection.Close()
+				wg.Done()
+				return
+			}
+
+			e = channel.Run()
 			logger_.Infof("channel run-out: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
+			policy.ChannelFactory.DestroyProduct(channel)
 			wg.Done()
-		}(&self.policy.Channel.Logger)
+		}(
+
+			self.policy,
+			connection,
+			self.context1,
+			&self.policy.Channel.Logger,
+		)
 	}
 
 	if self.policy.Registry != nil {
@@ -154,7 +174,7 @@ func (self *Server) Stop(force bool) {
 type ServerPolicy struct {
 	Registry       *Registry
 	Weight         int32
-	ChannelFactory func() *ServerChannel
+	ChannelFactory ServerChannelFactory
 	Channel        ChannelPolicy
 	validateOnce   sync.Once
 }
@@ -173,12 +193,26 @@ func (self *ServerPolicy) Validate() *ServerPolicy {
 		}
 
 		if self.ChannelFactory == nil {
-			self.ChannelFactory = func() *ServerChannel { return &ServerChannel{} }
+			self.ChannelFactory = defaultServerChannelFactory{}
 		}
 	})
 
 	return self
 }
 
+type ServerChannelFactory interface {
+	CreateProduct(*ChannelPolicy, net.Conn, context.Context) (*ServerChannel, error)
+	DestroyProduct(*ServerChannel)
+}
+
 const acceptTimeoutOfServer = 2 * time.Second
 const defaultWeight = 5
+
+type defaultServerChannelFactory struct{}
+
+func (defaultServerChannelFactory) CreateProduct(productPolicy *ChannelPolicy, connection net.Conn, context_ context.Context) (*ServerChannel, error) {
+	return (&ServerChannel{}).Initialize(productPolicy, connection, context_), nil
+}
+
+func (defaultServerChannelFactory) DestroyProduct(_ *ServerChannel) {
+}

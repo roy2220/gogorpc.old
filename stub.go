@@ -30,10 +30,6 @@ type MethodHandlingInfo struct {
 	logger *logger.Logger
 }
 
-func (self *MethodHandlingInfo) setContext(context_ context.Context) {
-	self.Context = context.WithValue(context_, contextVars{}, &self.ContextVars)
-}
-
 type ContextVars struct {
 	Channel Channel
 }
@@ -45,7 +41,6 @@ type Channel interface {
 	Run() error
 	Stop()
 	GetIDString() string
-	UserData() *unsafe.Pointer
 }
 
 type MethodCaller interface {
@@ -148,6 +143,10 @@ func MustGetContextVars(context_ context.Context) *ContextVars {
 }
 
 type contextVars struct{}
+
+func bindContextVars(context_ context.Context, contextVars_ *ContextVars) context.Context {
+	return context.WithValue(context_, contextVars{}, contextVars_)
+}
 
 func handleMethod(methodHandlingInfo *MethodHandlingInfo) (OutgoingMessage, ErrorCode) {
 	response, e := methodHandlingInfo.MethodRecord.Handler(methodHandlingInfo.ServiceHandler, methodHandlingInfo.Context, methodHandlingInfo.Request)

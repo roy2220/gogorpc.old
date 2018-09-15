@@ -944,36 +944,35 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					continue
 				}
 
-				methodHandlingInfo := MethodHandlingInfo{
-					ServiceHandler: serviceHandler,
-					MethodRecord:   methodRecord,
-
-					ContextVars: ContextVars{
-						Channel: self.holder,
-					},
-
-					Request: request,
-
-					logger: &self.policy.Logger,
-				}
-
-				methodHandlingInfo.setContext(context_)
-
-				backup := struct {
-					dequeOfResultReturns *deque.Deque
-					sequenceNumber       int32
-				}{
-					dequeOfResultReturns: self.dequeOfResultReturns,
-					sequenceNumber:       requestHeader.SequenceNumber,
-				}
-
 				self.wgOfPendingResultReturns.Add(1)
 
-				go func() {
+				go func(
+					methodHandlingInfo MethodHandlingInfo,
+					dequeOfResultReturns *deque.Deque,
+					sequenceNumber int32,
+				) {
+					methodHandlingInfo.Context = bindContextVars(methodHandlingInfo.Context, &methodHandlingInfo.ContextVars)
 					response, errorCode := methodHandlingInfo.ServiceHandler.X_HandleMethod(&methodHandlingInfo)
-					returnResult(backup.dequeOfResultReturns, backup.sequenceNumber, errorCode, response)
+					returnResult(dequeOfResultReturns, sequenceNumber, errorCode, response)
 					self.wgOfPendingResultReturns.Done()
-				}()
+				}(
+					MethodHandlingInfo{
+						ServiceHandler: serviceHandler,
+						MethodRecord:   methodRecord,
+						Context:        context_,
+
+						ContextVars: ContextVars{
+							Channel: self.holder,
+						},
+
+						Request: request,
+
+						logger: &self.policy.Logger,
+					},
+
+					self.dequeOfResultReturns,
+					requestHeader.SequenceNumber,
+				)
 			case protocol.MESSAGE_RESPONSE:
 				var responseHeader protocol.ResponseHeader
 
