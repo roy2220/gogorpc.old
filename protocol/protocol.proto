@@ -11,11 +11,16 @@ enum MessageType {
     MESSAGE_HEARTBEAT = 2;
 }
 
-message Handshake {
-    bytes id = 1;
-    int32 timeout = 2;
-    int32 incoming_window_size = 3;
-    int32 outgoing_window_size = 4;
+message Greeting {
+    message Channel {
+        bytes id = 1;
+        int32 timeout = 2;
+        int32 incoming_window_size = 3;
+        int32 outgoing_window_size = 4;
+    }
+
+    Channel channel = 1 [ (gogoproto.nullable) = false ];
+    bytes handshake = 2;
 }
 
 message RequestHeader {
@@ -28,9 +33,10 @@ message RequestHeader {
 enum ErrorCode {
     ERROR_NO = 0;
     ERROR_CHANNEL_BUSY = 1;
-    ERROR_NOT_IMPLEMENTED = 2;
+    ERROR_NOT_FOUND = 2;
     ERROR_BAD_REQUEST = 3;
-    ERROR_INTERNAL_SERVER = 4;
+    ERROR_NOT_IMPLEMENTED = 4;
+    ERROR_INTERNAL_SERVER = 5;
     ERROR_USER_DEFINED = 256;
 }
 

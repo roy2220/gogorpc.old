@@ -14,8 +14,9 @@ const (
 
 const (
 	ErrorChannelBusy    = ErrorCode(protocol.ERROR_CHANNEL_BUSY)
-	ErrorNotImplemented = ErrorCode(protocol.ERROR_NOT_IMPLEMENTED)
+	ErrorNotFound       = ErrorCode(protocol.ERROR_NOT_FOUND)
 	ErrorBadRequest     = ErrorCode(protocol.ERROR_BAD_REQUEST)
+	ErrorNotImplemented = ErrorCode(protocol.ERROR_NOT_IMPLEMENTED)
 	ErrorInternalServer = ErrorCode(protocol.ERROR_INTERNAL_SERVER)
 	ErrorUserDefined    = ErrorCode(protocol.ERROR_USER_DEFINED)
 )
@@ -98,7 +99,8 @@ var errorTable = map[ErrorCode][2]string{
 	ErrorPacketPayloadTooLarge: {"ErrorPacketPayloadTooLarge", "packet payload too large"},
 
 	ErrorChannelBusy:    {"ErrorChannelBusy", "channel busy"},
-	ErrorNotImplemented: {"ErrorNotImplemented", "not implemented"},
+	ErrorNotFound:       {"ErrorNotFound", "not found"},
 	ErrorBadRequest:     {"ErrorBadRequest", "bad request"},
+	ErrorNotImplemented: {"ErrorNotImplemented", "not implemented"},
 	ErrorInternalServer: {"ErrorInternalServer", "internal server"},
 }

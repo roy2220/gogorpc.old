@@ -35,6 +35,8 @@ const (
 
 type ChannelPolicy struct {
 	Logger             logger.Logger
+	ClientGreeter      func(*ServerChannel, context.Context, []byte) ([]byte, error)
+	ServerGreeter      func(*ClientChannel, context.Context, func(context.Context, []byte) ([]byte, error)) error
 	Timeout            time.Duration
 	IncomingWindowSize int32
 	OutgoingWindowSize int32
@@ -54,6 +56,14 @@ func (self *ChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler)
 
 func (self *ChannelPolicy) Validate() *ChannelPolicy {
 	self.validateOnce.Do(func() {
+		if self.ClientGreeter == nil {
+			self.ClientGreeter = greetClient
+		}
+
+		if self.ServerGreeter == nil {
+			self.ServerGreeter = greetServer
+		}
+
 		if self.Timeout == 0 {
 			self.Timeout = defaultChannelTimeout
 		} else {
@@ -233,61 +243,69 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 		return e
 	}
 
-	handshake := protocol.Handshake{
-		Timeout:            int32(self.policy.Timeout / time.Millisecond),
-		IncomingWindowSize: self.policy.IncomingWindowSize,
-		OutgoingWindowSize: self.policy.OutgoingWindowSize,
+	greeting := protocol.Greeting{
+		Channel: protocol.Greeting_Channel{
+			Timeout:            int32(self.policy.Timeout / time.Millisecond),
+			IncomingWindowSize: self.policy.IncomingWindowSize,
+			OutgoingWindowSize: self.policy.OutgoingWindowSize,
+		},
 	}
 
 	if !self.id.IsZero() {
-		handshake.Id = self.id[:]
+		greeting.Channel.Id = self.id[:]
 	}
 
-	if e := transport_.write(func(byteStream *byte_stream.ByteStream) error {
-		return byteStream.WriteDirectly(handshake.Size(), func(buffer []byte) error {
-			_, e := handshake.MarshalTo(buffer)
-			return e
-		})
-	}); e != nil {
-		transport_.close()
+	clientGreeter := func(context_ context.Context, handshake []byte) ([]byte, error) {
+		greeting.Handshake = handshake
+
+		if e := transport_.write(func(byteStream *byte_stream.ByteStream) error {
+			return byteStream.WriteDirectly(greeting.Size(), func(buffer []byte) error {
+				_, e := greeting.MarshalTo(buffer)
+				return e
+			})
+		}); e != nil {
+			return nil, e
+		}
+
+		if e := transport_.flush(context_, minChannelTimeout); e != nil {
+			return nil, e
+		}
+
+		data, e := transport_.peek(context_, minChannelTimeout)
+
+		if e != nil {
+			return nil, e
+		}
+
+		greeting.Reset()
+
+		if e := greeting.Unmarshal(data); e != nil {
+			return nil, e
+		}
+
+		if e := transport_.skip(data); e != nil {
+			return nil, e
+		}
+
+		return greeting.Handshake, nil
+	}
+
+	if e := self.policy.ServerGreeter(self.holder.(*ClientChannel), context_, clientGreeter); e != nil {
+		transport_.close(true)
 		return e
 	}
 
-	if e := transport_.flush(context_, minChannelTimeout); e != nil {
-		transport_.close()
-		return e
-	}
-
-	data, e := transport_.peek(context_, minChannelTimeout)
-
-	if e != nil {
-		transport_.close()
-		return e
-	}
-
-	handshake.Reset()
-
-	if e := handshake.Unmarshal(data); e != nil {
-		transport_.close()
-		return e
-	}
-
-	if e := transport_.skip(data); e != nil {
-		transport_.close()
-		return e
-	}
-
-	copy(self.id[:], handshake.Id)
-	self.timeout = time.Duration(handshake.Timeout) * time.Millisecond
-	self.incomingWindowSize = handshake.IncomingWindowSize
-	self.outgoingWindowSize = handshake.OutgoingWindowSize
+	copy(self.id[:], greeting.Channel.Id)
+	self.timeout = time.Duration(greeting.Channel.Timeout) * time.Millisecond
+	self.incomingWindowSize = greeting.Channel.IncomingWindowSize
+	self.outgoingWindowSize = greeting.Channel.OutgoingWindowSize
 
 	if e := self.dequeOfMethodCalls.CommitNodeRemovals(self.outgoingWindowSize - minChannelWindowSize); e != nil {
-		transport_.close()
+		transport_.close(true)
 		return e
 	}
 
-	self.transport.close()
+	self.transport.close(true)
 	self.transport = transport_
 	self.setState(ChannelConnected)
 	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
@@ -303,87 +321,94 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn) e
 	data, e := transport_.peek(context_, minChannelTimeout)
 
 	if e != nil {
-		transport_.close()
+		transport_.close(true)
 		return e
 	}
 
-	var handshake protocol.Handshake
+	var greeting protocol.Greeting
 
-	if e := handshake.Unmarshal(data); e != nil {
-		transport_.close()
+	if e := greeting.Unmarshal(data); e != nil {
+		transport_.close(true)
 		return e
 	}
 
 	if e := transport_.skip(data); e != nil {
-		transport_.close()
+		transport_.close(true)
 		return e
 	}
 
 	var id uuid.UUID
 
-	if len(handshake.Id) == 0 {
+	if len(greeting.Channel.Id) == 0 {
 		id, e = uuid.GenerateUUID4()
 
 		if e != nil {
-			transport_.close()
+			transport_.close(true)
 			return e
 		}
 
-		handshake.Id = id[:]
+		greeting.Channel.Id = id[:]
 	} else {
-		copy(id[:], handshake.Id)
+		copy(id[:], greeting.Channel.Id)
 	}
 
-	if timeout := time.Duration(handshake.Timeout) * time.Millisecond; timeout > self.policy.Timeout {
+	if timeout := time.Duration(greeting.Channel.Timeout) * time.Millisecond; timeout > self.policy.Timeout {
 		if timeout > maxChannelTimeout {
-			handshake.Timeout = int32(maxChannelTimeout / time.Millisecond)
+			greeting.Channel.Timeout = int32(maxChannelTimeout / time.Millisecond)
 		}
 	} else {
-		handshake.Timeout = int32(self.policy.Timeout / time.Millisecond)
+		greeting.Channel.Timeout = int32(self.policy.Timeout / time.Millisecond)
 	}
 
-	if handshake.IncomingWindowSize < self.policy.OutgoingWindowSize {
-		if handshake.IncomingWindowSize < minChannelWindowSize {
-			handshake.IncomingWindowSize = minChannelWindowSize
+	if greeting.Channel.IncomingWindowSize < self.policy.OutgoingWindowSize {
+		if greeting.Channel.IncomingWindowSize < minChannelWindowSize {
+			greeting.Channel.IncomingWindowSize = minChannelWindowSize
 		}
 	} else {
-		handshake.IncomingWindowSize = self.policy.OutgoingWindowSize
+		greeting.Channel.IncomingWindowSize = self.policy.OutgoingWindowSize
 	}
 
-	if handshake.OutgoingWindowSize < self.policy.IncomingWindowSize {
-		if handshake.OutgoingWindowSize < minChannelWindowSize {
-			handshake.OutgoingWindowSize = minChannelWindowSize
+	if greeting.Channel.OutgoingWindowSize < self.policy.IncomingWindowSize {
+		if greeting.Channel.OutgoingWindowSize < minChannelWindowSize {
+			greeting.Channel.OutgoingWindowSize = minChannelWindowSize
 		}
 	} else {
-		handshake.OutgoingWindowSize = self.policy.IncomingWindowSize
+		greeting.Channel.OutgoingWindowSize = self.policy.IncomingWindowSize
+	}
+
+	greeting.Handshake, e = self.policy.ClientGreeter(self.holder.(*ServerChannel), context_, greeting.Handshake)
+
+	if e != nil {
+		transport_.close(true)
+		return e
 	}
 
 	if e := transport_.write(func(byteStream *byte_stream.ByteStream) error {
-		return byteStream.WriteDirectly(handshake.Size(), func(buffer []byte) error {
-			_, e := handshake.MarshalTo(buffer)
+		return byteStream.WriteDirectly(greeting.Size(), func(buffer []byte) error {
+			_, e := greeting.MarshalTo(buffer)
 			return e
 		})
 	}); e != nil {
-		transport_.close()
+		transport_.close(true)
 		return e
 	}
 
 	if e := transport_.flush(context_, minChannelTimeout); e != nil {
-		transport_.close()
+		transport_.close(true)
 		return e
 	}
 
 	self.id = id
-	self.timeout = time.Duration(handshake.Timeout) * time.Millisecond
-	self.incomingWindowSize = handshake.OutgoingWindowSize
-	self.outgoingWindowSize = handshake.IncomingWindowSize
+	self.timeout = time.Duration(greeting.Channel.Timeout) * time.Millisecond
+	self.incomingWindowSize = greeting.Channel.OutgoingWindowSize
+	self.outgoingWindowSize = greeting.Channel.IncomingWindowSize
 
 	if e := self.dequeOfMethodCalls.CommitNodeRemovals(self.outgoingWindowSize - minChannelWindowSize); e != nil {
-		transport_.close()
+		transport_.close(true)
 		return e
 	}
 
-	self.transport.close()
+	self.transport.close(true)
 	self.transport = transport_
 	self.setState(ChannelAccepted)
 	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
@@ -579,7 +604,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 				}
 			}
 
-			self.transport.close()
+			self.transport.close(false)
 
 			{
 				list_ := (&list.List{}).Initialize()
@@ -929,7 +954,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 				serviceHandler, ok := self.policy.serviceHandlers[requestHeader.ServiceName]
 
 				if !ok {
-					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorNotImplemented, nil)
+					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorNotFound, nil)
 					continue
 				}
 
@@ -937,7 +962,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 				methodRecord, ok := methodTable.Search(requestHeader.MethodName)
 
 				if !ok {
-					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorNotImplemented, nil)
+					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorNotFound, nil)
 					continue
 				}
 
@@ -1088,6 +1113,18 @@ var channelState2ErrorCode = [...]ErrorCode{
 	ChannelClosed:       ErrorChannelTimedOut,
 }
 
+var poolOfMethodCalls = sync.Pool{New: func() interface{} { return &methodCall{} }}
+var poolOfResultReturns = sync.Pool{New: func() interface{} { return &resultReturn{} }}
+
+func greetClient(*ServerChannel, context.Context, []byte) ([]byte, error) {
+	return nil, nil
+}
+
+func greetServer(_ *ClientChannel, context_ context.Context, clientGreeter func(context.Context, []byte) ([]byte, error)) error {
+	_, e := clientGreeter(context_, nil)
+	return e
+}
+
 func returnResult(dequeOfResultReturns *deque.Deque, sequenceNumber int32, errorCode ErrorCode, response OutgoingMessage) error {
 	resultReturn_ := poolOfResultReturns.Get().(*resultReturn)
 	resultReturn_.sequenceNumber = sequenceNumber
@@ -1095,6 +1132,3 @@ func returnResult(dequeOfResultReturns *deque.Deque, sequenceNumber int32, error
 	resultReturn_.response = response
 	return dequeOfResultReturns.AppendNode(nil, &resultReturn_.listNode)
 }
-
-var poolOfMethodCalls = sync.Pool{New: func() interface{} { return &methodCall{} }}
-var poolOfResultReturns = sync.Pool{New: func() interface{} { return &resultReturn{} }}

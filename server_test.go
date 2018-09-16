@@ -3,6 +3,7 @@ package pbrpc
 import (
 	"context"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -61,4 +62,55 @@ func TestServer(t *testing.T) {
 	if c.impl.outgoingWindowSize != cp1.IncomingWindowSize {
 		t.Errorf("%#v != %#v", c.impl.incomingWindowSize, cp1.IncomingWindowSize)
 	}
+}
+
+func TestServerGreeting(t *testing.T) {
+	sp := &ServerPolicy{
+		Channel: ChannelPolicy{
+			ClientGreeter: func(_ *ServerChannel, _ context.Context, handshake []byte) ([]byte, error) {
+				n, e := strconv.Atoi(string(handshake))
+
+				if e != nil {
+					t.Errorf("%v", e)
+					return nil, e
+				}
+
+				return []byte(strconv.Itoa(n + 1)), nil
+			},
+			Logger: *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
+		},
+	}
+
+	s := (&Server{}).Initialize(sp, "", "", context.Background())
+
+	cp2 := &ChannelPolicy{
+		ServerGreeter: func(_ *ClientChannel, context_ context.Context, clientGreeter func(context.Context, []byte) ([]byte, error)) error {
+			handshake, e := clientGreeter(context_, []byte("99"))
+
+			if e == nil && string(handshake) != "100" {
+				t.Errorf("%#v", handshake)
+			}
+
+			return e
+		},
+		Logger: *(&logger.Logger{}).Initialize("pbrpctest-cli", logger.SeverityInfo, os.Stdout, os.Stderr),
+	}
+
+	c := (&ClientChannel{}).Initialize(cp2, nil, context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		go func() {
+			time.Sleep(2 * time.Second)
+			s.Stop(true)
+		}()
+
+		time.Sleep(time.Second / 2)
+		c.Run()
+		wg.Done()
+	}()
+
+	s.Run()
+	wg.Wait()
 }

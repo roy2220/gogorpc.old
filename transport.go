@@ -73,9 +73,13 @@ func (self *transport) accept(policy *TransportPolicy, connection net.Conn) *tra
 	return self.initialize(policy, connection)
 }
 
-func (self *transport) close() error {
+func (self *transport) close(force bool) error {
 	if self.isClosed() {
 		return TransportClosedError
+	}
+
+	if force {
+		self.connection.(*net.TCPConn).SetLinger(0)
 	}
 
 	e := self.connection.Close()

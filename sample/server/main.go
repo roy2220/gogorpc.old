@@ -24,16 +24,16 @@ func (*ServerServiceHandler) SayHello(context_ context.Context, request *sample.
 	return response2, nil
 }
 
-func InterceptMethod(methodHandlingInfo *pbrpc.MethodHandlingInfo, methodhandler pbrpc.MethodHandler) (pbrpc.OutgoingMessage, pbrpc.ErrorCode) {
+func InterceptMethod(methodHandlingInfo *pbrpc.MethodHandlingInfo, methodHandler pbrpc.MethodHandler) (pbrpc.OutgoingMessage, pbrpc.ErrorCode) {
 	serviceName := methodHandlingInfo.ServiceHandler.X_GetName()
 	methodName := methodHandlingInfo.MethodRecord.Name
 	fmt.Printf("%v.%v begin\n", serviceName, methodName)
 	fmt.Printf("trace_id=%#v\n", methodHandlingInfo.ContextVars.TraceID.Base64())
 	fmt.Printf("request=%#v\n", methodHandlingInfo.Request)
-	response, e := methodhandler(methodHandlingInfo)
+	response, errorCode := methodHandler(methodHandlingInfo)
 	fmt.Printf("response=%#v\n", response)
 	fmt.Printf("%v.%v end\n", serviceName, methodName)
-	return response, e
+	return response, errorCode
 }
 
 func main() {
