@@ -198,7 +198,7 @@ func (self *channelBase) CallMethodWithoutReturn(
 	autoRetryMethodCall bool,
 ) error {
 	return self.impl.callMethod(
-		context_,
+		clearContextVars(context_),
 		serviceName,
 		methodName,
 		request,

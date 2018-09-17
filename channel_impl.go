@@ -41,8 +41,9 @@ type ChannelPolicy struct {
 	IncomingWindowSize int32
 	OutgoingWindowSize int32
 	Transport          TransportPolicy
-	serviceHandlers    map[string]ServiceHandler
-	validateOnce       sync.Once
+
+	serviceHandlers map[string]ServiceHandler
+	validateOnce    sync.Once
 }
 
 func (self *ChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ChannelPolicy {
@@ -454,6 +455,9 @@ func (self *channelImpl) callMethod(
 
 	if contextVars_, ok := GetContextVars(context_); ok {
 		methodCall_.traceID = contextVars_.TraceID
+		methodCall_.spanParentID = contextVars_.SpanID
+		methodCall_.spanID = contextVars_.NextSpanID
+		methodCall_.nextSpanID = &contextVars_.NextSpanID
 	} else {
 		traceID, e := uuid.GenerateUUID4()
 
@@ -463,6 +467,9 @@ func (self *channelImpl) callMethod(
 		}
 
 		methodCall_.traceID = traceID
+		methodCall_.spanParentID = 0
+		methodCall_.spanID = 1
+		methodCall_.nextSpanID = &methodCall_.spanID // dummy buffer
 	}
 
 	methodCall_.serviceName = serviceName
@@ -794,6 +801,8 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 
 				requestHeader := protocol.RequestHeader{
 					TraceId:        methodCall_.traceID[:],
+					SpanParentId:   methodCall_.spanParentID,
+					SpanId:         methodCall_.spanID,
 					SequenceNumber: methodCall_.sequenceNumber,
 					ServiceName:    methodCall_.serviceName,
 					MethodName:     methodCall_.methodName,
@@ -838,6 +847,7 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
 
 				responseHeader := protocol.ResponseHeader{
+					NextSpanId:     resultReturn_.nextSpanID,
 					SequenceNumber: resultReturn_.sequenceNumber,
 					ErrorCode:      int32(resultReturn_.errorCode),
 				}
@@ -944,17 +954,18 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					return IllFormedMessageError
 				}
 
+				nextSpanID := requestHeader.SpanId + 1
 				newPendingResultReturnCount++
 
 				if newPendingResultReturnCount > self.incomingWindowSize {
-					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorChannelBusy, nil)
+					returnResult(self.dequeOfResultReturns, nextSpanID, requestHeader.SequenceNumber, ErrorTooManyRequests, nil)
 					continue
 				}
 
 				serviceHandler, ok := self.policy.serviceHandlers[requestHeader.ServiceName]
 
 				if !ok {
-					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorNotFound, nil)
+					returnResult(self.dequeOfResultReturns, nextSpanID, requestHeader.SequenceNumber, ErrorNotFound, nil)
 					continue
 				}
 
@@ -962,14 +973,14 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 				methodRecord, ok := methodTable.Search(requestHeader.MethodName)
 
 				if !ok {
-					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorNotFound, nil)
+					returnResult(self.dequeOfResultReturns, nextSpanID, requestHeader.SequenceNumber, ErrorNotFound, nil)
 					continue
 				}
 
 				request := reflect.New(methodRecord.RequestType).Interface().(IncomingMessage)
 
 				if e := request.Unmarshal(data2[2+messageHeaderSize:]); e != nil {
-					returnResult(self.dequeOfResultReturns, requestHeader.SequenceNumber, ErrorBadRequest, nil)
+					returnResult(self.dequeOfResultReturns, nextSpanID, requestHeader.SequenceNumber, ErrorBadRequest, nil)
 					continue
 				}
 
@@ -982,7 +993,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 				) {
 					methodHandlingInfo.Context = bindContextVars(methodHandlingInfo.Context, &methodHandlingInfo.ContextVars)
 					response, errorCode := methodHandlingInfo.ServiceHandler.X_HandleMethod(&methodHandlingInfo)
-					returnResult(dequeOfResultReturns, sequenceNumber, errorCode, response)
+					returnResult(dequeOfResultReturns, methodHandlingInfo.ContextVars.NextSpanID, sequenceNumber, errorCode, response)
 					self.wgOfPendingResultReturns.Done()
 				}(
 					MethodHandlingInfo{
@@ -991,8 +1002,11 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 						Context:        context_,
 
 						ContextVars: ContextVars{
-							Channel: self.holder,
-							TraceID: uuid.UUIDFromBytes(requestHeader.TraceId),
+							Channel:      self.holder,
+							TraceID:      uuid.UUIDFromBytes(requestHeader.TraceId),
+							SpanParentID: requestHeader.SpanParentId,
+							SpanID:       requestHeader.SpanId,
+							NextSpanID:   nextSpanID,
 						},
 
 						Request: request,
@@ -1014,6 +1028,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					self.pendingMethodCalls.Delete(responseHeader.SequenceNumber)
 					completedMethodCallCount++
 					methodCall_ := value.(*methodCall)
+					*methodCall_.nextSpanID = responseHeader.NextSpanId
 
 					if responseHeader.ErrorCode == 0 {
 						response := reflect.New(methodCall_.responseType).Interface().(IncomingMessage)
@@ -1072,6 +1087,9 @@ func (self *channelImpl) getSequenceNumber() int32 {
 type methodCall struct {
 	listNode       list.ListNode
 	traceID        uuid.UUID
+	spanParentID   int32
+	spanID         int32
+	nextSpanID     *int32
 	sequenceNumber int32
 	serviceName    string
 	methodName     string
@@ -1083,6 +1101,7 @@ type methodCall struct {
 
 type resultReturn struct {
 	listNode       list.ListNode
+	nextSpanID     int32
 	sequenceNumber int32
 	errorCode      ErrorCode
 	response       OutgoingMessage
@@ -1125,8 +1144,9 @@ func greetServer(_ *ClientChannel, context_ context.Context, clientGreeter func(
 	return e
 }
 
-func returnResult(dequeOfResultReturns *deque.Deque, sequenceNumber int32, errorCode ErrorCode, response OutgoingMessage) error {
+func returnResult(dequeOfResultReturns *deque.Deque, nextSpanID int32, sequenceNumber int32, errorCode ErrorCode, response OutgoingMessage) error {
 	resultReturn_ := poolOfResultReturns.Get().(*resultReturn)
+	resultReturn_.nextSpanID = nextSpanID
 	resultReturn_.sequenceNumber = sequenceNumber
 	resultReturn_.errorCode = errorCode
 	resultReturn_.response = response

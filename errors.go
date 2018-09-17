@@ -13,12 +13,12 @@ const (
 )
 
 const (
-	ErrorChannelBusy    = ErrorCode(protocol.ERROR_CHANNEL_BUSY)
-	ErrorNotFound       = ErrorCode(protocol.ERROR_NOT_FOUND)
-	ErrorBadRequest     = ErrorCode(protocol.ERROR_BAD_REQUEST)
-	ErrorNotImplemented = ErrorCode(protocol.ERROR_NOT_IMPLEMENTED)
-	ErrorInternalServer = ErrorCode(protocol.ERROR_INTERNAL_SERVER)
-	ErrorUserDefined    = ErrorCode(protocol.ERROR_USER_DEFINED)
+	ErrorTooManyRequests = ErrorCode(protocol.ERROR_TOO_MANY_REQUESTS)
+	ErrorNotFound        = ErrorCode(protocol.ERROR_NOT_FOUND)
+	ErrorBadRequest      = ErrorCode(protocol.ERROR_BAD_REQUEST)
+	ErrorNotImplemented  = ErrorCode(protocol.ERROR_NOT_IMPLEMENTED)
+	ErrorInternalServer  = ErrorCode(protocol.ERROR_INTERNAL_SERVER)
+	ErrorUserDefined     = ErrorCode(protocol.ERROR_USER_DEFINED)
 )
 
 type Error struct {
@@ -98,9 +98,9 @@ var errorTable = map[ErrorCode][2]string{
 	ErrorChannelTimedOut:       {"ErrorChannelTimedOut", "channel timed out"},
 	ErrorPacketPayloadTooLarge: {"ErrorPacketPayloadTooLarge", "packet payload too large"},
 
-	ErrorChannelBusy:    {"ErrorChannelBusy", "channel busy"},
-	ErrorNotFound:       {"ErrorNotFound", "not found"},
-	ErrorBadRequest:     {"ErrorBadRequest", "bad request"},
-	ErrorNotImplemented: {"ErrorNotImplemented", "not implemented"},
-	ErrorInternalServer: {"ErrorInternalServer", "internal server"},
+	ErrorTooManyRequests: {"ErrorTooManyRequests", "too many requests"},
+	ErrorNotFound:        {"ErrorNotFound", "not found"},
+	ErrorBadRequest:      {"ErrorBadRequest", "bad request"},
+	ErrorNotImplemented:  {"ErrorNotImplemented", "not implemented"},
+	ErrorInternalServer:  {"ErrorInternalServer", "internal server"},
 }

@@ -31,8 +31,11 @@ type MethodHandlingInfo struct {
 }
 
 type ContextVars struct {
-	Channel Channel
-	TraceID uuid.UUID
+	Channel      Channel
+	TraceID      uuid.UUID
+	SpanParentID int32
+	SpanID       int32
+	NextSpanID   int32
 }
 
 type Channel interface {
@@ -146,6 +149,10 @@ type contextVars struct{}
 
 func bindContextVars(context_ context.Context, contextVars_ *ContextVars) context.Context {
 	return context.WithValue(context_, contextVars{}, contextVars_)
+}
+
+func clearContextVars(context_ context.Context) context.Context {
+	return context.WithValue(context_, contextVars{}, nil)
 }
 
 func handleMethod(methodHandlingInfo *MethodHandlingInfo) (OutgoingMessage, ErrorCode) {

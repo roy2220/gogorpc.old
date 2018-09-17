@@ -171,7 +171,8 @@ type ServerPolicy struct {
 	Weight         int32
 	ChannelFactory ServerChannelFactory
 	Channel        ChannelPolicy
-	validateOnce   sync.Once
+
+	validateOnce sync.Once
 }
 
 func (self *ServerPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ServerPolicy {

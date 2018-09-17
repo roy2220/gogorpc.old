@@ -14,7 +14,8 @@ import (
 type TransportPolicy struct {
 	InitialReadBufferSize int32
 	MaxPacketPayloadSize  int32
-	validateOnce          sync.Once
+
+	validateOnce sync.Once
 }
 
 func (self *TransportPolicy) Validate() *TransportPolicy {
