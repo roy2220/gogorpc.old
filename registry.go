@@ -21,7 +21,7 @@ const (
 
 type Registry struct {
 	client                          *zk.Client
-	channelPolicy                   *ChannelPolicy
+	channelPolicy                   *ClientChannelPolicy
 	serviceName2ServiceProviderList sync.Map
 	randomizedLoadBalancer          randomizedLoadBalancer
 	roundRobinLoadBalancer          roundRobinLoadBalancer
@@ -31,7 +31,7 @@ type Registry struct {
 	exit                            context.CancelFunc
 }
 
-func (self *Registry) Initialize(client *zk.Client, channelPolicy *ChannelPolicy, context_ context.Context) *Registry {
+func (self *Registry) Initialize(client *zk.Client, channelPolicy *ClientChannelPolicy, context_ context.Context) *Registry {
 	if self.context != nil {
 		panic(errors.New("pbrpc: registry already initialized"))
 	}
@@ -285,7 +285,7 @@ func (self methodCallerProxy) CallMethod(context_ context.Context, serviceName s
 		response, e := methodCaller.CallMethod(context_, serviceName, methodName, request, responseType, autoRetryMethodCall)
 
 		if e != nil {
-			if e, ok := e.(Error); ok && e.code == ErrorChannelTimedOut {
+			if e2, ok := e.(Error); ok && e2.code == ErrorChannelTimedOut {
 				excludedServerList.addItem(serverAddress)
 				continue
 			}
@@ -312,7 +312,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(context_ context.Context, 
 		e = methodCaller.CallMethodWithoutReturn(context_, serviceName, methodName, request, responseType, autoRetryMethodCall)
 
 		if e != nil {
-			if e, ok := e.(Error); ok && e.code == ErrorChannelTimedOut {
+			if e2, ok := e.(Error); ok && e2.code == ErrorChannelTimedOut {
 				excludedServerList.addItem(serverAddress)
 				continue
 			}

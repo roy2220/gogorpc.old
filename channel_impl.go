@@ -35,18 +35,15 @@ const (
 
 type ChannelPolicy struct {
 	Logger             logger.Logger
-	ClientGreeter      func(*ServerChannel, context.Context, []byte) ([]byte, error)
-	ServerGreeter      func(*ClientChannel, context.Context, func(context.Context, []byte) ([]byte, error)) error
 	Timeout            time.Duration
 	IncomingWindowSize int32
 	OutgoingWindowSize int32
 	Transport          TransportPolicy
 
 	serviceHandlers map[string]ServiceHandler
-	validateOnce    sync.Once
 }
 
-func (self *ChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ChannelPolicy {
+func (self *ChannelPolicy) registerServiceHandler(serviceHandler ServiceHandler) *ChannelPolicy {
 	if self.serviceHandlers == nil {
 		self.serviceHandlers = map[string]ServiceHandler{}
 	}
@@ -55,46 +52,36 @@ func (self *ChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler)
 	return self
 }
 
-func (self *ChannelPolicy) Validate() *ChannelPolicy {
-	self.validateOnce.Do(func() {
-		if self.ClientGreeter == nil {
-			self.ClientGreeter = greetClient
+func (self *ChannelPolicy) validate() *ChannelPolicy {
+	if self.Timeout == 0 {
+		self.Timeout = defaultChannelTimeout
+	} else {
+		if self.Timeout < minChannelTimeout {
+			self.Timeout = minChannelTimeout
+		} else if self.Timeout > maxChannelTimeout {
+			self.Timeout = maxChannelTimeout
 		}
+	}
 
-		if self.ServerGreeter == nil {
-			self.ServerGreeter = greetServer
+	if self.IncomingWindowSize == 0 {
+		self.IncomingWindowSize = defaultChannelWindowSize
+	} else {
+		if self.IncomingWindowSize < minChannelWindowSize {
+			self.IncomingWindowSize = minChannelWindowSize
+		} else if self.IncomingWindowSize > maxChannelWindowSize {
+			self.IncomingWindowSize = maxChannelWindowSize
 		}
+	}
 
-		if self.Timeout == 0 {
-			self.Timeout = defaultChannelTimeout
-		} else {
-			if self.Timeout < minChannelTimeout {
-				self.Timeout = minChannelTimeout
-			} else if self.Timeout > maxChannelTimeout {
-				self.Timeout = maxChannelTimeout
-			}
+	if self.OutgoingWindowSize == 0 {
+		self.OutgoingWindowSize = defaultChannelWindowSize
+	} else {
+		if self.OutgoingWindowSize < minChannelWindowSize {
+			self.OutgoingWindowSize = minChannelWindowSize
+		} else if self.OutgoingWindowSize > maxChannelWindowSize {
+			self.OutgoingWindowSize = maxChannelWindowSize
 		}
-
-		if self.IncomingWindowSize == 0 {
-			self.IncomingWindowSize = defaultChannelWindowSize
-		} else {
-			if self.IncomingWindowSize < minChannelWindowSize {
-				self.IncomingWindowSize = minChannelWindowSize
-			} else if self.IncomingWindowSize > maxChannelWindowSize {
-				self.IncomingWindowSize = maxChannelWindowSize
-			}
-		}
-
-		if self.OutgoingWindowSize == 0 {
-			self.OutgoingWindowSize = defaultChannelWindowSize
-		} else {
-			if self.OutgoingWindowSize < minChannelWindowSize {
-				self.OutgoingWindowSize = minChannelWindowSize
-			} else if self.OutgoingWindowSize > maxChannelWindowSize {
-				self.OutgoingWindowSize = maxChannelWindowSize
-			}
-		}
-	})
+	}
 
 	return self
 }
@@ -167,7 +154,7 @@ func (self *channelImpl) initialize(holder Channel, policy *ChannelPolicy, isCli
 	}
 
 	self.holder = holder
-	self.policy = policy.Validate()
+	self.policy = policy
 
 	if isClientSide {
 		self.state = int32(ChannelNotConnected)
@@ -235,14 +222,16 @@ func (self *channelImpl) removeListener(listener *ChannelListener) error {
 	return nil
 }
 
-func (self *channelImpl) connect(context_ context.Context, serverAddress string) error {
+func (self *channelImpl) connect(connector Connector, context_ context.Context, serverAddress string, serverGreeter ServerGreeter) error {
 	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", self.id.Base64(), serverAddress)
 	self.setState(ChannelConnecting)
-	var transport_ transport
+	connection, e := connector.Connect(context_, serverAddress)
 
-	if e := transport_.connect(context_, &self.policy.Transport, serverAddress); e != nil {
+	if e != nil {
 		return e
 	}
+
+	transport_ := (&transport{}).initialize(&self.policy.Transport, connection)
 
 	greeting := protocol.Greeting{
 		Channel: protocol.Greeting_Channel{
@@ -291,7 +280,7 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 		return greeting.Handshake, nil
 	}
 
-	if e := self.policy.ServerGreeter(self.holder.(*ClientChannel), context_, clientGreeter); e != nil {
+	if e := serverGreeter(self.holder.(*ClientChannel), context_, clientGreeter); e != nil {
 		transport_.close(true)
 		return e
 	}
@@ -307,18 +296,17 @@ func (self *channelImpl) connect(context_ context.Context, serverAddress string)
 	}
 
 	self.transport.close(true)
-	self.transport = transport_
+	self.transport = *transport_
 	self.setState(ChannelConnected)
 	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
-func (self *channelImpl) accept(context_ context.Context, connection net.Conn) error {
+func (self *channelImpl) accept(context_ context.Context, connection net.Conn, clientGreeter ClientGreeter) error {
 	clientAddress := connection.RemoteAddr().String()
 	self.policy.Logger.Infof("channel acceptance: clientAddress=%#v", clientAddress)
 	self.setState(ChannelAccepting)
-	var transport_ transport
-	transport_.accept(&self.policy.Transport, connection)
+	transport_ := (&transport{}).initialize(&self.policy.Transport, connection)
 	data, e := transport_.peek(context_, minChannelTimeout)
 
 	if e != nil {
@@ -377,7 +365,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn) e
 		greeting.Channel.OutgoingWindowSize = self.policy.IncomingWindowSize
 	}
 
-	greeting.Handshake, e = self.policy.ClientGreeter(self.holder.(*ServerChannel), context_, greeting.Handshake)
+	greeting.Handshake, e = clientGreeter(self.holder.(*ServerChannel), context_, greeting.Handshake)
 
 	if e != nil {
 		transport_.close(true)
@@ -410,7 +398,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn) e
 	}
 
 	self.transport.close(true)
-	self.transport = transport_
+	self.transport = *transport_
 	self.setState(ChannelAccepted)
 	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
@@ -889,7 +877,7 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 
 		for {
 			if e := self.transport.flush(context_, self.getMinHeartbeatInterval()); e != nil {
-				if e, ok := e.(*net.OpError); ok && e.Timeout() {
+				if e2, ok := e.(*net.OpError); ok && e2.Timeout() {
 					continue
 				}
 
@@ -914,7 +902,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 			data, e = self.transport.peekInBatch(context_, self.getMinHeartbeatInterval())
 
 			if e != nil {
-				if e, ok := e.(*net.OpError); ok && e.Timeout() {
+				if e2, ok := e.(*net.OpError); ok && e2.Timeout() {
 					timeoutCount++
 
 					if timeoutCount == 2 {
@@ -1134,15 +1122,6 @@ var channelState2ErrorCode = [...]ErrorCode{
 
 var poolOfMethodCalls = sync.Pool{New: func() interface{} { return &methodCall{} }}
 var poolOfResultReturns = sync.Pool{New: func() interface{} { return &resultReturn{} }}
-
-func greetClient(*ServerChannel, context.Context, []byte) ([]byte, error) {
-	return nil, nil
-}
-
-func greetServer(_ *ClientChannel, context_ context.Context, clientGreeter func(context.Context, []byte) ([]byte, error)) error {
-	_, e := clientGreeter(context_, nil)
-	return e
-}
 
 func returnResult(dequeOfResultReturns *deque.Deque, nextSpanID int32, sequenceNumber int32, errorCode ErrorCode, response OutgoingMessage) error {
 	resultReturn_ := poolOfResultReturns.Get().(*resultReturn)

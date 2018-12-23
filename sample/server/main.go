@@ -38,7 +38,7 @@ func InterceptMethod(methodHandlingInfo *pbrpc.MethodHandlingInfo, methodHandler
 
 func main() {
 	serviceHandler := pbrpc.RegisterMethodInterceptors(&ServerServiceHandler{}, InterceptMethod)
-	serverPolicy := (&pbrpc.ServerPolicy{}).RegisterServiceHandler(serviceHandler)
+	serverPolicy := (&pbrpc.ServerPolicy{Acceptor: pbrpc.WebSocketAcceptor{}}).RegisterServiceHandler(serviceHandler)
 	server := (&pbrpc.Server{}).Initialize(serverPolicy, "127.0.0.1:8888", "", context.Background())
 	server.Run()
 }

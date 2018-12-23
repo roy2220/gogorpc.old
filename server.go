@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/let-z-go/toolkit/logger"
 )
@@ -52,15 +51,6 @@ func (self *Server) Run() error {
 		self.openness = -1
 	}
 
-	var listener *net.TCPListener
-
-	if listener2, e := net.Listen("tcp", self.bindAddress); e == nil {
-		listener = listener2.(*net.TCPListener)
-	} else {
-		cleanup()
-		return e
-	}
-
 	var serviceNames []string
 	var address string
 
@@ -74,81 +64,47 @@ func (self *Server) Run() error {
 		address = self.discoveryAddress
 
 		if address == "" {
-			address = listener.Addr().String()
+			address = self.bindAddress
 		}
 
 		if e := self.policy.Registry.AddServiceProviders(serviceNames, address, self.policy.Weight); e != nil {
-			listener.Close()
 			cleanup()
 			return e
 		}
 	}
 
-	var wg sync.WaitGroup
-	var e error
-
-	for {
-		var deadline time.Time
-		deadline, e = makeDeadline(self.context2, acceptTimeoutOfServer)
-
-		if e != nil {
-			break
-		}
-
-		e = listener.SetDeadline(deadline)
-
-		if e != nil {
-			break
-		}
-
-		var connection net.Conn
-		connection, e = listener.Accept()
-
-		if e != nil {
-			if e, ok := e.(*net.OpError); ok && e.Timeout() {
-				continue
-			}
-
-			break
-		}
-
-		wg.Add(1)
-
-		go func(
-			policy *ServerPolicy,
-			connection net.Conn,
-			context_ context.Context,
-			logger_ *logger.Logger,
-		) {
+	connectionHandler := func(
+		policy *ServerPolicy,
+		context_ context.Context,
+		logger_ *logger.Logger,
+	) func(connection net.Conn) {
+		return func(connection net.Conn) {
 			channel, e := policy.ChannelFactory.CreateProduct(&policy.Channel, connection, context_)
 
 			if e != nil {
 				logger_.Errorf("channel creation failure: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
 				connection.Close()
-				wg.Done()
 				return
 			}
 
 			e = channel.Run()
 			logger_.Infof("channel run-out: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
 			policy.ChannelFactory.DestroyProduct(channel)
-			wg.Done()
-		}(
+		}
+	}(
 
-			self.policy,
-			connection,
-			self.context1,
-			&self.policy.Channel.Logger,
-		)
-	}
+		self.policy,
+		self.context1,
+		&self.policy.Channel.Logger,
+	)
+
+	e := self.policy.Acceptor.Accept(self.context2, self.bindAddress, connectionHandler)
 
 	if self.policy.Registry != nil {
 		self.policy.Registry.RemoveServiceProviders(serviceNames, address, self.policy.Weight)
 	}
 
-	listener.Close()
 	cleanup()
-	wg.Wait()
 	return e
 }
 
@@ -167,10 +123,11 @@ func (self *Server) Stop(force bool) {
 }
 
 type ServerPolicy struct {
+	Acceptor       Acceptor
 	Registry       *Registry
 	Weight         int32
 	ChannelFactory ServerChannelFactory
-	Channel        ChannelPolicy
+	Channel        ServerChannelPolicy
 
 	validateOnce sync.Once
 }
@@ -182,6 +139,10 @@ func (self *ServerPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) 
 
 func (self *ServerPolicy) Validate() *ServerPolicy {
 	self.validateOnce.Do(func() {
+		if self.Acceptor == nil {
+			self.Acceptor = TCPAcceptor{}
+		}
+
 		if self.Registry != nil {
 			if self.Weight < 1 {
 				self.Weight = defaultWeight
@@ -197,16 +158,15 @@ func (self *ServerPolicy) Validate() *ServerPolicy {
 }
 
 type ServerChannelFactory interface {
-	CreateProduct(*ChannelPolicy, net.Conn, context.Context) (*ServerChannel, error)
+	CreateProduct(*ServerChannelPolicy, net.Conn, context.Context) (*ServerChannel, error)
 	DestroyProduct(*ServerChannel)
 }
 
-const acceptTimeoutOfServer = 2 * time.Second
 const defaultWeight = 5
 
 type defaultServerChannelFactory struct{}
 
-func (defaultServerChannelFactory) CreateProduct(productPolicy *ChannelPolicy, connection net.Conn, context_ context.Context) (*ServerChannel, error) {
+func (defaultServerChannelFactory) CreateProduct(productPolicy *ServerChannelPolicy, connection net.Conn, context_ context.Context) (*ServerChannel, error) {
 	return (&ServerChannel{}).Initialize(productPolicy, connection, context_), nil
 }
 

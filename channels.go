@@ -6,17 +6,21 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"sync"
 
 	"github.com/let-z-go/toolkit/delay_pool"
 )
 
 type ClientChannel struct {
 	channelBase
+
+	policy          *ClientChannelPolicy
 	serverAddresses delay_pool.DelayPool
 }
 
-func (self *ClientChannel) Initialize(policy *ChannelPolicy, serverAddresses []string, context_ context.Context) *ClientChannel {
-	self.initialize(self, policy, true, context_)
+func (self *ClientChannel) Initialize(policy *ClientChannelPolicy, serverAddresses []string, context_ context.Context) *ClientChannel {
+	self.initialize(self, &policy.Validate().ChannelPolicy, true, context_)
+	self.policy = policy
 
 	if serverAddresses == nil {
 		serverAddresses = []string{defaultServerAddress}
@@ -53,7 +57,7 @@ func (self *ClientChannel) Run() error {
 
 		context_, cancel := context.WithDeadline(self.context, self.serverAddresses.WhenNextValueUsable())
 		serverAddress := value.(string)
-		e = self.impl.connect(context_, serverAddress)
+		e = self.impl.connect(self.policy.Connector, context_, serverAddress, self.policy.ServerGreeter)
 		cancel()
 
 		if e != nil {
@@ -85,13 +89,48 @@ func (self *ClientChannel) Run() error {
 	return e
 }
 
+type ClientChannelPolicy struct {
+	ChannelPolicy
+
+	Connector     Connector
+	ServerGreeter ServerGreeter
+
+	validateOnce sync.Once
+}
+
+func (self *ClientChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ClientChannelPolicy {
+	self.registerServiceHandler(serviceHandler)
+	return self
+}
+
+func (self *ClientChannelPolicy) Validate() *ClientChannelPolicy {
+	self.validateOnce.Do(func() {
+		self.validate()
+
+		if self.Connector == nil {
+			self.Connector = TCPConnector{}
+		}
+
+		if self.ServerGreeter == nil {
+			self.ServerGreeter = greetServer
+		}
+	})
+
+	return self
+}
+
+type ServerGreeter func(*ClientChannel, context.Context, func(context.Context, []byte) ([]byte, error)) error
+
 type ServerChannel struct {
 	channelBase
+
+	policy     *ServerChannelPolicy
 	connection net.Conn
 }
 
-func (self *ServerChannel) Initialize(policy *ChannelPolicy, connection net.Conn, context_ context.Context) *ServerChannel {
-	self.initialize(self, policy, false, context_)
+func (self *ServerChannel) Initialize(policy *ServerChannelPolicy, connection net.Conn, context_ context.Context) *ServerChannel {
+	self.initialize(self, &policy.Validate().ChannelPolicy, false, context_)
+	self.policy = policy
 	self.connection = connection
 	return self
 }
@@ -106,7 +145,7 @@ func (self *ServerChannel) Run() error {
 		self.connection = nil
 	}
 
-	if e := self.impl.accept(self.context, self.connection); e != nil {
+	if e := self.impl.accept(self.context, self.connection, self.policy.ClientGreeter); e != nil {
 		cleanup()
 		return e
 	}
@@ -115,6 +154,33 @@ func (self *ServerChannel) Run() error {
 	cleanup()
 	return e
 }
+
+type ServerChannelPolicy struct {
+	ChannelPolicy
+
+	ClientGreeter ClientGreeter
+
+	validateOnce sync.Once
+}
+
+func (self *ServerChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ServerChannelPolicy {
+	self.registerServiceHandler(serviceHandler)
+	return self
+}
+
+func (self *ServerChannelPolicy) Validate() *ServerChannelPolicy {
+	self.validateOnce.Do(func() {
+		self.validate()
+
+		if self.ClientGreeter == nil {
+			self.ClientGreeter = greetClient
+		}
+	})
+
+	return self
+}
+
+type ClientGreeter func(*ServerChannel, context.Context, []byte) ([]byte, error)
 
 type channelBase struct {
 	impl    channelImpl
@@ -204,4 +270,13 @@ func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClient
 	self.impl.initialize(sub, policy, isClientSide)
 	self.context, self.stop = context.WithCancel(context_)
 	return self
+}
+
+func greetServer(_ *ClientChannel, context_ context.Context, clientGreeter func(context.Context, []byte) ([]byte, error)) error {
+	_, e := clientGreeter(context_, nil)
+	return e
+}
+
+func greetClient(*ServerChannel, context.Context, []byte) ([]byte, error) {
+	return nil, nil
 }

@@ -52,26 +52,19 @@ type transport struct {
 	connection       net.Conn
 	inputByteStream  byte_stream.ByteStream
 	outputByteStream byte_stream.ByteStream
-	openness         int32
+	openness         int
 }
 
-func (self *transport) connect(context_ context.Context, policy *TransportPolicy, serverAddress string) error {
-	if e := context_.Err(); e != nil {
-		return e
+func (self *transport) initialize(policy *TransportPolicy, connection net.Conn) *transport {
+	if self.openness != 0 {
+		panic(errors.New("pbrpc: transport already initialized"))
 	}
 
-	connection, e := (&net.Dialer{}).DialContext(context_, "tcp", serverAddress)
-
-	if e != nil {
-		return e
-	}
-
-	self.initialize(policy, connection.(net.Conn))
-	return nil
-}
-
-func (self *transport) accept(policy *TransportPolicy, connection net.Conn) *transport {
-	return self.initialize(policy, connection)
+	self.policy = policy.Validate()
+	self.connection = connection
+	self.inputByteStream.ReserveBuffer(int(policy.InitialReadBufferSize))
+	self.openness = 1
+	return self
 }
 
 func (self *transport) close(force bool) error {
@@ -80,7 +73,9 @@ func (self *transport) close(force bool) error {
 	}
 
 	if force {
-		self.connection.(*net.TCPConn).SetLinger(0)
+		if connection, ok := self.connection.(*net.TCPConn); ok {
+			connection.SetLinger(0)
+		}
 	}
 
 	e := self.connection.Close()
@@ -202,18 +197,6 @@ func (self *transport) flush(context_ context.Context, timeout time.Duration) er
 
 func (self *transport) isClosed() bool {
 	return self.openness != 1
-}
-
-func (self *transport) initialize(policy *TransportPolicy, connection net.Conn) *transport {
-	if self.openness != 0 {
-		panic(errors.New("pbrpc: transport already initialized"))
-	}
-
-	self.policy = policy.Validate()
-	self.connection = connection
-	self.inputByteStream.ReserveBuffer(int(policy.InitialReadBufferSize))
-	self.openness = 1
-	return self
 }
 
 func (self *transport) doPeek(context_ context.Context, timeout time.Duration) ([]byte, error) {

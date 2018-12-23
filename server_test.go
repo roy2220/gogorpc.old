@@ -13,22 +13,26 @@ import (
 
 func TestServer(t *testing.T) {
 	sp := &ServerPolicy{
-		Channel: ChannelPolicy{
-			Timeout:            6 * time.Second,
-			IncomingWindowSize: 20,
-			OutgoingWindowSize: 200,
-			Logger:             *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
+		Channel: ServerChannelPolicy{
+			ChannelPolicy: ChannelPolicy{
+				Timeout:            6 * time.Second,
+				IncomingWindowSize: 20,
+				OutgoingWindowSize: 200,
+				Logger:             *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
+			},
 		},
 	}
 
 	cp1 := &sp.Channel
 	s := (&Server{}).Initialize(sp, "", "", context.Background())
 
-	cp2 := &ChannelPolicy{
-		Timeout:            5 * time.Second,
-		IncomingWindowSize: 20,
-		OutgoingWindowSize: 200,
-		Logger:             *(&logger.Logger{}).Initialize("pbrpctest-cli", logger.SeverityInfo, os.Stdout, os.Stderr),
+	cp2 := &ClientChannelPolicy{
+		ChannelPolicy: ChannelPolicy{
+			Timeout:            5 * time.Second,
+			IncomingWindowSize: 20,
+			OutgoingWindowSize: 200,
+			Logger:             *(&logger.Logger{}).Initialize("pbrpctest-cli", logger.SeverityInfo, os.Stdout, os.Stderr),
+		},
 	}
 
 	c := (&ClientChannel{}).Initialize(cp2, nil, context.Background())
@@ -66,7 +70,11 @@ func TestServer(t *testing.T) {
 
 func TestServerGreeting(t *testing.T) {
 	sp := &ServerPolicy{
-		Channel: ChannelPolicy{
+		Channel: ServerChannelPolicy{
+			ChannelPolicy: ChannelPolicy{
+				Logger: *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
+			},
+
 			ClientGreeter: func(_ *ServerChannel, _ context.Context, handshake []byte) ([]byte, error) {
 				n, e := strconv.Atoi(string(handshake))
 
@@ -77,13 +85,16 @@ func TestServerGreeting(t *testing.T) {
 
 				return []byte(strconv.Itoa(n + 1)), nil
 			},
-			Logger: *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
 		},
 	}
 
 	s := (&Server{}).Initialize(sp, "", "", context.Background())
 
-	cp2 := &ChannelPolicy{
+	cp2 := &ClientChannelPolicy{
+		ChannelPolicy: ChannelPolicy{
+			Logger: *(&logger.Logger{}).Initialize("pbrpctest-cli", logger.SeverityInfo, os.Stdout, os.Stderr),
+		},
+
 		ServerGreeter: func(_ *ClientChannel, context_ context.Context, clientGreeter func(context.Context, []byte) ([]byte, error)) error {
 			handshake, e := clientGreeter(context_, []byte("99"))
 
@@ -93,7 +104,6 @@ func TestServerGreeting(t *testing.T) {
 
 			return e
 		},
-		Logger: *(&logger.Logger{}).Initialize("pbrpctest-cli", logger.SeverityInfo, os.Stdout, os.Stderr),
 	}
 
 	c := (&ClientChannel{}).Initialize(cp2, nil, context.Background())
