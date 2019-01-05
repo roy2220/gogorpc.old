@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+package pbrpc.protocol;
+
 option go_package = "github.com/let-z-go/pbrpc/protocol";
 option (gogoproto.goproto_enum_prefix_all) = false;
 

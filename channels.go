@@ -57,7 +57,7 @@ func (self *ClientChannel) Run() error {
 
 		context_, cancel := context.WithDeadline(self.context, self.serverAddresses.WhenNextValueUsable())
 		serverAddress := value.(string)
-		e = self.impl.connect(self.policy.Connector, context_, serverAddress, self.policy.ServerGreeter)
+		e = self.impl.connect(self.policy.Connector, context_, serverAddress, self.policy.Handshaker)
 		cancel()
 
 		if e != nil {
@@ -92,8 +92,8 @@ func (self *ClientChannel) Run() error {
 type ClientChannelPolicy struct {
 	ChannelPolicy
 
-	Connector     Connector
-	ServerGreeter ServerGreeter
+	Connector  Connector
+	Handshaker ClientHandshaker
 
 	validateOnce sync.Once
 }
@@ -111,15 +111,15 @@ func (self *ClientChannelPolicy) Validate() *ClientChannelPolicy {
 			self.Connector = TCPConnector{}
 		}
 
-		if self.ServerGreeter == nil {
-			self.ServerGreeter = greetServer
+		if self.Handshaker == nil {
+			self.Handshaker = shakeHandsWithServer
 		}
 	})
 
 	return self
 }
 
-type ServerGreeter func(*ClientChannel, context.Context, func(context.Context, []byte) ([]byte, error)) error
+type ClientHandshaker func(*ClientChannel, context.Context, func(context.Context, []byte) ([]byte, error)) error
 
 type ServerChannel struct {
 	channelBase
@@ -145,7 +145,7 @@ func (self *ServerChannel) Run() error {
 		self.connection = nil
 	}
 
-	if e := self.impl.accept(self.context, self.connection, self.policy.ClientGreeter); e != nil {
+	if e := self.impl.accept(self.context, self.connection, self.policy.Handshaker); e != nil {
 		cleanup()
 		return e
 	}
@@ -158,7 +158,7 @@ func (self *ServerChannel) Run() error {
 type ServerChannelPolicy struct {
 	ChannelPolicy
 
-	ClientGreeter ClientGreeter
+	Handshaker ServerHandshaker
 
 	validateOnce sync.Once
 }
@@ -172,15 +172,15 @@ func (self *ServerChannelPolicy) Validate() *ServerChannelPolicy {
 	self.validateOnce.Do(func() {
 		self.validate()
 
-		if self.ClientGreeter == nil {
-			self.ClientGreeter = greetClient
+		if self.Handshaker == nil {
+			self.Handshaker = shakeHandsWithClient
 		}
 	})
 
 	return self
 }
 
-type ClientGreeter func(*ServerChannel, context.Context, []byte) ([]byte, error)
+type ServerHandshaker func(*ServerChannel, context.Context, []byte) ([]byte, error)
 
 type channelBase struct {
 	impl    channelImpl
@@ -272,11 +272,11 @@ func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClient
 	return self
 }
 
-func greetServer(_ *ClientChannel, context_ context.Context, clientGreeter func(context.Context, []byte) ([]byte, error)) error {
-	_, e := clientGreeter(context_, nil)
+func shakeHandsWithServer(_ *ClientChannel, context_ context.Context, greeter func(context.Context, []byte) ([]byte, error)) error {
+	_, e := greeter(context_, nil)
 	return e
 }
 
-func greetClient(*ServerChannel, context.Context, []byte) ([]byte, error) {
-	return nil, nil
+func shakeHandsWithClient(_ *ServerChannel, _ context.Context, handshake []byte) ([]byte, error) {
+	return handshake, nil
 }

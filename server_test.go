@@ -75,7 +75,7 @@ func TestServerGreeting(t *testing.T) {
 				Logger: *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
 			},
 
-			ClientGreeter: func(_ *ServerChannel, _ context.Context, handshake []byte) ([]byte, error) {
+			Handshaker: func(_ *ServerChannel, _ context.Context, handshake []byte) ([]byte, error) {
 				n, e := strconv.Atoi(string(handshake))
 
 				if e != nil {
@@ -95,8 +95,8 @@ func TestServerGreeting(t *testing.T) {
 			Logger: *(&logger.Logger{}).Initialize("pbrpctest-cli", logger.SeverityInfo, os.Stdout, os.Stderr),
 		},
 
-		ServerGreeter: func(_ *ClientChannel, context_ context.Context, clientGreeter func(context.Context, []byte) ([]byte, error)) error {
-			handshake, e := clientGreeter(context_, []byte("99"))
+		Handshaker: func(_ *ClientChannel, context_ context.Context, greeter func(context.Context, []byte) ([]byte, error)) error {
+			handshake, e := greeter(context_, []byte("99"))
 
 			if e == nil && string(handshake) != "100" {
 				t.Errorf("%#v", handshake)

@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/let-z-go/pbrpc"
 	"github.com/let-z-go/pbrpc/sample"
+	"github.com/let-z-go/toolkit/logger"
 )
 
 type ServerServiceHandler struct {
@@ -38,7 +40,7 @@ func InterceptMethod(methodHandlingInfo *pbrpc.MethodHandlingInfo, methodHandler
 
 func main() {
 	serviceHandler := pbrpc.RegisterMethodInterceptors(&ServerServiceHandler{}, InterceptMethod)
-	serverPolicy := (&pbrpc.ServerPolicy{Acceptor: pbrpc.WebSocketAcceptor{}}).RegisterServiceHandler(serviceHandler)
+	serverPolicy := (&pbrpc.ServerPolicy{Acceptor: pbrpc.WebSocketAcceptor{}, Channel: pbrpc.ServerChannelPolicy{ChannelPolicy: pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv1", logger.SeverityInfo, os.Stdout, os.Stderr)}}}).RegisterServiceHandler(serviceHandler)
 	server := (&pbrpc.Server{}).Initialize(serverPolicy, "127.0.0.1:8888", "", context.Background())
 	server.Run()
 }

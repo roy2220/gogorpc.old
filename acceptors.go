@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -85,9 +86,23 @@ func (WebSocketAcceptor) Accept(context_ context.Context, bindAddress string, co
 	server := http.Server{
 		Addr: bindAddress,
 
-		Handler: websocket.Handler(func(connection *websocket.Conn) {
-			connectionHandler(connection)
-		}),
+		Handler: websocket.Server{
+			Handshake: func(config *websocket.Config, request *http.Request) error {
+				origin, e := websocket.Origin(config, request)
+
+				if e != nil || origin == nil {
+					origin = &url.URL{Opaque: request.RemoteAddr}
+				}
+
+				config.Origin = origin
+				return nil
+			},
+
+			Handler: func(connection *websocket.Conn) {
+				connection.PayloadType = websocket.BinaryFrame
+				connectionHandler(connection)
+			},
+		},
 	}
 
 	error_ := make(chan error, 1)

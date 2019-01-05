@@ -222,7 +222,7 @@ func (self *channelImpl) removeListener(listener *ChannelListener) error {
 	return nil
 }
 
-func (self *channelImpl) connect(connector Connector, context_ context.Context, serverAddress string, serverGreeter ServerGreeter) error {
+func (self *channelImpl) connect(connector Connector, context_ context.Context, serverAddress string, handshaker ClientHandshaker) error {
 	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", self.id.Base64(), serverAddress)
 	self.setState(ChannelConnecting)
 	connection, e := connector.Connect(context_, serverAddress)
@@ -235,9 +235,9 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 
 	greeting := protocol.Greeting{
 		Channel: protocol.Greeting_Channel{
-			Timeout:            int32(self.policy.Timeout / time.Millisecond),
-			IncomingWindowSize: self.policy.IncomingWindowSize,
-			OutgoingWindowSize: self.policy.OutgoingWindowSize,
+			Timeout:            int32(self.timeout / time.Millisecond),
+			IncomingWindowSize: self.incomingWindowSize,
+			OutgoingWindowSize: self.outgoingWindowSize,
 		},
 	}
 
@@ -245,7 +245,7 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 		greeting.Channel.Id = self.id[:]
 	}
 
-	clientGreeter := func(context_ context.Context, handshake []byte) ([]byte, error) {
+	greeter := func(context_ context.Context, handshake []byte) ([]byte, error) {
 		greeting.Handshake = handshake
 
 		if e := transport_.write(func(byteStream *byte_stream.ByteStream) error {
@@ -280,9 +280,17 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 		return greeting.Handshake, nil
 	}
 
-	if e := serverGreeter(self.holder.(*ClientChannel), context_, clientGreeter); e != nil {
+	if e := handshaker(self.holder.(*ClientChannel), context_, greeter); e != nil {
 		transport_.close(true)
 		return e
+	}
+
+	var outgoingWindowSize int32
+
+	if self.id.IsZero() {
+		outgoingWindowSize = minChannelWindowSize
+	} else {
+		outgoingWindowSize = self.outgoingWindowSize
 	}
 
 	copy(self.id[:], greeting.Channel.Id)
@@ -290,7 +298,7 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 	self.incomingWindowSize = greeting.Channel.IncomingWindowSize
 	self.outgoingWindowSize = greeting.Channel.OutgoingWindowSize
 
-	if e := self.dequeOfMethodCalls.CommitNodeRemovals(self.outgoingWindowSize - minChannelWindowSize); e != nil {
+	if e := self.dequeOfMethodCalls.CommitNodeRemovals(self.outgoingWindowSize - outgoingWindowSize); e != nil {
 		transport_.close(true)
 		return e
 	}
@@ -302,7 +310,7 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 	return nil
 }
 
-func (self *channelImpl) accept(context_ context.Context, connection net.Conn, clientGreeter ClientGreeter) error {
+func (self *channelImpl) accept(context_ context.Context, connection net.Conn, handshaker ServerHandshaker) error {
 	clientAddress := connection.RemoteAddr().String()
 	self.policy.Logger.Infof("channel acceptance: clientAddress=%#v", clientAddress)
 	self.setState(ChannelAccepting)
@@ -365,7 +373,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, c
 		greeting.Channel.OutgoingWindowSize = self.policy.IncomingWindowSize
 	}
 
-	greeting.Handshake, e = clientGreeter(self.holder.(*ServerChannel), context_, greeting.Handshake)
+	greeting.Handshake, e = handshaker(self.holder.(*ServerChannel), context_, greeting.Handshake)
 
 	if e != nil {
 		transport_.close(true)
@@ -557,6 +565,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 		if errorCode2 := self.getErrorCode(); errorCode2 == 0 {
 			list_ := (&list.List{}).Initialize()
 			retriedMethodCallCount := int32(0)
+			completedMethodCallCount := int32(0)
 
 			self.pendingMethodCalls.Range(func(key interface{}, value interface{}) bool {
 				self.pendingMethodCalls.Delete(key)
@@ -567,6 +576,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 					retriedMethodCallCount++
 				} else {
 					methodCall_.callback(nil, errorCode)
+					completedMethodCallCount++
 					poolOfMethodCalls.Put(methodCall_)
 				}
 
@@ -574,6 +584,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 			})
 
 			self.dequeOfMethodCalls.DiscardNodeRemovals(list_, retriedMethodCallCount)
+			self.dequeOfMethodCalls.CommitNodeRemovals(completedMethodCallCount)
 			atomic.StoreInt32(&self.pendingResultReturnCount, 0)
 			list_.Initialize()
 			self.dequeOfResultReturns.Close(list_)
@@ -782,6 +793,7 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 
 		if taskOfMethodCalls.list != nil {
 			getListNode := taskOfMethodCalls.list.GetNodesSafely()
+			completedMethodCallCount := int32(0)
 
 			for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 				methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
@@ -815,9 +827,10 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 					})
 				}); e != nil {
 					if e == PacketPayloadTooLargeError {
-						methodCall_.callback(nil, ErrorPacketPayloadTooLarge)
 						listNode.Remove()
 						taskOfMethodCalls.numberOfListNodes--
+						methodCall_.callback(nil, ErrorPacketPayloadTooLarge)
+						completedMethodCallCount++
 						poolOfMethodCalls.Put(methodCall_)
 						continue
 					}
@@ -826,6 +839,8 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 					return e
 				}
 			}
+
+			self.dequeOfMethodCalls.CommitNodeRemovals(completedMethodCallCount)
 		}
 
 		if taskOfResultReturns.list != nil {
@@ -1014,7 +1029,6 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 
 				if value, ok := self.pendingMethodCalls.Load(responseHeader.SequenceNumber); ok {
 					self.pendingMethodCalls.Delete(responseHeader.SequenceNumber)
-					completedMethodCallCount++
 					methodCall_ := value.(*methodCall)
 					*methodCall_.nextSpanID = responseHeader.NextSpanId
 
@@ -1030,6 +1044,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 						methodCall_.callback(nil, ErrorCode(responseHeader.ErrorCode))
 					}
 
+					completedMethodCallCount++
 					poolOfMethodCalls.Put(methodCall_)
 				} else {
 					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", self.id.Base64(), responseHeader)
