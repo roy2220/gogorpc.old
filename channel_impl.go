@@ -223,7 +223,7 @@ func (self *channelImpl) removeListener(listener *ChannelListener) error {
 }
 
 func (self *channelImpl) connect(connector Connector, context_ context.Context, serverAddress string, handshaker ClientHandshaker) error {
-	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", self.id.Base64(), serverAddress)
+	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", self.id.String(), serverAddress)
 	self.setState(ChannelConnecting)
 	connection, e := connector.Connect(context_, serverAddress)
 
@@ -306,7 +306,7 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 	self.transport.close(true)
 	self.transport = *transport_
 	self.setState(ChannelConnected)
-	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.id.String(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
@@ -408,7 +408,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, h
 	self.transport.close(true)
 	self.transport = *transport_
 	self.setState(ChannelAccepted)
-	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.id.Base64(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.id.String(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
@@ -550,7 +550,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 	}
 
 	atomic.StoreInt32(&self.state, int32(newState))
-	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", self.id.Base64(), oldState, newState)
+	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", self.id.String(), oldState, newState)
 	self.lockOfListeners.Lock()
 
 	for listener := range self.listeners {
@@ -777,10 +777,11 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 			heartbeatSize := heartbeat.Size()
 
 			if e := self.transport.write(func(byteStream *byte_stream.ByteStream) error {
-				return byteStream.WriteDirectly(2+heartbeatSize, func(buffer []byte) error {
+				return byteStream.WriteDirectly(3+heartbeatSize, func(buffer []byte) error {
 					buffer[0] = uint8(protocol.MESSAGE_HEARTBEAT)
-					buffer[1] = uint8(heartbeatSize)
-					_, e := heartbeat.MarshalTo(buffer[2:])
+					buffer[1] = uint8(heartbeatSize >> 8)
+					buffer[2] = uint8(heartbeatSize)
+					_, e := heartbeat.MarshalTo(buffer[3:])
 					return e
 				})
 			}); e != nil {
@@ -811,15 +812,16 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 				requestHeaderSize := requestHeader.Size()
 
 				if e := self.transport.write(func(byteStream *byte_stream.ByteStream) error {
-					return byteStream.WriteDirectly(2+requestHeaderSize+methodCall_.request.Size(), func(buffer []byte) error {
+					return byteStream.WriteDirectly(3+requestHeaderSize+methodCall_.request.Size(), func(buffer []byte) error {
 						buffer[0] = uint8(protocol.MESSAGE_REQUEST)
-						buffer[1] = uint8(requestHeaderSize)
+						buffer[1] = uint8(requestHeaderSize >> 8)
+						buffer[2] = uint8(requestHeaderSize)
 
-						if _, e := requestHeader.MarshalTo(buffer[2:]); e != nil {
+						if _, e := requestHeader.MarshalTo(buffer[3:]); e != nil {
 							return e
 						}
 
-						if _, e := methodCall_.request.MarshalTo(buffer[2+requestHeaderSize:]); e != nil {
+						if _, e := methodCall_.request.MarshalTo(buffer[3+requestHeaderSize:]); e != nil {
 							return e
 						}
 
@@ -859,25 +861,27 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 
 				if e := self.transport.write(func(byteStream *byte_stream.ByteStream) error {
 					if resultReturn_.errorCode == 0 {
-						return byteStream.WriteDirectly(2+responseHeaderSize+resultReturn_.response.Size(), func(buffer []byte) error {
+						return byteStream.WriteDirectly(3+responseHeaderSize+resultReturn_.response.Size(), func(buffer []byte) error {
 							buffer[0] = uint8(protocol.MESSAGE_RESPONSE)
-							buffer[1] = uint8(responseHeaderSize)
+							buffer[1] = uint8(responseHeaderSize >> 8)
+							buffer[2] = uint8(responseHeaderSize)
 
-							if _, e := responseHeader.MarshalTo(buffer[2:]); e != nil {
+							if _, e := responseHeader.MarshalTo(buffer[3:]); e != nil {
 								return e
 							}
 
-							if _, e := resultReturn_.response.MarshalTo(buffer[2+responseHeaderSize:]); e != nil {
+							if _, e := resultReturn_.response.MarshalTo(buffer[3+responseHeaderSize:]); e != nil {
 								return e
 							}
 
 							return nil
 						})
 					} else {
-						return byteStream.WriteDirectly(2+responseHeaderSize, func(buffer []byte) error {
+						return byteStream.WriteDirectly(3+responseHeaderSize, func(buffer []byte) error {
 							buffer[0] = uint8(protocol.MESSAGE_RESPONSE)
-							buffer[1] = uint8(responseHeaderSize)
-							_, e := responseHeader.MarshalTo(buffer[2:])
+							buffer[1] = uint8(responseHeaderSize >> 8)
+							buffer[2] = uint8(responseHeaderSize)
+							_, e := responseHeader.MarshalTo(buffer[3:])
 							return e
 						})
 					}
@@ -938,22 +942,25 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 		completedMethodCallCount := int32(0)
 
 		for _, data2 := range data {
-			if len(data2) < 2 {
+			if len(data2) < 3 {
 				return IllFormedMessageError
 			}
 
 			messageType := protocol.MessageType(data2[0])
-			messageHeaderSize := int(data2[1])
+			messageHeaderSize := (int(data2[1]) << 8) | int(data2[2])
 
-			if len(data2) < 2+messageHeaderSize {
+			if len(data2) < 3+messageHeaderSize {
 				return IllFormedMessageError
 			}
+
+			messageHeader := data2[3 : 3+messageHeaderSize]
+			messagePayload := data2[3+messageHeaderSize:]
 
 			switch messageType {
 			case protocol.MESSAGE_REQUEST:
 				var requestHeader protocol.RequestHeader
 
-				if e := requestHeader.Unmarshal(data2[2 : 2+messageHeaderSize]); e != nil {
+				if e := requestHeader.Unmarshal(messageHeader); e != nil {
 					return IllFormedMessageError
 				}
 
@@ -982,7 +989,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 
 				request := reflect.New(methodRecord.RequestType).Interface().(IncomingMessage)
 
-				if e := request.Unmarshal(data2[2+messageHeaderSize:]); e != nil {
+				if e := request.Unmarshal(messagePayload); e != nil {
 					returnResult(self.dequeOfResultReturns, nextSpanID, requestHeader.SequenceNumber, ErrorBadRequest, nil)
 					continue
 				}
@@ -1023,7 +1030,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 			case protocol.MESSAGE_RESPONSE:
 				var responseHeader protocol.ResponseHeader
 
-				if e := responseHeader.Unmarshal(data2[2 : 2+messageHeaderSize]); e != nil {
+				if e := responseHeader.Unmarshal(messageHeader); e != nil {
 					return IllFormedMessageError
 				}
 
@@ -1035,7 +1042,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					if responseHeader.ErrorCode == 0 {
 						response := reflect.New(methodCall_.responseType).Interface().(IncomingMessage)
 
-						if e := response.Unmarshal(data2[2+messageHeaderSize:]); e != nil {
+						if e := response.Unmarshal(messagePayload); e != nil {
 							return IllFormedMessageError
 						}
 
@@ -1047,12 +1054,12 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					completedMethodCallCount++
 					poolOfMethodCalls.Put(methodCall_)
 				} else {
-					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", self.id.Base64(), responseHeader)
+					self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", self.id.String(), responseHeader)
 				}
 			case protocol.MESSAGE_HEARTBEAT:
 				var heartbeat protocol.Heartbeat
 
-				if e := heartbeat.Unmarshal(data2[2 : 2+messageHeaderSize]); e != nil {
+				if e := heartbeat.Unmarshal(messageHeader); e != nil {
 					return IllFormedMessageError
 				}
 			default:

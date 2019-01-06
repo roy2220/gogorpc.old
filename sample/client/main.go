@@ -21,7 +21,7 @@ func (ClientServiceHandler) GetNickname(context_ context.Context) (*sample.GetNi
 }
 
 func main() {
-	channelPolicy := (&pbrpc.ClientChannelPolicy{Connector: pbrpc.WebSocketConnector{}}).RegisterServiceHandler(&ClientServiceHandler{})
+	channelPolicy := (&pbrpc.ClientChannelPolicy{}).RegisterServiceHandler(&ClientServiceHandler{})
 	channel := (&pbrpc.ClientChannel{}).Initialize(channelPolicy, []string{"127.0.0.1:8888"}, context.Background())
 
 	go func() {

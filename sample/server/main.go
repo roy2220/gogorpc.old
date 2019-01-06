@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/let-z-go/pbrpc"
 	"github.com/let-z-go/pbrpc/sample"
-	"github.com/let-z-go/toolkit/logger"
 )
 
 type ServerServiceHandler struct {
@@ -30,7 +28,7 @@ func InterceptMethod(methodHandlingInfo *pbrpc.MethodHandlingInfo, methodHandler
 	serviceName := methodHandlingInfo.ServiceHandler.X_GetName()
 	methodName := methodHandlingInfo.MethodRecord.Name
 	fmt.Printf("%v.%v begin\n", serviceName, methodName)
-	fmt.Printf("trace_id=%#v\n", methodHandlingInfo.ContextVars.TraceID.Base64())
+	fmt.Printf("trace_id=%#v\n", methodHandlingInfo.ContextVars.TraceID.String())
 	fmt.Printf("request=%#v\n", methodHandlingInfo.Request)
 	response, errorCode := methodHandler(methodHandlingInfo)
 	fmt.Printf("response=%#v\n", response)
@@ -40,7 +38,7 @@ func InterceptMethod(methodHandlingInfo *pbrpc.MethodHandlingInfo, methodHandler
 
 func main() {
 	serviceHandler := pbrpc.RegisterMethodInterceptors(&ServerServiceHandler{}, InterceptMethod)
-	serverPolicy := (&pbrpc.ServerPolicy{Acceptor: pbrpc.WebSocketAcceptor{}, Channel: pbrpc.ServerChannelPolicy{ChannelPolicy: pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv1", logger.SeverityInfo, os.Stdout, os.Stderr)}}}).RegisterServiceHandler(serviceHandler)
+	serverPolicy := (&pbrpc.ServerPolicy{}).RegisterServiceHandler(serviceHandler)
 	server := (&pbrpc.Server{}).Initialize(serverPolicy, "127.0.0.1:8888", "", context.Background())
 	server.Run()
 }

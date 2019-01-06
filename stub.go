@@ -168,7 +168,7 @@ func handleMethod(methodHandlingInfo *MethodHandlingInfo) (OutgoingMessage, Erro
 			traceID := &methodHandlingInfo.ContextVars.TraceID
 			serviceName := methodHandlingInfo.ServiceHandler.X_GetName()
 			methodName := methodHandlingInfo.MethodRecord.Name
-			methodHandlingInfo.logger.Errorf("internal server error: traceID=%#v, methodID=%v, request=%#v, e=%#v", traceID.Base64(), representMethodID(serviceName, methodName), methodHandlingInfo.Request, e.Error())
+			methodHandlingInfo.logger.Errorf("internal server error: traceID=%#v, methodID=%v, request=%#v, e=%#v", traceID.String(), representMethodID(serviceName, methodName), methodHandlingInfo.Request, e.Error())
 			errorCode = ErrorInternalServer
 		}
 	}
