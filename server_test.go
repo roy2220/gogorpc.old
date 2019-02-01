@@ -14,7 +14,7 @@ import (
 func TestServer(t *testing.T) {
 	sp := &ServerPolicy{
 		Channel: ServerChannelPolicy{
-			ChannelPolicy: ChannelPolicy{
+			ChannelPolicy: &ChannelPolicy{
 				Timeout:            6 * time.Second,
 				IncomingWindowSize: 20,
 				OutgoingWindowSize: 200,
@@ -27,7 +27,7 @@ func TestServer(t *testing.T) {
 	s := (&Server{}).Initialize(sp, "", "", context.Background())
 
 	cp2 := &ClientChannelPolicy{
-		ChannelPolicy: ChannelPolicy{
+		ChannelPolicy: &ChannelPolicy{
 			Timeout:            5 * time.Second,
 			IncomingWindowSize: 20,
 			OutgoingWindowSize: 200,
@@ -71,7 +71,7 @@ func TestServer(t *testing.T) {
 func TestServerGreeting(t *testing.T) {
 	sp := &ServerPolicy{
 		Channel: ServerChannelPolicy{
-			ChannelPolicy: ChannelPolicy{
+			ChannelPolicy: &ChannelPolicy{
 				Logger: *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
 			},
 
@@ -91,7 +91,7 @@ func TestServerGreeting(t *testing.T) {
 	s := (&Server{}).Initialize(sp, "", "", context.Background())
 
 	cp2 := &ClientChannelPolicy{
-		ChannelPolicy: ChannelPolicy{
+		ChannelPolicy: &ChannelPolicy{
 			Logger: *(&logger.Logger{}).Initialize("pbrpctest-cli", logger.SeverityInfo, os.Stdout, os.Stderr),
 		},
 

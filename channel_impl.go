@@ -38,12 +38,13 @@ type ChannelPolicy struct {
 	Timeout            time.Duration
 	IncomingWindowSize int32
 	OutgoingWindowSize int32
-	Transport          TransportPolicy
+	Transport          *TransportPolicy
 
+	validateOnce    sync.Once
 	serviceHandlers map[string]ServiceHandler
 }
 
-func (self *ChannelPolicy) registerServiceHandler(serviceHandler ServiceHandler) *ChannelPolicy {
+func (self *ChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ChannelPolicy {
 	if self.serviceHandlers == nil {
 		self.serviceHandlers = map[string]ServiceHandler{}
 	}
@@ -52,36 +53,42 @@ func (self *ChannelPolicy) registerServiceHandler(serviceHandler ServiceHandler)
 	return self
 }
 
-func (self *ChannelPolicy) validate() *ChannelPolicy {
-	if self.Timeout == 0 {
-		self.Timeout = defaultChannelTimeout
-	} else {
-		if self.Timeout < minChannelTimeout {
-			self.Timeout = minChannelTimeout
-		} else if self.Timeout > maxChannelTimeout {
-			self.Timeout = maxChannelTimeout
+func (self *ChannelPolicy) Validate() *ChannelPolicy {
+	self.validateOnce.Do(func() {
+		if self.Timeout == 0 {
+			self.Timeout = defaultChannelTimeout
+		} else {
+			if self.Timeout < minChannelTimeout {
+				self.Timeout = minChannelTimeout
+			} else if self.Timeout > maxChannelTimeout {
+				self.Timeout = maxChannelTimeout
+			}
 		}
-	}
 
-	if self.IncomingWindowSize == 0 {
-		self.IncomingWindowSize = defaultChannelWindowSize
-	} else {
-		if self.IncomingWindowSize < minChannelWindowSize {
-			self.IncomingWindowSize = minChannelWindowSize
-		} else if self.IncomingWindowSize > maxChannelWindowSize {
-			self.IncomingWindowSize = maxChannelWindowSize
+		if self.IncomingWindowSize == 0 {
+			self.IncomingWindowSize = defaultChannelWindowSize
+		} else {
+			if self.IncomingWindowSize < minChannelWindowSize {
+				self.IncomingWindowSize = minChannelWindowSize
+			} else if self.IncomingWindowSize > maxChannelWindowSize {
+				self.IncomingWindowSize = maxChannelWindowSize
+			}
 		}
-	}
 
-	if self.OutgoingWindowSize == 0 {
-		self.OutgoingWindowSize = defaultChannelWindowSize
-	} else {
-		if self.OutgoingWindowSize < minChannelWindowSize {
-			self.OutgoingWindowSize = minChannelWindowSize
-		} else if self.OutgoingWindowSize > maxChannelWindowSize {
-			self.OutgoingWindowSize = maxChannelWindowSize
+		if self.OutgoingWindowSize == 0 {
+			self.OutgoingWindowSize = defaultChannelWindowSize
+		} else {
+			if self.OutgoingWindowSize < minChannelWindowSize {
+				self.OutgoingWindowSize = minChannelWindowSize
+			} else if self.OutgoingWindowSize > maxChannelWindowSize {
+				self.OutgoingWindowSize = maxChannelWindowSize
+			}
 		}
-	}
+
+		if self.Transport == nil {
+			self.Transport = &defaultTransportPolicy
+		}
+	})
 
 	return self
 }
@@ -154,7 +161,7 @@ func (self *channelImpl) initialize(holder Channel, policy *ChannelPolicy, isCli
 	}
 
 	self.holder = holder
-	self.policy = policy
+	self.policy = policy.Validate()
 
 	if isClientSide {
 		self.state = int32(ChannelNotConnected)
@@ -231,7 +238,7 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 		return e
 	}
 
-	transport_ := (&transport{}).initialize(&self.policy.Transport, connection)
+	transport_ := (&transport{}).initialize(self.policy.Transport, connection)
 
 	greeting := protocol.Greeting{
 		Channel: protocol.Greeting_Channel{
@@ -314,7 +321,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, h
 	clientAddress := connection.RemoteAddr().String()
 	self.policy.Logger.Infof("channel acceptance: clientAddress=%#v", clientAddress)
 	self.setState(ChannelAccepting)
-	transport_ := (&transport{}).initialize(&self.policy.Transport, connection)
+	transport_ := (&transport{}).initialize(self.policy.Transport, connection)
 	data, e := transport_.peek(context_, minChannelTimeout)
 
 	if e != nil {
@@ -1130,6 +1137,8 @@ func (self invalidChannelStateError) Error() string {
 
 	return result
 }
+
+var defaultTransportPolicy TransportPolicy
 
 var channelState2ErrorCode = [...]ErrorCode{
 	ChannelNo:           ErrorChannelTimedOut,

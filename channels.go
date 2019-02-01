@@ -19,7 +19,7 @@ type ClientChannel struct {
 }
 
 func (self *ClientChannel) Initialize(policy *ClientChannelPolicy, serverAddresses []string, context_ context.Context) *ClientChannel {
-	self.initialize(self, &policy.Validate().ChannelPolicy, true, context_)
+	self.initialize(self, policy.Validate().ChannelPolicy, true, context_)
 	self.policy = policy
 
 	if serverAddresses == nil {
@@ -90,7 +90,7 @@ func (self *ClientChannel) Run() error {
 }
 
 type ClientChannelPolicy struct {
-	ChannelPolicy
+	*ChannelPolicy
 
 	Connector  Connector
 	Handshaker ClientHandshaker
@@ -98,14 +98,11 @@ type ClientChannelPolicy struct {
 	validateOnce sync.Once
 }
 
-func (self *ClientChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ClientChannelPolicy {
-	self.registerServiceHandler(serviceHandler)
-	return self
-}
-
 func (self *ClientChannelPolicy) Validate() *ClientChannelPolicy {
 	self.validateOnce.Do(func() {
-		self.validate()
+		if self.ChannelPolicy == nil {
+			self.ChannelPolicy = &defaultChannelPolicy
+		}
 
 		if self.Connector == nil {
 			self.Connector = TCPConnector{}
@@ -129,7 +126,7 @@ type ServerChannel struct {
 }
 
 func (self *ServerChannel) Initialize(policy *ServerChannelPolicy, connection net.Conn, context_ context.Context) *ServerChannel {
-	self.initialize(self, &policy.Validate().ChannelPolicy, false, context_)
+	self.initialize(self, policy.Validate().ChannelPolicy, false, context_)
 	self.policy = policy
 	self.connection = connection
 	return self
@@ -156,21 +153,18 @@ func (self *ServerChannel) Run() error {
 }
 
 type ServerChannelPolicy struct {
-	ChannelPolicy
+	*ChannelPolicy
 
 	Handshaker ServerHandshaker
 
 	validateOnce sync.Once
 }
 
-func (self *ServerChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ServerChannelPolicy {
-	self.registerServiceHandler(serviceHandler)
-	return self
-}
-
 func (self *ServerChannelPolicy) Validate() *ServerChannelPolicy {
 	self.validateOnce.Do(func() {
-		self.validate()
+		if self.ChannelPolicy == nil {
+			self.ChannelPolicy = &defaultChannelPolicy
+		}
 
 		if self.Handshaker == nil {
 			self.Handshaker = shakeHandsWithClient
@@ -271,6 +265,8 @@ func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClient
 	self.context, self.stop = context.WithCancel(context_)
 	return self
 }
+
+var defaultChannelPolicy ChannelPolicy
 
 func shakeHandsWithServer(_ *ClientChannel, context_ context.Context, greeter func(context.Context, []byte) ([]byte, error)) error {
 	_, e := greeter(context_, nil)

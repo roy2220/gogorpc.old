@@ -79,7 +79,7 @@ func (self *Server) Run() error {
 		logger_ *logger.Logger,
 	) func(connection net.Conn) {
 		return func(connection net.Conn) {
-			channel, e := policy.ChannelFactory.CreateProduct(&policy.Channel, connection, context_)
+			channel, e := policy.ChannelFactory.CreateProduct(policy.Channel, connection, context_)
 
 			if e != nil {
 				logger_.Errorf("channel creation failure: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
@@ -127,14 +127,9 @@ type ServerPolicy struct {
 	Registry       *Registry
 	Weight         int32
 	ChannelFactory ServerChannelFactory
-	Channel        ServerChannelPolicy
+	Channel        *ServerChannelPolicy
 
 	validateOnce sync.Once
-}
-
-func (self *ServerPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ServerPolicy {
-	self.Channel.RegisterServiceHandler(serviceHandler)
-	return self
 }
 
 func (self *ServerPolicy) Validate() *ServerPolicy {
@@ -151,6 +146,10 @@ func (self *ServerPolicy) Validate() *ServerPolicy {
 
 		if self.ChannelFactory == nil {
 			self.ChannelFactory = defaultServerChannelFactory{}
+		}
+
+		if self.Channel == nil {
+			self.Channel = &defaultServerChannelPolicy
 		}
 	})
 
@@ -172,3 +171,5 @@ func (defaultServerChannelFactory) CreateProduct(productPolicy *ServerChannelPol
 
 func (defaultServerChannelFactory) DestroyProduct(_ *ServerChannel) {
 }
+
+var defaultServerChannelPolicy ServerChannelPolicy
