@@ -111,7 +111,7 @@ func TestRegistry(t *testing.T) {
 
 			go func(m int) {
 				for n := 60; n >= 1; n-- {
-					rsp, e := ServerServiceClient{mc, context.Background()}.SayHello(&r, true)
+					rsp, e := MakeServerServiceClient(mc).WithAutoRetry(true).SayHello(context.Background(), &r)
 
 					if e == nil {
 						i := rsp.Reply[0] - '0'
@@ -153,7 +153,7 @@ func TestRegistry(t *testing.T) {
 
 			go func(m int) {
 				for n := 60; n >= 1; n-- {
-					rsp, e := ServerServiceClient{mc, context.Background()}.SayHello(&r, true)
+					rsp, e := MakeServerServiceClient(mc).WithAutoRetry(true).SayHello(context.Background(), &r)
 
 					if e == nil {
 						i := rsp.Reply[0] - '0'
@@ -195,7 +195,7 @@ func TestRegistry(t *testing.T) {
 
 			go func(m int) {
 				for n := 60; n >= 1; n-- {
-					rsp, e := ServerServiceClient{mc, context.Background()}.SayHello(&r, true)
+					rsp, e := MakeServerServiceClient(mc).WithAutoRetry(true).SayHello(context.Background(), &r)
 
 					if e == nil {
 						i := rsp.Reply[0] - '0'
@@ -297,7 +297,7 @@ func BenchmarkRegistry(b *testing.B) {
 
 			go func(m int) {
 				for n := 200; n >= 1; n-- {
-					_, e := ServerServiceClient{mc, context.Background()}.SayHello(&r, true)
+					_, e := MakeServerServiceClient(mc).WithAutoRetry(true).SayHello(context.Background(), &r)
 
 					if e != nil {
 						b.Errorf("%v", e)

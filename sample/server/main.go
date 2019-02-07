@@ -12,10 +12,10 @@ type ServerServiceHandler struct {
 	sample.ServerServiceHandlerBase
 }
 
-func (*ServerServiceHandler) SayHello(context_ context.Context, request *sample.SayHelloRequest) (*sample.SayHelloResponse, error) {
+func (ServerServiceHandler) SayHello(context_ context.Context, request *sample.SayHelloRequest) (*sample.SayHelloResponse, error) {
 	contextVars := pbrpc.MustGetContextVars(context_)
-	client := sample.ClientServiceClient{contextVars.Channel, context_}
-	response, _ := client.GetNickname(true)
+	client := sample.MakeClientServiceClient(contextVars.Channel).WithAutoRetry(true)
+	response, _ := client.GetNickname(context_)
 
 	response2 := &sample.SayHelloResponse{
 		Reply: fmt.Sprintf(request.ReplyFormat, response.Nickname),
@@ -24,23 +24,28 @@ func (*ServerServiceHandler) SayHello(context_ context.Context, request *sample.
 	return response2, nil
 }
 
-func InterceptMethod(methodHandlingInfo *pbrpc.MethodHandlingInfo, methodHandler pbrpc.MethodHandler) (pbrpc.OutgoingMessage, pbrpc.ErrorCode) {
-	serviceName := methodHandlingInfo.ServiceHandler.X_GetName()
-	methodName := methodHandlingInfo.MethodRecord.Name
-	fmt.Printf("%v.%v begin\n", serviceName, methodName)
-	fmt.Printf("trace_id=%#v\n", methodHandlingInfo.ContextVars.TraceID.String())
-	fmt.Printf("request=%#v\n", methodHandlingInfo.Request)
-	response, errorCode := methodHandler(methodHandlingInfo)
+func InterceptIncomingMethod(context_ context.Context, request interface{}, incomingMethodDispatcher pbrpc.IncomingMethodDispatcher) (pbrpc.OutgoingMessage, error) {
+	contextVars := pbrpc.MustGetContextVars(context_)
+	fmt.Printf("%v.%v begin\n", contextVars.ServiceName, contextVars.MethodName)
+	fmt.Printf("trace_id=%#v, spanParentID=%#v, spanID=%#v\n", contextVars.TraceID.String(), contextVars.SpanParentID, contextVars.SpanID)
+	fmt.Printf("request=%#v\n", request)
+	response, e := incomingMethodDispatcher(context_, request)
 	fmt.Printf("response=%#v\n", response)
-	fmt.Printf("%v.%v end\n", serviceName, methodName)
-	return response, errorCode
+	fmt.Printf("%v.%v end\n", contextVars.ServiceName, contextVars.MethodName)
+	return response, e
 }
 
 func main() {
-	serviceHandler := pbrpc.RegisterMethodInterceptors(&ServerServiceHandler{}, InterceptMethod)
+	serviceHandler := ServerServiceHandler{}
+
 	serverPolicy := pbrpc.ServerPolicy{
-		Channel: &pbrpc.ServerChannelPolicy{ChannelPolicy: (&pbrpc.ChannelPolicy{}).RegisterServiceHandler(serviceHandler)},
+		Channel: &pbrpc.ServerChannelPolicy{
+			ChannelPolicy: (&pbrpc.ChannelPolicy{}).
+				RegisterServiceHandler(serviceHandler).
+				AddIncomingMethodInterceptor("", -1, InterceptIncomingMethod),
+		},
 	}
+
 	server := (&pbrpc.Server{}).Initialize(&serverPolicy, "127.0.0.1:8888", "", context.Background())
-	server.Run()
+	panic(server.Run())
 }

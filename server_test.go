@@ -13,7 +13,7 @@ import (
 
 func TestServer(t *testing.T) {
 	sp := &ServerPolicy{
-		Channel: ServerChannelPolicy{
+		Channel: &ServerChannelPolicy{
 			ChannelPolicy: &ChannelPolicy{
 				Timeout:            6 * time.Second,
 				IncomingWindowSize: 20,
@@ -23,7 +23,7 @@ func TestServer(t *testing.T) {
 		},
 	}
 
-	cp1 := &sp.Channel
+	cp1 := sp.Channel
 	s := (&Server{}).Initialize(sp, "", "", context.Background())
 
 	cp2 := &ClientChannelPolicy{
@@ -70,7 +70,7 @@ func TestServer(t *testing.T) {
 
 func TestServerGreeting(t *testing.T) {
 	sp := &ServerPolicy{
-		Channel: ServerChannelPolicy{
+		Channel: &ServerChannelPolicy{
 			ChannelPolicy: &ChannelPolicy{
 				Logger: *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
 			},

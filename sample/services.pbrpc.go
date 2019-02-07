@@ -21,14 +21,15 @@ const (
 )
 
 type ClientServiceClient struct {
-    MethodCaller pbrpc.MethodCaller
-    Context context.Context
+    methodCaller pbrpc.MethodCaller
+    extraData    []byte
+    autoRetry    bool
 }
 
-func (self ClientServiceClient) GetNickname(autoRetry bool) (*GetNicknameResponse, error) {
+func (self ClientServiceClient) GetNickname(context_ context.Context) (*GetNicknameResponse, error) {
     _ = pbrpc.IncomingMessage(&GetNicknameResponse{})
     methodRecord := &methodTableOfClientService[ClientService_GetNickname]
-    response, e := self.MethodCaller.CallMethod(self.Context, ClientServiceName, methodRecord.Name, &pbrpc.Void{}, methodRecord.ResponseType, autoRetry)
+    response, e := self.methodCaller.CallMethod(context_, ClientServiceName, methodRecord.Name, methodRecord.Index, self.extraData, &pbrpc.Void{}, methodRecord.ResponseType, self.autoRetry)
 
     if e != nil {
         return nil, e
@@ -37,12 +38,34 @@ func (self ClientServiceClient) GetNickname(autoRetry bool) (*GetNicknameRespons
     return response.(*GetNicknameResponse), e
 }
 
-type ClientServiceHandlerBase struct {
-    pbrpc.ServiceHandlerBase
+func (self ClientServiceClient) WithAutoRetry(autoRetry bool) ClientServiceClient {
+    return ClientServiceClient{
+        methodCaller: self.methodCaller,
+        extraData: self.extraData,
+        autoRetry: autoRetry,
+    }
 }
 
-func (*ClientServiceHandlerBase) X_GetName() string { return ClientServiceName }
-func (*ClientServiceHandlerBase) X_GetMethodTable() pbrpc.MethodTable { return methodTableOfClientService }
+func (self ClientServiceClient) WithExtraData(extraData []byte) ClientServiceClient {
+    return ClientServiceClient{
+        methodCaller: self.methodCaller,
+        extraData: extraData,
+        autoRetry: self.autoRetry,
+    }
+}
+
+func MakeClientServiceClient(methodCaller pbrpc.MethodCaller) ClientServiceClient {
+    return ClientServiceClient{
+        methodCaller: methodCaller,
+        extraData: nil,
+        autoRetry: false,
+    }
+}
+
+type ClientServiceHandlerBase struct {}
+
+func (ClientServiceHandlerBase) X_GetName() string { return ClientServiceName }
+func (ClientServiceHandlerBase) X_GetMethodTable() pbrpc.MethodTable { return methodTableOfClientService }
 
 // `ClientServiceHandler` template:
 //
@@ -50,7 +73,7 @@ func (*ClientServiceHandlerBase) X_GetMethodTable() pbrpc.MethodTable { return m
 //     ClientServiceHandlerBase
 // }
 //
-// func (*ClientServiceHandler) GetNickname(context_ context.Context) (*GetNicknameResponse, error)
+// func (ClientServiceHandler) GetNickname(context_ context.Context) (*GetNicknameResponse, error)
 
 var methodTableOfClientService = pbrpc.MethodTable{
     ClientService_GetNickname: {
@@ -80,14 +103,15 @@ const (
 )
 
 type ServerServiceClient struct {
-    MethodCaller pbrpc.MethodCaller
-    Context context.Context
+    methodCaller pbrpc.MethodCaller
+    extraData    []byte
+    autoRetry    bool
 }
 
-func (self ServerServiceClient) SayHello(request *SayHelloRequest, autoRetry bool) (*SayHelloResponse, error) {
+func (self ServerServiceClient) SayHello(context_ context.Context, request *SayHelloRequest) (*SayHelloResponse, error) {
     _ = pbrpc.IncomingMessage(&SayHelloResponse{})
     methodRecord := &methodTableOfServerService[ServerService_SayHello]
-    response, e := self.MethodCaller.CallMethod(self.Context, ServerServiceName, methodRecord.Name, request, methodRecord.ResponseType, autoRetry)
+    response, e := self.methodCaller.CallMethod(context_, ServerServiceName, methodRecord.Name, methodRecord.Index, self.extraData, request, methodRecord.ResponseType, self.autoRetry)
 
     if e != nil {
         return nil, e
@@ -96,12 +120,34 @@ func (self ServerServiceClient) SayHello(request *SayHelloRequest, autoRetry boo
     return response.(*SayHelloResponse), e
 }
 
-type ServerServiceHandlerBase struct {
-    pbrpc.ServiceHandlerBase
+func (self ServerServiceClient) WithAutoRetry(autoRetry bool) ServerServiceClient {
+    return ServerServiceClient{
+        methodCaller: self.methodCaller,
+        extraData: self.extraData,
+        autoRetry: autoRetry,
+    }
 }
 
-func (*ServerServiceHandlerBase) X_GetName() string { return ServerServiceName }
-func (*ServerServiceHandlerBase) X_GetMethodTable() pbrpc.MethodTable { return methodTableOfServerService }
+func (self ServerServiceClient) WithExtraData(extraData []byte) ServerServiceClient {
+    return ServerServiceClient{
+        methodCaller: self.methodCaller,
+        extraData: extraData,
+        autoRetry: self.autoRetry,
+    }
+}
+
+func MakeServerServiceClient(methodCaller pbrpc.MethodCaller) ServerServiceClient {
+    return ServerServiceClient{
+        methodCaller: methodCaller,
+        extraData: nil,
+        autoRetry: false,
+    }
+}
+
+type ServerServiceHandlerBase struct {}
+
+func (ServerServiceHandlerBase) X_GetName() string { return ServerServiceName }
+func (ServerServiceHandlerBase) X_GetMethodTable() pbrpc.MethodTable { return methodTableOfServerService }
 
 // `ServerServiceHandler` template:
 //
@@ -109,7 +155,7 @@ func (*ServerServiceHandlerBase) X_GetMethodTable() pbrpc.MethodTable { return m
 //     ServerServiceHandlerBase
 // }
 //
-// func (*ServerServiceHandler) SayHello(context_ context.Context, request *SayHelloRequest) (*SayHelloResponse, error)
+// func (ServerServiceHandler) SayHello(context_ context.Context, request *SayHelloRequest) (*SayHelloResponse, error)
 
 var methodTableOfServerService = pbrpc.MethodTable{
     ServerService_SayHello: {

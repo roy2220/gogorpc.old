@@ -22,13 +22,13 @@ const (
 )
 
 type Error struct {
-	isPassive bool
-	code      ErrorCode
-	context   string
+	isFromPeer bool
+	code       ErrorCode
+	context    string
 }
 
-func (self Error) IsPassive() bool {
-	return self.isPassive
+func (self Error) IsFromPeer() bool {
+	return self.isFromPeer
 }
 
 func (self Error) GetCode() ErrorCode {

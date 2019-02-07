@@ -3,8 +3,12 @@ package pbrpc
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 )
+
+const normalNumberOfMethodInterceptors = 8
+const defaultServerAddress = "127.0.0.1:8888"
 
 type markingList struct {
 	items           []string
@@ -44,8 +48,6 @@ func (self *markingList) getNumberOfMarkedItems() int {
 	return self.markedItemCount
 }
 
-var defaultServerAddress = "127.0.0.1:8888"
-
 func makeDeadline(context_ context.Context, timeout time.Duration) (time.Time, error) {
 	if e := context_.Err(); e != nil {
 		return time.Time{}, e
@@ -63,4 +65,13 @@ func makeDeadline(context_ context.Context, timeout time.Duration) (time.Time, e
 
 func representMethodID(serviceName string, methodName string) string {
 	return fmt.Sprintf("<%v.%v>", serviceName, methodName)
+}
+
+func makeMethodInterceptorLocator(serviceName string, methodIndex int32) string {
+	serviceNameLength := len(serviceName)
+	rawMethodInterceptorLocator := make([]byte, serviceNameLength+1, serviceNameLength+5)
+	copy(rawMethodInterceptorLocator, []byte(serviceName))
+	rawMethodInterceptorLocator[serviceNameLength] = ':'
+	rawMethodInterceptorLocator = strconv.AppendInt(rawMethodInterceptorLocator[serviceNameLength+1:], int64(methodIndex), 10)
+	return string(rawMethodInterceptorLocator)
 }
