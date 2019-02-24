@@ -640,6 +640,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 
 			for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
+				listNode.Reset()
 				poolOfResultReturns.Put(resultReturn_)
 			}
 		} else {
@@ -667,6 +668,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
 					methodCall_.callback(nil, errorCode2)
+					listNode.Reset()
 					poolOfMethodCalls.Put(methodCall_)
 				}
 			}
@@ -693,6 +695,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 					resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
+					listNode.Reset()
 					poolOfResultReturns.Put(resultReturn_)
 				}
 			}
@@ -769,10 +772,11 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 	cleanup := func(ok bool) {
 		if taskOfMethodCalls.list != nil {
 			if ok {
-				getListNode := taskOfMethodCalls.list.GetNodes()
+				getListNode := taskOfMethodCalls.list.GetNodesSafely()
 
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
+					listNode.Reset()
 					self.pendingMethodCalls.Store(methodCall_.sequenceNumber, methodCall_)
 				}
 			} else {
@@ -785,6 +789,7 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 
 			for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
+				listNode.Reset()
 				poolOfResultReturns.Put(resultReturn_)
 			}
 
@@ -880,6 +885,7 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 						taskOfMethodCalls.numberOfListNodes--
 						methodCall_.callback(nil, ErrorPacketPayloadTooLarge)
 						completedMethodCallCount++
+						listNode.Reset()
 						poolOfMethodCalls.Put(methodCall_)
 						continue
 					}

@@ -100,7 +100,7 @@ func (self *ClientChannel) Run() error {
 	}
 
 	self.impl.close()
-	self.serverAddresses.Collect()
+	self.serverAddresses.GC()
 	return e
 }
 

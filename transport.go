@@ -81,8 +81,8 @@ func (self *transport) close(force bool) error {
 	e := self.connection.Close()
 	self.policy = nil
 	self.connection = nil
-	self.inputByteStream.Collect()
-	self.outputByteStream.Collect()
+	self.inputByteStream.GC()
+	self.outputByteStream.GC()
 	self.openness = -1
 	return e
 }
