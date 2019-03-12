@@ -17,7 +17,7 @@ type Channel interface {
 	MethodCaller
 	AddListener(int) (*ChannelListener, error)
 	RemoveListener(listener *ChannelListener) error
-	Run() error
+	Run(context.Context) error
 	Stop()
 }
 
@@ -33,8 +33,8 @@ type ClientChannel struct {
 	serverAddresses delay_pool.DelayPool
 }
 
-func (self *ClientChannel) Initialize(policy *ClientChannelPolicy, serverAddresses []string, context_ context.Context) *ClientChannel {
-	self.initialize(self, policy.Validate().ChannelPolicy, true, context_)
+func (self *ClientChannel) Initialize(policy *ClientChannelPolicy, serverAddresses []string) *ClientChannel {
+	self.initialize(self, policy.Validate().ChannelPolicy, true)
 	self.policy = policy
 
 	if serverAddresses == nil {
@@ -55,25 +55,28 @@ func (self *ClientChannel) Initialize(policy *ClientChannelPolicy, serverAddress
 	return self
 }
 
-func (self *ClientChannel) Run() error {
+func (self *ClientChannel) Run(context_ context.Context) error {
 	if self.impl.isClosed() {
 		return nil
 	}
+
+	context2, cancel2 := context.WithCancel(context_)
+	self.stop = cancel2
 
 	var e error
 
 	for {
 		var value interface{}
-		value, e = self.serverAddresses.GetValue(self.context)
+		value, e = self.serverAddresses.GetValue(context2)
 
 		if e != nil {
 			break
 		}
 
-		context_, cancel := context.WithDeadline(self.context, self.serverAddresses.WhenNextValueUsable())
+		context3, cancel3 := context.WithDeadline(context2, self.serverAddresses.WhenNextValueUsable())
 		serverAddress := value.(string)
-		e = self.impl.connect(self.policy.Connector, context_, serverAddress, self.policy.Handshaker)
-		cancel()
+		e = self.impl.connect(self.policy.Connector, context3, serverAddress, self.policy.Handshaker)
+		cancel3()
 
 		if e != nil {
 			if e != io.EOF {
@@ -86,7 +89,7 @@ func (self *ClientChannel) Run() error {
 		}
 
 		self.serverAddresses.Reset(nil, 0, self.impl.getTimeout()/3)
-		e = self.impl.dispatch(self.context)
+		e = self.impl.dispatch(context2, cancel2)
 
 		if e != nil {
 			if e != io.EOF {
@@ -100,6 +103,7 @@ func (self *ClientChannel) Run() error {
 	}
 
 	self.impl.close()
+	self.stop = nil
 	self.serverAddresses.GC()
 	return e
 }
@@ -131,7 +135,7 @@ func (self *ClientChannelPolicy) Validate() *ClientChannelPolicy {
 	return self
 }
 
-type ClientHandshaker func(*ClientChannel, context.Context, func(context.Context, []byte) ([]byte, error)) error
+type ClientHandshaker func(*ClientChannel, context.Context, func(context.Context, *[]byte) error) error
 
 type ServerChannel struct {
 	channelBase
@@ -140,29 +144,33 @@ type ServerChannel struct {
 	connection net.Conn
 }
 
-func (self *ServerChannel) Initialize(policy *ServerChannelPolicy, connection net.Conn, context_ context.Context) *ServerChannel {
-	self.initialize(self, policy.Validate().ChannelPolicy, false, context_)
+func (self *ServerChannel) Initialize(policy *ServerChannelPolicy, connection net.Conn) *ServerChannel {
+	self.initialize(self, policy.Validate().ChannelPolicy, false)
 	self.policy = policy
 	self.connection = connection
 	return self
 }
 
-func (self *ServerChannel) Run() error {
+func (self *ServerChannel) Run(context_ context.Context) error {
 	if self.impl.isClosed() {
 		return nil
 	}
 
+	context2, cancel2 := context.WithCancel(context_)
+	self.stop = cancel2
+
 	cleanup := func() {
 		self.impl.close()
+		self.stop = nil
 		self.connection = nil
 	}
 
-	if e := self.impl.accept(self.context, self.connection, self.policy.Handshaker); e != nil {
+	if e := self.impl.accept(context2, self.connection, self.policy.Handshaker); e != nil {
 		cleanup()
 		return e
 	}
 
-	e := self.impl.dispatch(self.context)
+	e := self.impl.dispatch(context2, cancel2)
 	cleanup()
 	return e
 }
@@ -189,7 +197,7 @@ func (self *ServerChannelPolicy) Validate() *ServerChannelPolicy {
 	return self
 }
 
-type ServerHandshaker func(*ServerChannel, context.Context, []byte) ([]byte, error)
+type ServerHandshaker func(*ServerChannel, context.Context, *[]byte) (bool, error)
 
 type ContextVars struct {
 	Channel      Channel
@@ -238,9 +246,8 @@ func MustGetContextVars(context_ context.Context) *ContextVars {
 }
 
 type channelBase struct {
-	impl    channelImpl
-	context context.Context
-	stop    context.CancelFunc
+	impl channelImpl
+	stop context.CancelFunc
 }
 
 func (self *channelBase) AddListener(maxNumberOfStateChanges int) (*ChannelListener, error) {
@@ -252,9 +259,7 @@ func (self *channelBase) RemoveListener(listener *ChannelListener) error {
 }
 
 func (self *channelBase) Stop() {
-	if self.stop != nil {
-		self.stop()
-	}
+	self.stop()
 }
 
 func (self *channelBase) CallMethod(
@@ -388,9 +393,8 @@ func (self *channelBase) CallMethodWithoutReturn(
 	return e
 }
 
-func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClientSide bool, context_ context.Context) *channelBase {
+func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClientSide bool) *channelBase {
 	self.impl.initialize(sub, policy, isClientSide)
-	self.context, self.stop = context.WithCancel(context_)
 	return self
 }
 
@@ -406,7 +410,7 @@ func (self *channelBase) callMethod(
 
 	callback := func(response2 interface{}, errorCode ErrorCode) {
 		if errorCode != 0 {
-			error_ <- Error{true, errorCode, fmt.Sprintf("methodID=%v, request=%#v", representMethodID(contextVars_.ServiceName, contextVars_.MethodName), request)}
+			error_ <- Error{true, errorCode, fmt.Sprintf("methodID=%v, request=%q", representMethodID(contextVars_.ServiceName, contextVars_.MethodName), request)}
 			return
 		}
 
@@ -456,13 +460,13 @@ func (self *channelBase) callMethodWithoutReturn(
 
 var defaultChannelPolicy ChannelPolicy
 
-func shakeHandsWithServer(_ *ClientChannel, context_ context.Context, greeter func(context.Context, []byte) ([]byte, error)) error {
-	_, e := greeter(context_, nil)
-	return e
+func shakeHandsWithServer(_ *ClientChannel, context_ context.Context, greeter func(context.Context, *[]byte) error) error {
+	handshake := []byte(nil)
+	return greeter(context_, &handshake)
 }
 
-func shakeHandsWithClient(_ *ServerChannel, _ context.Context, handshake []byte) ([]byte, error) {
-	return handshake, nil
+func shakeHandsWithClient(*ServerChannel, context.Context, *[]byte) (bool, error) {
+	return true, nil
 }
 
 func bindContextVars(context_ context.Context, contextVars_ *ContextVars) context.Context {

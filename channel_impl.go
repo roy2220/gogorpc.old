@@ -184,6 +184,7 @@ func (self ChannelState) GoString() string {
 }
 
 var ChannelClosedError = errors.New("pbrpc: channel closed")
+var HandshakeRejectedError = errors.New("pbrpc: handshake rejected")
 var IllFormedMessageError = errors.New("pbrpc: ill-formed message")
 
 const defaultChannelTimeout = 6 * time.Second
@@ -287,7 +288,7 @@ func (self *channelImpl) removeListener(listener *ChannelListener) error {
 }
 
 func (self *channelImpl) connect(connector Connector, context_ context.Context, serverAddress string, handshaker ClientHandshaker) error {
-	self.policy.Logger.Infof("channel connection: id=%#v, serverAddress=%#v", self.id.String(), serverAddress)
+	self.policy.Logger.Infof("channel connection: id=%q, serverAddress=%#v", self.id, serverAddress)
 	self.setState(ChannelConnecting)
 	connection, e := connector.Connect(context_, serverAddress)
 
@@ -309,8 +310,8 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 		greeting.Channel.Id = self.id[:]
 	}
 
-	greeter := func(context_ context.Context, handshake []byte) ([]byte, error) {
-		greeting.Handshake = handshake
+	greeter := func(context_ context.Context, handshake *[]byte) error {
+		greeting.Handshake = *handshake
 
 		if e := transport_.write(func(byteStream *byte_stream.ByteStream) error {
 			return byteStream.WriteDirectly(greeting.Size(), func(buffer []byte) error {
@@ -318,30 +319,31 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 				return e
 			})
 		}); e != nil {
-			return nil, e
+			return e
 		}
 
 		if e := transport_.flush(context_, minChannelTimeout); e != nil {
-			return nil, e
+			return e
 		}
 
 		data, e := transport_.peek(context_, minChannelTimeout)
 
 		if e != nil {
-			return nil, e
+			return e
 		}
 
 		greeting.Reset()
 
 		if e := greeting.Unmarshal(data); e != nil {
-			return nil, e
+			return e
 		}
 
 		if e := transport_.skip(data); e != nil {
-			return nil, e
+			return e
 		}
 
-		return greeting.Handshake, nil
+		*handshake = greeting.Handshake
+		return nil
 	}
 
 	if e := handshaker(self.holder.(*ClientChannel), context_, greeter); e != nil {
@@ -370,13 +372,13 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 	self.transport.close(true)
 	self.transport = *transport_
 	self.setState(ChannelConnected)
-	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.id.String(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.id, self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
 func (self *channelImpl) accept(context_ context.Context, connection net.Conn, handshaker ServerHandshaker) error {
-	clientAddress := connection.RemoteAddr().String()
-	self.policy.Logger.Infof("channel acceptance: clientAddress=%#v", clientAddress)
+	clientAddress := connection.RemoteAddr()
+	self.policy.Logger.Infof("channel acceptance: clientAddress=%q", clientAddress)
 	self.setState(ChannelAccepting)
 	transport_ := (&transport{}).initialize(self.policy.Transport, connection)
 	data, e := transport_.peek(context_, minChannelTimeout)
@@ -437,7 +439,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, h
 		greeting.Channel.OutgoingWindowSize = self.policy.IncomingWindowSize
 	}
 
-	greeting.Handshake, e = handshaker(self.holder.(*ServerChannel), context_, greeting.Handshake)
+	handshakeIsAccepted, e := handshaker(self.holder.(*ServerChannel), context_, &greeting.Handshake)
 
 	if e != nil {
 		transport_.close(true)
@@ -459,6 +461,11 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, h
 		return e
 	}
 
+	if !handshakeIsAccepted {
+		transport_.close(false)
+		return HandshakeRejectedError
+	}
+
 	self.id = id
 	self.timeout = time.Duration(greeting.Channel.Timeout) * time.Millisecond
 	self.incomingWindowSize = greeting.Channel.OutgoingWindowSize
@@ -472,24 +479,23 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, h
 	self.transport.close(true)
 	self.transport = *transport_
 	self.setState(ChannelAccepted)
-	self.policy.Logger.Infof("channel establishment: clientAddress=%#v, id=%#v, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.id.String(), self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: clientAddress=%q, id=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.id, self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
 	return nil
 }
 
-func (self *channelImpl) dispatch(context_ context.Context) error {
+func (self *channelImpl) dispatch(context_ context.Context, cancel context.CancelFunc) error {
 	if state := self.getState(); state != ChannelConnected && state != ChannelAccepted {
 		panic(invalidChannelStateError{fmt.Sprintf("state=%#v", state)})
 	}
 
-	context2, cancel := context.WithCancel(context_)
 	errors_ := make(chan error, 2)
 
 	go func() {
-		errors_ <- self.sendMessages(context2)
+		errors_ <- self.sendMessages(context_, cancel)
 	}()
 
 	go func() {
-		errors_ <- self.receiveMessages(context2)
+		errors_ <- self.receiveMessages(context_)
 	}()
 
 	e := <-errors_
@@ -507,7 +513,7 @@ func (self *channelImpl) callMethod(
 	callback func(interface{}, ErrorCode),
 ) error {
 	if self.isClosed() {
-		return Error{true, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%#v", representMethodID(contextVars_.ServiceName, contextVars_.MethodName), request)}
+		return Error{true, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%q", representMethodID(contextVars_.ServiceName, contextVars_.MethodName), request)}
 	}
 
 	methodCall_ := poolOfMethodCalls.Get().(*methodCall)
@@ -524,7 +530,7 @@ func (self *channelImpl) callMethod(
 
 	if e := self.dequeOfMethodCalls.AppendNode(context_, &methodCall_.listNode); e != nil {
 		if e == semaphore.SemaphoreClosedError {
-			e = Error{true, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%#v", representMethodID(contextVars_.ServiceName, contextVars_.MethodName), request)}
+			e = Error{true, self.getErrorCode(), fmt.Sprintf("methodID=%v, request=%q", representMethodID(contextVars_.ServiceName, contextVars_.MethodName), request)}
 		}
 
 		return e
@@ -597,7 +603,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 	}
 
 	atomic.StoreInt32(&self.state, int32(newState))
-	self.policy.Logger.Infof("channel state change: id=%#v, oldState=%#v, newState=%#v", self.id.String(), oldState, newState)
+	self.policy.Logger.Infof("channel state change: id=%q, oldState=%#v, newState=%#v", self.id, oldState, newState)
 	self.lockOfListeners.Lock()
 
 	for listener := range self.listeners {
@@ -705,8 +711,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 	}
 }
 
-func (self *channelImpl) sendMessages(context_ context.Context) error {
-	context2, cancel := context.WithCancel(context_)
+func (self *channelImpl) sendMessages(context_ context.Context, cancel context.CancelFunc) error {
 	errors_ := make(chan error, 2)
 
 	type task struct {
@@ -722,7 +727,7 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 		list2 := (&list.List{}).Initialize()
 
 		for {
-			numberOfListNodes, e := self.dequeOfMethodCalls.RemoveAllNodes(context2, false, list1)
+			numberOfListNodes, e := self.dequeOfMethodCalls.RemoveAllNodes(context_, false, list1)
 
 			if e != nil {
 				errors_ <- e
@@ -731,9 +736,9 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 
 			select {
 			case tasksOfMethodCalls <- task{list1, numberOfListNodes}:
-			case <-context2.Done():
+			case <-context_.Done():
 				self.dequeOfMethodCalls.DiscardNodeRemovals(list1, numberOfListNodes)
-				errors_ <- context2.Err()
+				errors_ <- context_.Err()
 				return
 			}
 
@@ -747,7 +752,7 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 		list2 := (&list.List{}).Initialize()
 
 		for {
-			numberOfListNodes, e := self.dequeOfResultReturns.RemoveAllNodes(context2, true, list1)
+			numberOfListNodes, e := self.dequeOfResultReturns.RemoveAllNodes(context_, true, list1)
 
 			if e != nil {
 				errors_ <- e
@@ -756,8 +761,8 @@ func (self *channelImpl) sendMessages(context_ context.Context) error {
 
 			select {
 			case tasksOfResultReturns <- task{list1, numberOfListNodes}:
-			case <-context2.Done():
-				errors_ <- context2.Err()
+			case <-context_.Done():
+				errors_ <- context_.Err()
 				return
 			}
 
@@ -1230,7 +1235,7 @@ func (self *channelImpl) receiveResponse(context_ context.Context, responseHeade
 	value, ok := self.pendingMethodCalls.Load(responseHeader.SequenceNumber)
 
 	if !ok {
-		self.policy.Logger.Warningf("ignored response: id=%#v, responseHeader=%#v", self.id.String(), responseHeader)
+		self.policy.Logger.Warningf("ignored response: id=%q, responseHeader=%q", self.id, responseHeader)
 		return nil
 	}
 
@@ -1336,12 +1341,12 @@ func errorToErrorCode(e error, logger *logger.Logger, contextVars_ *ContextVars,
 			return e2.code
 		} else {
 			logger.Errorf(
-				"internal server error: methodID=%v, traceID=%#v, spanID=%#v, request=%#v, e=%#v",
+				"internal server error: methodID=%v, traceID=%q, spanID=%#v, request=%q, e=%q",
 				representMethodID(contextVars_.ServiceName, contextVars_.MethodName),
-				contextVars_.TraceID.String(),
+				contextVars_.TraceID,
 				contextVars_.SpanID,
 				request,
-				e.Error(),
+				e,
 			)
 
 			return ErrorInternalServer

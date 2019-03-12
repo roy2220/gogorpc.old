@@ -8,7 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
+	"github.com/let-z-go/toolkit/condition"
+	"github.com/let-z-go/toolkit/lazy_map"
 	"github.com/let-z-go/zk"
 	"github.com/let-z-go/zk/recipes/utils"
 )
@@ -22,44 +25,84 @@ const (
 type Registry struct {
 	client                          *zk.Client
 	channelPolicy                   *ClientChannelPolicy
-	serviceName2ServiceProviderList sync.Map
+	serviceName2ServiceProviderList lazy_map.LazyMap
 	randomizedLoadBalancer          randomizedLoadBalancer
 	roundRobinLoadBalancer          roundRobinLoadBalancer
 	consistentHashingLoadBalancer   consistentHashingLoadBalancer
-	serverAddress2Channel           sync.Map
-	context                         context.Context
-	exit                            context.CancelFunc
+	serverAddress2Channel           lazy_map.LazyMap
+	lock                            sync.Mutex
+	condition                       condition.Condition
+	asyncTasks                      []func(context.Context)
+	openness                        int32
 }
 
-func (self *Registry) Initialize(client *zk.Client, channelPolicy *ClientChannelPolicy, context_ context.Context) *Registry {
-	if self.context != nil {
+func (self *Registry) Initialize(client *zk.Client, channelPolicy *ClientChannelPolicy) *Registry {
+	if self.openness != 0 {
 		panic(errors.New("pbrpc: registry already initialized"))
 	}
 
 	self.client = client
 	self.channelPolicy = channelPolicy
-	self.context, self.exit = context.WithCancel(context_)
+	self.condition.Initialize(&self.lock)
+	self.openness = 1
 	return self
 }
 
-func (self *Registry) Exit() {
-	self.checkUninitialized()
-	self.exit()
+func (self *Registry) Run(context_ context.Context) error {
+	if self.openness != 1 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+
+	for {
+		var e error
+		var asyncTasks []func(context.Context)
+		self.lock.Lock()
+
+		if self.asyncTasks == nil {
+			_, e = self.condition.WaitFor(context_)
+
+			if e != nil {
+				atomic.StoreInt32(&self.openness, -1)
+			}
+		} else {
+			e = nil
+		}
+
+		asyncTasks = self.asyncTasks
+		self.asyncTasks = nil
+		self.lock.Unlock()
+
+		for _, asyncTask := range asyncTasks {
+			wg.Add(1)
+
+			go func(asyncTask func(context.Context)) {
+				asyncTask(context_)
+				wg.Done()
+			}(asyncTask)
+		}
+
+		if e != nil {
+			wg.Wait()
+			return e
+		}
+	}
 }
 
-func (self *Registry) AddServiceProviders(serviceNames []string, serverAddress string, weight int32) error {
+func (self *Registry) AddServiceProviders(context_ context.Context, serviceNames []string, serverAddress string, weight int32) error {
 	self.checkUninitialized()
 
 	for _, serviceName := range serviceNames {
 		serviceProvidersPath := makeServiceProvidersPath(serviceName)
 
-		if e := utils.CreateP(self.client, self.context, serviceProvidersPath); e != nil {
+		if e := utils.CreateP(self.client, context_, serviceProvidersPath); e != nil {
 			return e
 		}
 
 		serviceProviderKey := makeServiceProviderKey(serverAddress, weight)
 
-		if _, e := self.client.Create(self.context, serviceProvidersPath+"/"+serviceProviderKey, []byte{}, nil, zk.CreateEphemeral, true); e != nil {
+		if _, e := self.client.Create(context_, serviceProvidersPath+"/"+serviceProviderKey, nil, nil, zk.CreateEphemeral, true); e != nil {
 			if e2, ok := e.(zk.Error); !(ok && e2.GetCode() == zk.ErrorNodeExists) {
 				return e
 			}
@@ -69,14 +112,14 @@ func (self *Registry) AddServiceProviders(serviceNames []string, serverAddress s
 	return nil
 }
 
-func (self *Registry) RemoveServiceProviders(serviceNames []string, serverAddress string, weight int32) error {
+func (self *Registry) RemoveServiceProviders(context_ context.Context, serviceNames []string, serverAddress string, weight int32) error {
 	self.checkUninitialized()
 
 	for _, serviceName := range serviceNames {
 		serviceProvidersPath := makeServiceProvidersPath(serviceName)
 		serviceProviderKey := makeServiceProviderKey(serverAddress, weight)
 
-		if e := self.client.Delete(self.context, serviceProvidersPath+"/"+serviceProviderKey, -1, true); e != nil {
+		if e := self.client.Delete(context_, serviceProvidersPath+"/"+serviceProviderKey, -1, true); e != nil {
 			if e2, ok := e.(zk.Error); !(ok && e2.GetCode() == zk.ErrorNoNode) {
 				return e
 			}
@@ -87,7 +130,6 @@ func (self *Registry) RemoveServiceProviders(serviceNames []string, serverAddres
 }
 
 func (self *Registry) GetMethodCaller(lbType LBType, lbArgument uintptr) MethodCaller {
-	self.checkUninitialized()
 	var loadBalancer_ loadBalancer
 
 	switch lbType {
@@ -98,11 +140,15 @@ func (self *Registry) GetMethodCaller(lbType LBType, lbArgument uintptr) MethodC
 	case LBConsistentHashing:
 		loadBalancer_ = &self.consistentHashingLoadBalancer
 	default:
-		panic(fmt.Errorf("pbrpc: method caller getting: lbType=%#v", lbType))
+		panic(fmt.Errorf("pbrpc: invalid load balancing type: lbType=%#v", lbType))
 	}
 
-	return methodCallerProxy{func(serviceName string, excludedServerList *markingList) (string, MethodCaller, error) {
-		serviceProviderList_, e := self.fetchServiceProviderList(serviceName)
+	return methodCallerProxy{func(context_ context.Context, serviceName string, excludedServerList *markingList) (string, MethodCaller, error) {
+		if self.isClosed() {
+			return "", nil, RegistryClosedError
+		}
+
+		serviceProviderList_, e := self.fetchServiceProviderList(context_, serviceName)
 
 		if e != nil {
 			if e2, ok := e.(zk.Error); ok && e2.GetCode() == zk.ErrorNoNode {
@@ -118,135 +164,136 @@ func (self *Registry) GetMethodCaller(lbType LBType, lbArgument uintptr) MethodC
 			return "", nil, noServerError
 		}
 
-		channel := self.fetchChannel(serverAddress)
+		channel, e := self.fetchChannel(serverAddress)
+
+		if e != nil {
+			return "", nil, e
+		}
+
 		return serverAddress, channel, nil
 	}}
 }
 
 func (self *Registry) GetMethodCallerWithoutLB(serverAddress string) MethodCaller {
-	self.checkUninitialized()
+	return methodCallerProxy{func(_ context.Context, _ string, excludedServerList *markingList) (string, MethodCaller, error) {
+		if self.isClosed() {
+			return "", nil, RegistryClosedError
+		}
 
-	return methodCallerProxy{func(_ string, excludedServerList *markingList) (string, MethodCaller, error) {
 		if excludedServerList.markItem(serverAddress) {
 			return "", nil, noServerError
 		}
 
-		channel := self.fetchChannel(serverAddress)
+		channel, e := self.fetchChannel(serverAddress)
+
+		if e != nil {
+			return "", nil, e
+		}
+
 		return serverAddress, channel, nil
 	}}
 }
 
 func (self *Registry) checkUninitialized() {
-	if self.context == nil {
+	if atomic.LoadInt32(&self.openness) == 0 {
 		panic(errors.New("pbrpc: registry uninitialized"))
 	}
 }
 
-func (self *Registry) fetchServiceProviderList(serviceName string) (serviceProviderList, error) {
-retry1:
-	value, _ := self.serviceName2ServiceProviderList.LoadOrStore(serviceName, &sync.Mutex{})
+func (self *Registry) fetchServiceProviderList(context_ context.Context, serviceName string) (serviceProviderList, error) {
+	var watcher *zk.Watcher
 
-	if lock, ok := value.(*sync.Mutex); ok {
-	retry2:
-		lock.Lock()
-		value2, ok := self.serviceName2ServiceProviderList.Load(serviceName)
+	value, valueClearer, e := self.serviceName2ServiceProviderList.GetOrSetValue(serviceName, func() (interface{}, error) {
+		serviceProvidersPath := makeServiceProvidersPath(serviceName)
+		var response *zk.GetChildren2Response
+		var e error
+		response, watcher, e = self.client.GetChildren2W(context_, serviceProvidersPath, true)
 
-		if !ok {
-			lock.Unlock()
-			goto retry1
+		if e != nil {
+			return nil, e
 		}
 
-		if lock2, ok := value2.(*sync.Mutex); ok {
-			if lock2 != lock {
-				lock.Unlock()
-				lock = lock2
-				goto retry2
-			}
+		serviceProviderList_ := convertToServiceProviderList(response)
+		return serviceProviderList_, nil
+	})
 
-			serviceProvidersPath := makeServiceProvidersPath(serviceName)
-			response, watcher, e := self.client.GetChildren2W(self.context, serviceProvidersPath, true)
-
-			if e != nil {
-				lock.Unlock()
-				return serviceProviderList{}, e
-			}
-
-			serviceProviderList_ := convertToServiceProviderList(response)
-			self.serviceName2ServiceProviderList.Store(serviceName, serviceProviderList_)
-			lock.Unlock()
-
-			go func() {
-				select {
-				case <-watcher.Event():
-				case <-self.context.Done():
-					watcher.Remove()
-				}
-
-				self.serviceName2ServiceProviderList.Delete(serviceName)
-			}()
-
-			return serviceProviderList_, nil
-		}
-
-		value = value2
-		lock.Unlock()
+	if e != nil {
+		return serviceProviderList{}, e
 	}
 
 	serviceProviderList_ := value.(serviceProviderList)
+
+	if valueClearer != nil {
+		if e := self.postAsyncTask(func(context_ context.Context) {
+			select {
+			case <-watcher.Event():
+			case <-context_.Done():
+				watcher.Remove()
+			}
+
+			valueClearer()
+		}); e != nil {
+			watcher.Remove()
+			valueClearer()
+			return serviceProviderList{}, e
+		}
+	}
+
 	return serviceProviderList_, nil
 }
 
-func (self *Registry) fetchChannel(serverAddress string) *ClientChannel {
-retry1:
-	value, _ := self.serverAddress2Channel.LoadOrStore(serverAddress, &sync.Mutex{})
-
-	if lock, ok := value.(*sync.Mutex); ok {
-	retry2:
-		lock.Lock()
-		value2, ok := self.serverAddress2Channel.Load(serverAddress)
-
-		if !ok {
-			lock.Unlock()
-			goto retry1
-		}
-
-		if lock2, ok := value2.(*sync.Mutex); ok {
-			if lock2 != lock {
-				lock.Unlock()
-				lock = lock2
-				goto retry2
-			}
-
-			channel := (&ClientChannel{}).Initialize(self.channelPolicy, []string{serverAddress}, self.context)
-			self.serverAddress2Channel.Store(serverAddress, channel)
-			lock.Unlock()
-
-			go func() {
-				channelListener, _ := channel.AddListener(64)
-
-				go func() {
-					e := channel.Run()
-					self.channelPolicy.Logger.Infof("channel run-out: serverAddress=%#v, e=%#v", serverAddress, e.Error())
-				}()
-
-				for channelState := range channelListener.StateChanges() {
-					if channelState == ChannelClosed {
-						break
-					}
-				}
-
-				self.serverAddress2Channel.Delete(serverAddress)
-			}()
-
-			return channel
-		}
-
-		value = value2
-		lock.Unlock()
-	}
+func (self *Registry) fetchChannel(serverAddress string) (*ClientChannel, error) {
+	value, valueClearer, _ := self.serverAddress2Channel.GetOrSetValue(serverAddress, func() (interface{}, error) {
+		channel := (&ClientChannel{}).Initialize(self.channelPolicy, []string{serverAddress})
+		return channel, nil
+	})
 
 	channel := value.(*ClientChannel)
-	return channel
+
+	if valueClearer != nil {
+		if e := self.postAsyncTask(func(context_ context.Context) {
+			channelListener, _ := channel.AddListener(64)
+
+			go func() {
+				for channelState := range channelListener.StateChanges() {
+					if channelState == ChannelClosed {
+						valueClearer()
+						return
+					}
+				}
+			}()
+
+			e := channel.Run(context_)
+			self.channelPolicy.Logger.Infof("channel run-out: serverAddress=%#v, e=%q", serverAddress, e)
+		}); e != nil {
+			valueClearer()
+			return nil, e
+		}
+	}
+
+	return channel, nil
+}
+
+func (self *Registry) postAsyncTask(asyncTask func(context.Context)) error {
+	if self.isClosed() {
+		return RegistryClosedError
+	}
+
+	self.lock.Lock()
+
+	if self.isClosed() {
+		self.lock.Unlock()
+		return RegistryClosedError
+	}
+
+	self.asyncTasks = append(self.asyncTasks, asyncTask)
+	self.condition.Signal()
+	self.lock.Unlock()
+	return nil
+}
+
+func (self *Registry) isClosed() bool {
+	return atomic.LoadInt32(&self.openness) != 1
 }
 
 type LBType uint8
@@ -265,18 +312,18 @@ func (self LBType) GoString() string {
 }
 
 type methodCallerProxy struct {
-	methodCallerFetcher func(string, *markingList) (string, MethodCaller, error)
+	methodCallerFetcher func(context.Context, string, *markingList) (string, MethodCaller, error)
 }
 
 func (self methodCallerProxy) CallMethod(context_ context.Context, serviceName string, methodName string, methodIndex int32, extraData []byte, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) (interface{}, error) {
 	var excludedServerList markingList
 
 	for {
-		serverAddress, methodCaller, e := self.methodCallerFetcher(serviceName, &excludedServerList)
+		serverAddress, methodCaller, e := self.methodCallerFetcher(context_, serviceName, &excludedServerList)
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{true, ErrorNotImplemented, fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
+				e = Error{true, ErrorNotFound, fmt.Sprintf("methodID=%v, request=%q", representMethodID(serviceName, methodName), request)}
 			}
 
 			return nil, e
@@ -299,11 +346,11 @@ func (self methodCallerProxy) CallMethodWithoutReturn(context_ context.Context, 
 	var excludedServerList markingList
 
 	for {
-		serverAddress, methodCaller, e := self.methodCallerFetcher(serviceName, &excludedServerList)
+		serverAddress, methodCaller, e := self.methodCallerFetcher(context_, serviceName, &excludedServerList)
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{true, ErrorNotImplemented, fmt.Sprintf("methodID=%v, request=%#v", representMethodID(serviceName, methodName), request)}
+				e = Error{true, ErrorNotFound, fmt.Sprintf("methodID=%v, request=%q", representMethodID(serviceName, methodName), request)}
 			}
 
 			return e
@@ -368,3 +415,5 @@ func parseServiceProviderKey(serviceProviderKey string) (serviceProvider, bool) 
 	serviceProvider_.weight = int32(weight)
 	return serviceProvider_, true
 }
+
+var RegistryClosedError = errors.New("pbrpc: registry closed")

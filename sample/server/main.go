@@ -27,10 +27,10 @@ func (ServerServiceHandler) SayHello(context_ context.Context, request *sample.S
 func InterceptIncomingMethod(context_ context.Context, request interface{}, incomingMethodDispatcher pbrpc.IncomingMethodDispatcher) (pbrpc.OutgoingMessage, error) {
 	contextVars := pbrpc.MustGetContextVars(context_)
 	fmt.Printf("%v.%v begin\n", contextVars.ServiceName, contextVars.MethodName)
-	fmt.Printf("trace_id=%#v, spanParentID=%#v, spanID=%#v\n", contextVars.TraceID.String(), contextVars.SpanParentID, contextVars.SpanID)
-	fmt.Printf("request=%#v\n", request)
+	fmt.Printf("trace_id=%q, spanParentID=%#v, spanID=%#v\n", contextVars.TraceID, contextVars.SpanParentID, contextVars.SpanID)
+	fmt.Printf("request=%q\n", request)
 	response, e := incomingMethodDispatcher(context_, request)
-	fmt.Printf("response=%#v\n", response)
+	fmt.Printf("response=%q\n", response)
 	fmt.Printf("%v.%v end\n", contextVars.ServiceName, contextVars.MethodName)
 	return response, e
 }
@@ -46,6 +46,6 @@ func main() {
 		},
 	}
 
-	server := (&pbrpc.Server{}).Initialize(&serverPolicy, "127.0.0.1:8888", "", context.Background())
-	panic(server.Run())
+	server := (&pbrpc.Server{}).Initialize(&serverPolicy, "127.0.0.1:8888", "")
+	panic(server.Run(context.Background()))
 }

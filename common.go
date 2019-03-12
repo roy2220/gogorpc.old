@@ -37,7 +37,7 @@ func (self *markingList) markItem(item string) bool {
 }
 
 func (self *markingList) unmarkItems() {
-	for i, _ := range self.items {
+	for i := range self.items {
 		self.itemIsMarked[i] = false
 	}
 

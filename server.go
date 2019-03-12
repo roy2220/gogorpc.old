@@ -5,22 +5,17 @@ import (
 	"errors"
 	"net"
 	"sync"
-
-	"github.com/let-z-go/toolkit/logger"
+	"time"
 )
 
 type Server struct {
 	policy           *ServerPolicy
 	bindAddress      string
 	discoveryAddress string
-	context1         context.Context
-	context2         context.Context
-	stop1            context.CancelFunc
-	stop2            context.CancelFunc
 	openness         int32
 }
 
-func (self *Server) Initialize(policy *ServerPolicy, bindAddress string, discoveryAddress string, context_ context.Context) *Server {
+func (self *Server) Initialize(policy *ServerPolicy, bindAddress string, discoveryAddress string) *Server {
 	if self.openness != 0 {
 		panic(errors.New("pbrpc: server already initialized"))
 	}
@@ -33,13 +28,11 @@ func (self *Server) Initialize(policy *ServerPolicy, bindAddress string, discove
 
 	self.bindAddress = bindAddress
 	self.discoveryAddress = discoveryAddress
-	self.context1, self.stop1 = context.WithCancel(context_)
-	self.context2, self.stop2 = context.WithCancel(self.context1)
 	self.openness = 1
 	return self
 }
 
-func (self *Server) Run() error {
+func (self *Server) Run(context_ context.Context) error {
 	if self.openness != 1 {
 		return nil
 	}
@@ -67,67 +60,46 @@ func (self *Server) Run() error {
 			address = self.bindAddress
 		}
 
-		if e := self.policy.Registry.AddServiceProviders(serviceNames, address, self.policy.Weight); e != nil {
+		if e := self.policy.Registry.AddServiceProviders(context_, serviceNames, address, self.policy.Weight); e != nil {
 			cleanup()
 			return e
 		}
 	}
 
-	connectionHandler := func(
-		policy *ServerPolicy,
-		context_ context.Context,
-		logger_ *logger.Logger,
-	) func(connection net.Conn) {
-		return func(connection net.Conn) {
-			channel, e := policy.ChannelFactory.CreateProduct(policy.Channel, connection, context_)
+	connectionHandler := func(policy *ServerPolicy) func(context_ context.Context, connection net.Conn) {
+		return func(context_ context.Context, connection net.Conn) {
+			channel, e := policy.ChannelFactory.CreateProduct(policy.Channel, connection)
+			logger_ := &policy.Channel.Logger
 
 			if e != nil {
-				logger_.Errorf("channel creation failure: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
+				logger_.Errorf("channel creation failure: clientAddress=%q, e=%q", connection.RemoteAddr(), e)
 				connection.Close()
 				return
 			}
 
-			e = channel.Run()
-			logger_.Infof("channel run-out: clientAddress=%#v, e=%#v", connection.RemoteAddr().String(), e.Error())
+			e = channel.Run(context_)
+			logger_.Infof("channel run-out: clientAddress=%q, e=%q", connection.RemoteAddr(), e)
 			policy.ChannelFactory.DestroyProduct(channel)
 		}
-	}(
+	}(self.policy)
 
-		self.policy,
-		self.context1,
-		&self.policy.Channel.Logger,
-	)
-
-	e := self.policy.Acceptor.Accept(self.context2, self.bindAddress, connectionHandler)
+	e := self.policy.Acceptor.Accept(context_, self.bindAddress, self.policy.GracefulShutdownTimeout, connectionHandler)
 
 	if self.policy.Registry != nil {
-		self.policy.Registry.RemoveServiceProviders(serviceNames, address, self.policy.Weight)
+		self.policy.Registry.RemoveServiceProviders(context.Background(), serviceNames, address, self.policy.Weight)
 	}
 
 	cleanup()
 	return e
 }
 
-func (self *Server) Stop(force bool) {
-	var stop context.CancelFunc
-
-	if force {
-		stop = self.stop1
-	} else {
-		stop = self.stop2
-	}
-
-	if stop != nil {
-		stop()
-	}
-}
-
 type ServerPolicy struct {
-	Acceptor       Acceptor
-	Registry       *Registry
-	Weight         int32
-	ChannelFactory ServerChannelFactory
-	Channel        *ServerChannelPolicy
+	Acceptor                Acceptor
+	GracefulShutdownTimeout time.Duration
+	Registry                *Registry
+	Weight                  int32
+	ChannelFactory          ServerChannelFactory
+	Channel                 *ServerChannelPolicy
 
 	validateOnce sync.Once
 }
@@ -157,7 +129,7 @@ func (self *ServerPolicy) Validate() *ServerPolicy {
 }
 
 type ServerChannelFactory interface {
-	CreateProduct(*ServerChannelPolicy, net.Conn, context.Context) (*ServerChannel, error)
+	CreateProduct(*ServerChannelPolicy, net.Conn) (*ServerChannel, error)
 	DestroyProduct(*ServerChannel)
 }
 
@@ -165,8 +137,8 @@ const defaultWeight = 5
 
 type defaultServerChannelFactory struct{}
 
-func (defaultServerChannelFactory) CreateProduct(productPolicy *ServerChannelPolicy, connection net.Conn, context_ context.Context) (*ServerChannel, error) {
-	return (&ServerChannel{}).Initialize(productPolicy, connection, context_), nil
+func (defaultServerChannelFactory) CreateProduct(productPolicy *ServerChannelPolicy, connection net.Conn) (*ServerChannel, error) {
+	return (&ServerChannel{}).Initialize(productPolicy, connection), nil
 }
 
 func (defaultServerChannelFactory) DestroyProduct(_ *ServerChannel) {

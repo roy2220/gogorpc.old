@@ -26,7 +26,8 @@ func main() {
 			RegisterServiceHandler(&ClientServiceHandler{}),
 	}
 
-	channel := (&pbrpc.ClientChannel{}).Initialize(&channelPolicy, []string{"127.0.0.1:8888"}, context.Background())
+	channel := (&pbrpc.ClientChannel{}).Initialize(&channelPolicy, []string{"127.0.0.1:8888"})
+	context_, cancel := context.WithCancel(context.Background())
 
 	go func() {
 		client := sample.MakeServerServiceClient(channel).WithAutoRetry(true)
@@ -37,8 +38,8 @@ func main() {
 
 		response, _ := client.SayHello(context.Background(), request)
 		fmt.Println(response.Reply)
-		channel.Stop()
+		cancel()
 	}()
 
-	channel.Run()
+	channel.Run(context_)
 }

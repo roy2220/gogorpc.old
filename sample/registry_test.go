@@ -53,45 +53,52 @@ func (ServerServiceHandler3) SayHello(context_ context.Context, request *SayHell
 func TestRegistry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	zksp := &zk.SessionPolicy{Logger: *(&logger.Logger{}).Initialize("zk", logger.SeverityInfo, os.Stdout, os.Stderr)}
-	zkc := (&zk.Client{}).Initialize(zksp, []string{"192.168.33.1:2181"}, nil, nil, "/", ctx)
+	zkc := (&zk.Client{}).Initialize(zksp, []string{"192.168.33.1:2181"}, nil, nil, "/")
 	cp := &pbrpc.ClientChannelPolicy{ChannelPolicy: &pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-cli", logger.SeverityInfo, os.Stdout, os.Stderr)}}
-	reg := (&pbrpc.Registry{}).Initialize(zkc, cp, ctx)
+	reg := (&pbrpc.Registry{}).Initialize(zkc, cp)
 	sp1 := (&pbrpc.ServerPolicy{Registry: reg, Channel: &pbrpc.ServerChannelPolicy{
 		ChannelPolicy: (&pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv1", logger.SeverityInfo, os.Stdout, os.Stderr)}).RegisterServiceHandler(&ServerServiceHandler1{})}})
-	s1 := (&pbrpc.Server{}).Initialize(sp1, "127.0.0.1:8888", "", ctx)
+	s1 := (&pbrpc.Server{}).Initialize(sp1, "127.0.0.1:8888", "")
 	sp2 := (&pbrpc.ServerPolicy{Registry: reg, Channel: &pbrpc.ServerChannelPolicy{
 		ChannelPolicy: (&pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv2", logger.SeverityInfo, os.Stdout, os.Stderr)}).RegisterServiceHandler(&ServerServiceHandler2{})}})
-	s2 := (&pbrpc.Server{}).Initialize(sp2, "127.0.0.1:8889", "", ctx)
+	s2 := (&pbrpc.Server{}).Initialize(sp2, "127.0.0.1:8889", "")
 	sp3 := (&pbrpc.ServerPolicy{Registry: reg, Channel: &pbrpc.ServerChannelPolicy{
 		ChannelPolicy: (&pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv3", logger.SeverityInfo, os.Stdout, os.Stderr)}).RegisterServiceHandler(&ServerServiceHandler3{})}})
-	s3 := (&pbrpc.Server{}).Initialize(sp3, "127.0.0.1:8890", "", ctx)
+	s3 := (&pbrpc.Server{}).Initialize(sp3, "127.0.0.1:8890", "")
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 
 	go func() {
-		zkc.Run()
+		zkc.Run(ctx)
 		wg.Done()
 	}()
 
 	wg.Add(1)
 
 	go func() {
-		s1.Run()
+		reg.Run(ctx)
 		wg.Done()
 	}()
 
 	wg.Add(1)
 
 	go func() {
-		s2.Run()
+		s1.Run(ctx)
 		wg.Done()
 	}()
 
 	wg.Add(1)
 
 	go func() {
-		s3.Run()
+		s2.Run(ctx)
+		wg.Done()
+	}()
+
+	wg.Add(1)
+
+	go func() {
+		s3.Run(ctx)
 		wg.Done()
 	}()
 
@@ -242,45 +249,52 @@ func TestRegistry(t *testing.T) {
 func BenchmarkRegistry(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	zksp := &zk.SessionPolicy{Logger: *(&logger.Logger{}).Initialize("zk", logger.SeverityInfo, os.Stdout, os.Stderr)}
-	zkc := (&zk.Client{}).Initialize(zksp, []string{"192.168.33.1:2181"}, nil, nil, "/", ctx)
+	zkc := (&zk.Client{}).Initialize(zksp, []string{"192.168.33.1:2181"}, nil, nil, "/")
 	cp := &pbrpc.ClientChannelPolicy{ChannelPolicy: &pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-cli", logger.SeverityInfo, os.Stdout, os.Stderr)}}
-	reg := (&pbrpc.Registry{}).Initialize(zkc, cp, ctx)
+	reg := (&pbrpc.Registry{}).Initialize(zkc, cp)
 	sp1 := (&pbrpc.ServerPolicy{Registry: reg, Channel: &pbrpc.ServerChannelPolicy{
 		ChannelPolicy: (&pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv1", logger.SeverityInfo, os.Stdout, os.Stderr)}).RegisterServiceHandler(&ServerServiceHandler1{})}})
-	s1 := (&pbrpc.Server{}).Initialize(sp1, "127.0.0.1:8891", "", ctx)
+	s1 := (&pbrpc.Server{}).Initialize(sp1, "127.0.0.1:8891", "")
 	sp2 := (&pbrpc.ServerPolicy{Registry: reg, Channel: &pbrpc.ServerChannelPolicy{
 		ChannelPolicy: (&pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv2", logger.SeverityInfo, os.Stdout, os.Stderr)}).RegisterServiceHandler(&ServerServiceHandler2{})}})
-	s2 := (&pbrpc.Server{}).Initialize(sp2, "127.0.0.1:8892", "", ctx)
+	s2 := (&pbrpc.Server{}).Initialize(sp2, "127.0.0.1:8892", "")
 	sp3 := (&pbrpc.ServerPolicy{Registry: reg, Channel: &pbrpc.ServerChannelPolicy{
 		ChannelPolicy: (&pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv3", logger.SeverityInfo, os.Stdout, os.Stderr)}).RegisterServiceHandler(&ServerServiceHandler3{})}})
-	s3 := (&pbrpc.Server{}).Initialize(sp3, "127.0.0.1:8893", "", ctx)
+	s3 := (&pbrpc.Server{}).Initialize(sp3, "127.0.0.1:8893", "")
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 
 	go func() {
-		zkc.Run()
+		zkc.Run(ctx)
 		wg.Done()
 	}()
 
 	wg.Add(1)
 
 	go func() {
-		s1.Run()
+		reg.Run(ctx)
 		wg.Done()
 	}()
 
 	wg.Add(1)
 
 	go func() {
-		s2.Run()
+		s1.Run(ctx)
 		wg.Done()
 	}()
 
 	wg.Add(1)
 
 	go func() {
-		s3.Run()
+		s2.Run(ctx)
+		wg.Done()
+	}()
+
+	wg.Add(1)
+
+	go func() {
+		s3.Run(ctx)
 		wg.Done()
 	}()
 
