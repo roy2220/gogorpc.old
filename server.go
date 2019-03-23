@@ -37,39 +37,10 @@ func (self *Server) Run(context_ context.Context) error {
 		return nil
 	}
 
-	cleanup := func() {
-		self.policy = nil
-		self.bindAddress = ""
-		self.discoveryAddress = ""
-		self.openness = -1
-	}
-
-	var serviceNames []string
-	var address string
-
-	if self.policy.Registry != nil {
-		serviceNames = nil
-
-		for serviceName := range self.policy.Channel.serviceHandlers {
-			serviceNames = append(serviceNames, serviceName)
-		}
-
-		address = self.discoveryAddress
-
-		if address == "" {
-			address = self.bindAddress
-		}
-
-		if e := self.policy.Registry.AddServiceProviders(context_, serviceNames, address, self.policy.Weight); e != nil {
-			cleanup()
-			return e
-		}
-	}
-
-	connectionHandler := func(policy *ServerPolicy) func(context_ context.Context, connection net.Conn) {
-		return func(context_ context.Context, connection net.Conn) {
-			channel, e := policy.ChannelFactory.CreateProduct(policy.Channel, connection)
-			logger_ := &policy.Channel.Logger
+	acceptorEventHandler := AcceptorEventHandler{
+		OnConnect: func(context_ context.Context, connection net.Conn) {
+			channel, e := self.policy.ChannelFactory.CreateProduct(self.policy.Channel, connection)
+			logger_ := &self.policy.Channel.Logger
 
 			if e != nil {
 				logger_.Errorf("channel creation failure: clientAddress=%q, e=%q", connection.RemoteAddr(), e)
@@ -79,17 +50,37 @@ func (self *Server) Run(context_ context.Context) error {
 
 			e = channel.Run(context_)
 			logger_.Infof("channel run-out: clientAddress=%q, e=%q", connection.RemoteAddr(), e)
-			policy.ChannelFactory.DestroyProduct(channel)
-		}
-	}(self.policy)
-
-	e := self.policy.Acceptor.Accept(context_, self.bindAddress, self.policy.GracefulShutdownTimeout, connectionHandler)
-
-	if self.policy.Registry != nil {
-		self.policy.Registry.RemoveServiceProviders(context.Background(), serviceNames, address, self.policy.Weight)
+			self.policy.ChannelFactory.DestroyProduct(channel)
+		},
 	}
 
-	cleanup()
+	if self.policy.Registry != nil {
+		serviceNames := []string(nil)
+
+		for serviceName := range self.policy.Channel.serviceHandlers {
+			serviceNames = append(serviceNames, serviceName)
+		}
+
+		address := self.discoveryAddress
+
+		acceptorEventHandler.OnListen = func(context_ context.Context, listener net.Listener) error {
+			if address == "" {
+				address = listener.Addr().String()
+			}
+
+			return self.policy.Registry.AddServiceProviders(context_, serviceNames, address, self.policy.Weight)
+		}
+
+		acceptorEventHandler.OnClose = func() {
+			self.policy.Registry.RemoveServiceProviders(context.Background(), serviceNames, address, self.policy.Weight)
+		}
+	}
+
+	e := self.policy.Acceptor.Accept(context_, self.bindAddress, self.policy.GracefulShutdownTimeout, acceptorEventHandler)
+	self.policy = nil
+	self.bindAddress = ""
+	self.discoveryAddress = ""
+	self.openness = -1
 	return e
 }
 

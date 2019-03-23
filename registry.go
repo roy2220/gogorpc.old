@@ -323,7 +323,7 @@ func (self methodCallerProxy) CallMethod(context_ context.Context, serviceName s
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{true, ErrorNotFound, fmt.Sprintf("methodID=%v, request=%q", representMethodID(serviceName, methodName), request)}
+				e = Error{ErrorNotFound, true, fmt.Sprintf("methodID=%v, request=%q", representMethodID(serviceName, methodName), request)}
 			}
 
 			return nil, e
@@ -350,7 +350,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(context_ context.Context, 
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{true, ErrorNotFound, fmt.Sprintf("methodID=%v, request=%q", representMethodID(serviceName, methodName), request)}
+				e = Error{ErrorNotFound, true, fmt.Sprintf("methodID=%v, request=%q", representMethodID(serviceName, methodName), request)}
 			}
 
 			return e

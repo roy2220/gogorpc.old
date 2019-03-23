@@ -13,16 +13,29 @@ import (
 )
 
 type Acceptor interface {
-	Accept(context.Context, string, time.Duration, func(context.Context, net.Conn)) error
+	Accept(context.Context, string, time.Duration, AcceptorEventHandler) error
+}
+
+type AcceptorEventHandler struct {
+	OnListen  func(context.Context, net.Listener) error
+	OnConnect func(context.Context, net.Conn)
+	OnClose   func()
 }
 
 type TCPAcceptor struct{}
 
-func (TCPAcceptor) Accept(context_ context.Context, bindAddress string, gracefulShutdownTimeout time.Duration, connectionHandler func(context.Context, net.Conn)) error {
+func (TCPAcceptor) Accept(context_ context.Context, bindAddress string, gracefulShutdownTimeout time.Duration, eventHandler AcceptorEventHandler) error {
 	listener, e := net.Listen("tcp", bindAddress)
 
 	if e != nil {
 		return e
+	}
+
+	if eventHandler.OnListen != nil {
+		if e := eventHandler.OnListen(context_, listener); e != nil {
+			listener.Close()
+			return e
+		}
 	}
 
 	error_ := make(chan error, 1)
@@ -61,7 +74,7 @@ func (TCPAcceptor) Accept(context_ context.Context, bindAddress string, graceful
 			wg.Add(1)
 
 			go func() {
-				connectionHandler(context2, connection)
+				eventHandler.OnConnect(context2, connection)
 				wg.Done()
 			}()
 
@@ -71,9 +84,18 @@ func (TCPAcceptor) Accept(context_ context.Context, bindAddress string, graceful
 
 	select {
 	case e = <-error_:
+		if eventHandler.OnClose != nil {
+			eventHandler.OnClose()
+		}
+
 		listener.Close()
 	case <-context_.Done():
 		e = context_.Err()
+
+		if eventHandler.OnClose != nil {
+			eventHandler.OnClose()
+		}
+
 		listener.Close()
 		<-error_
 	}
@@ -84,7 +106,7 @@ func (TCPAcceptor) Accept(context_ context.Context, bindAddress string, graceful
 
 type WebSocketAcceptor struct{}
 
-func (WebSocketAcceptor) Accept(context_ context.Context, bindAddress string, gracefulShutdownTimeout time.Duration, connectionHandler func(context.Context, net.Conn)) error {
+func (WebSocketAcceptor) Accept(context_ context.Context, bindAddress string, gracefulShutdownTimeout time.Duration, eventHandler AcceptorEventHandler) error {
 	var wg sync.WaitGroup
 	context2 := utils.DelayContext(context_, gracefulShutdownTimeout)
 
@@ -115,25 +137,45 @@ func (WebSocketAcceptor) Accept(context_ context.Context, bindAddress string, gr
 			Handler: func(connection *websocket.Conn) {
 				connection.PayloadType = websocket.BinaryFrame
 				connection.MaxPayloadBytes = maxWebSocketFramePayloadSize
-				connectionHandler(context2, connection)
+				eventHandler.OnConnect(context2, connection)
 				wg.Done()
 			},
 		},
 	}
 
+	listener, e := net.Listen("tcp", bindAddress)
+
+	if e != nil {
+		return e
+	}
+
+	if eventHandler.OnListen != nil {
+		if e := eventHandler.OnListen(context_, listener); e != nil {
+			listener.Close()
+			return e
+		}
+	}
+
 	error_ := make(chan error, 1)
 
 	go func() {
-		error_ <- server.ListenAndServe()
+		error_ <- server.Serve(listener)
 	}()
-
-	var e error
 
 	select {
 	case e = <-error_:
+		if eventHandler.OnClose != nil {
+			eventHandler.OnClose()
+		}
+
 		server.Close()
 	case <-context_.Done():
 		e = context_.Err()
+
+		if eventHandler.OnClose != nil {
+			eventHandler.OnClose()
+		}
+
 		server.Close()
 		<-error_
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/let-z-go/toolkit/byte_stream"
+	"golang.org/x/net/websocket"
 )
 
 type TransportPolicy struct {
@@ -190,8 +191,38 @@ func (self *transport) flush(context_ context.Context, timeout time.Duration) er
 		return e
 	}
 
-	n, e := self.connection.Write(self.outputByteStream.GetData())
-	self.outputByteStream.Skip(n)
+	data := self.outputByteStream.GetData()
+	var nn int
+
+	switch connection := self.connection.(type) {
+	case *websocket.Conn:
+		i := 0
+		nn = 0
+
+		for {
+			j := i + maxWebSocketFramePayloadSize
+			var n int
+
+			if j >= len(data) {
+				n, e = connection.Write(data[i:])
+				nn += n
+				break
+			}
+
+			n, e = connection.Write(data[i:j])
+			nn += n
+
+			if e != nil {
+				break
+			}
+
+			i = j
+		}
+	default:
+		nn, e = self.connection.Write(data)
+	}
+
+	self.outputByteStream.Skip(nn)
 	return e
 }
 

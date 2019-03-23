@@ -22,17 +22,17 @@ const (
 )
 
 type Error struct {
-	isFromPeer bool
-	code       ErrorCode
-	context    string
-}
-
-func (self Error) IsFromPeer() bool {
-	return self.isFromPeer
+	code     ErrorCode
+	isNative bool
+	context  string
 }
 
 func (self Error) GetCode() ErrorCode {
 	return self.code
+}
+
+func (self Error) IsNative() bool {
+	return self.isNative
 }
 
 func (self Error) Error() string {
@@ -44,6 +44,10 @@ func (self Error) Error() string {
 		result = "pbrpc: " + errorDescription
 	} else {
 		result = fmt.Sprintf("pbrpc: error %d", self.code)
+	}
+
+	if !self.isNative {
+		result += " (from peer)"
 	}
 
 	if self.context != "" {
@@ -90,7 +94,7 @@ func RegisterError(errorCode ErrorCode, errorCodeName string, errorDescription s
 }
 
 func MakeError(errorCode ErrorCode) error {
-	return Error{false, errorCode, ""}
+	return Error{errorCode, true, ""}
 }
 
 var errorTable = map[ErrorCode][2]string{
