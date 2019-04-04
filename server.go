@@ -38,6 +38,11 @@ func (self *Server) Run(context_ context.Context) error {
 	}
 
 	acceptorEventHandler := AcceptorEventHandler{
+		OnListen: func(_ context.Context, listener net.Listener) error {
+			self.policy.Channel.Logger.Infof("listening on %s", listener.Addr())
+			return nil
+		},
+
 		OnConnect: func(context_ context.Context, connection net.Conn) {
 			channel, e := self.policy.ChannelFactory.CreateProduct(self.policy.Channel, connection)
 			logger_ := &self.policy.Channel.Logger
@@ -52,9 +57,14 @@ func (self *Server) Run(context_ context.Context) error {
 			logger_.Infof("channel run-out: clientAddress=%q, e=%q", connection.RemoteAddr(), e)
 			self.policy.ChannelFactory.DestroyProduct(channel)
 		},
+
+		OnClose: func() {
+			self.policy.Channel.Logger.Infof("closing")
+		},
 	}
 
 	if self.policy.Registry != nil {
+		onListen, onClose := acceptorEventHandler.OnListen, acceptorEventHandler.OnClose
 		serviceNames := []string(nil)
 
 		for serviceName := range self.policy.Channel.serviceHandlers {
@@ -64,6 +74,10 @@ func (self *Server) Run(context_ context.Context) error {
 		address := self.discoveryAddress
 
 		acceptorEventHandler.OnListen = func(context_ context.Context, listener net.Listener) error {
+			if e := onListen(context_, listener); e != nil {
+				return e
+			}
+
 			if address == "" {
 				address = listener.Addr().String()
 			}
@@ -72,6 +86,7 @@ func (self *Server) Run(context_ context.Context) error {
 		}
 
 		acceptorEventHandler.OnClose = func() {
+			onClose()
 			self.policy.Registry.RemoveServiceProviders(context.Background(), serviceNames, address, self.policy.Weight)
 		}
 	}

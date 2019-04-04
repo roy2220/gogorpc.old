@@ -92,20 +92,26 @@ func (self *Registry) Run(context_ context.Context) error {
 
 func (self *Registry) AddServiceProviders(context_ context.Context, serviceNames []string, serverAddress string, weight int32) error {
 	self.checkUninitialized()
+	serviceProviderKey := makeServiceProviderKey(serverAddress, weight)
 
-	for _, serviceName := range serviceNames {
+	for i, serviceName := range serviceNames {
 		serviceProvidersPath := makeServiceProvidersPath(serviceName)
 
 		if e := utils.CreateP(self.client, context_, serviceProvidersPath); e != nil {
 			return e
 		}
 
-		serviceProviderKey := makeServiceProviderKey(serverAddress, weight)
+		self.channelPolicy.Logger.Infof("service provider addition: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
 
-		if _, e := self.client.Create(context_, serviceProvidersPath+"/"+serviceProviderKey, nil, nil, zk.CreateEphemeral, true); e != nil {
-			if e2, ok := e.(zk.Error); !(ok && e2.GetCode() == zk.ErrorNodeExists) {
-				return e
+		if _, e := self.client.Create(context_, serviceProvidersPath+"/"+serviceProviderKey, nil, nil, zk.CreateEphemeral, false); e != nil {
+			for j := i - 1; j >= 0; j-- {
+				serviceName := serviceNames[j]
+				serviceProvidersPath := makeServiceProvidersPath(serviceName)
+				self.channelPolicy.Logger.Infof("service provider removal: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
+				self.client.Delete(context_, serviceProvidersPath+"/"+serviceProviderKey, -1, true)
 			}
+
+			return e
 		}
 	}
 
@@ -114,19 +120,21 @@ func (self *Registry) AddServiceProviders(context_ context.Context, serviceNames
 
 func (self *Registry) RemoveServiceProviders(context_ context.Context, serviceNames []string, serverAddress string, weight int32) error {
 	self.checkUninitialized()
+	serviceProviderKey := makeServiceProviderKey(serverAddress, weight)
+	e := error(nil)
 
 	for _, serviceName := range serviceNames {
 		serviceProvidersPath := makeServiceProvidersPath(serviceName)
-		serviceProviderKey := makeServiceProviderKey(serverAddress, weight)
+		self.channelPolicy.Logger.Infof("service provider removal: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
 
-		if e := self.client.Delete(context_, serviceProvidersPath+"/"+serviceProviderKey, -1, true); e != nil {
-			if e2, ok := e.(zk.Error); !(ok && e2.GetCode() == zk.ErrorNoNode) {
-				return e
+		if e2 := self.client.Delete(context_, serviceProvidersPath+"/"+serviceProviderKey, -1, true); e2 != nil {
+			if e3, ok := e2.(zk.Error); !(ok && e3.GetCode() == zk.ErrorNoNode) {
+				e = e2
 			}
 		}
 	}
 
-	return nil
+	return e
 }
 
 func (self *Registry) GetMethodCaller(lbType LBType, lbArgument uintptr) MethodCaller {
@@ -323,7 +331,7 @@ func (self methodCallerProxy) CallMethod(context_ context.Context, serviceName s
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{ErrorNotFound, true, fmt.Sprintf("methodID=%v, request=%q", representMethodID(serviceName, methodName), request)}
+				e = Error{ErrorNotFound, makeMethodID(serviceName, methodName)}
 			}
 
 			return nil, e
@@ -350,7 +358,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(context_ context.Context, 
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{ErrorNotFound, true, fmt.Sprintf("methodID=%v, request=%q", representMethodID(serviceName, methodName), request)}
+				e = Error{ErrorNotFound, makeMethodID(serviceName, methodName)}
 			}
 
 			return e

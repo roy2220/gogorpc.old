@@ -510,10 +510,10 @@ func (self *channelImpl) callMethod(
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
-	callback func(interface{}, ErrorCode, bool),
+	callback func(interface{}, ErrorCode),
 ) error {
 	if self.isClosed() {
-		return Error{self.getErrorCode(), true, fmt.Sprintf("methodID=%v, request=%q", representMethodID(contextVars_.ServiceName, contextVars_.MethodName), request)}
+		return Error{self.getErrorCode(), makeMethodID(contextVars_.ServiceName, contextVars_.MethodName)}
 	}
 
 	methodCall_ := poolOfMethodCalls.Get().(*methodCall)
@@ -530,7 +530,7 @@ func (self *channelImpl) callMethod(
 
 	if e := self.dequeOfMethodCalls.AppendNode(context_, &methodCall_.listNode); e != nil {
 		if e == semaphore.SemaphoreClosedError {
-			e = Error{self.getErrorCode(), true, fmt.Sprintf("methodID=%v, request=%q", representMethodID(contextVars_.ServiceName, contextVars_.MethodName), request)}
+			e = Error{self.getErrorCode(), makeMethodID(contextVars_.ServiceName, contextVars_.MethodName)}
 		}
 
 		return e
@@ -628,7 +628,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 					list_.AppendNode(&methodCall_.listNode)
 					retriedMethodCallCount++
 				} else {
-					methodCall_.callback(nil, errorCode, true)
+					methodCall_.callback(nil, errorCode)
 					completedMethodCallCount++
 					poolOfMethodCalls.Put(methodCall_)
 				}
@@ -673,7 +673,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
-					methodCall_.callback(nil, errorCode2, true)
+					methodCall_.callback(nil, errorCode2)
 					listNode.Reset()
 					poolOfMethodCalls.Put(methodCall_)
 				}
@@ -684,9 +684,9 @@ func (self *channelImpl) setState(newState ChannelState) {
 				methodCall_ := value.(*methodCall)
 
 				if methodCallsAreRetriable && methodCall_.autoRetry {
-					methodCall_.callback(nil, errorCode2, true)
+					methodCall_.callback(nil, errorCode2)
 				} else {
-					methodCall_.callback(nil, errorCode, true)
+					methodCall_.callback(nil, errorCode)
 				}
 
 				poolOfMethodCalls.Put(methodCall_)
@@ -888,7 +888,7 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 					if e == PacketPayloadTooLargeError {
 						listNode.Remove()
 						taskOfMethodCalls.numberOfListNodes--
-						methodCall_.callback(nil, ErrorPacketPayloadTooLarge, true)
+						methodCall_.callback(nil, ErrorPacketPayloadTooLarge)
 						completedMethodCallCount++
 						listNode.Reset()
 						poolOfMethodCalls.Put(methodCall_)
@@ -1143,7 +1143,7 @@ func (self *channelImpl) rejectRequest(
 
 		incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
 			if i == n {
-				return nil, MakeError(errorCode)
+				return nil, X_MakeError(errorCode)
 			} else {
 				incomingMethodInterceptor := incomingMethodInterceptors[i]
 				i++
@@ -1250,9 +1250,9 @@ func (self *channelImpl) receiveResponse(context_ context.Context, responseHeade
 			return IllFormedMessageError
 		}
 
-		methodCall_.callback(response, 0, false)
+		methodCall_.callback(response, 0)
 	} else {
-		methodCall_.callback(nil, ErrorCode(responseHeader.ErrorCode), false)
+		methodCall_.callback(nil, ErrorCode(responseHeader.ErrorCode))
 	}
 
 	*completedMethodCallCount++
@@ -1290,7 +1290,7 @@ type methodCall struct {
 	request        OutgoingMessage
 	responseType   reflect.Type
 	autoRetry      bool
-	callback       func(interface{}, ErrorCode, bool)
+	callback       func(interface{}, ErrorCode)
 }
 
 type resultReturn struct {
@@ -1337,14 +1337,14 @@ func errorToErrorCode(e error, logger *logger.Logger, contextVars_ *ContextVars,
 	if e == nil {
 		return 0
 	} else {
-		if e2, ok := e.(Error); ok && e2.isNative && e2.code >= 0 {
+		if e2, ok := e.(Error); ok && e2.IsMade() {
 			return e2.code
 		} else {
 			logger.Errorf(
-				"internal server error: methodID=%v, traceID=%q, spanID=%#v, request=%q, e=%q",
-				representMethodID(contextVars_.ServiceName, contextVars_.MethodName),
+				"internal server error: traceID=%q, spanID=%#v, methodID=%#v, request=%q, e=%q",
 				contextVars_.TraceID,
 				contextVars_.SpanID,
+				makeMethodID(contextVars_.ServiceName, contextVars_.MethodName),
 				request,
 				e,
 			)

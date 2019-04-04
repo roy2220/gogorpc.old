@@ -408,9 +408,9 @@ func (self *channelBase) callMethod(
 	var response interface{}
 	error_ := make(chan error, 1)
 
-	callback := func(response2 interface{}, errorCode ErrorCode, errorIsNative bool) {
+	callback := func(response2 interface{}, errorCode ErrorCode) {
 		if errorCode != 0 {
-			error_ <- Error{errorCode, errorIsNative, fmt.Sprintf("methodID=%v, request=%q", representMethodID(contextVars_.ServiceName, contextVars_.MethodName), request)}
+			error_ <- Error{errorCode, makeMethodID(contextVars_.ServiceName, contextVars_.MethodName)}
 			return
 		}
 
@@ -454,7 +454,7 @@ func (self *channelBase) callMethodWithoutReturn(
 		request,
 		responseType,
 		autoRetryMethodCall,
-		func(interface{}, ErrorCode, bool) {},
+		func(interface{}, ErrorCode) {},
 	)
 }
 

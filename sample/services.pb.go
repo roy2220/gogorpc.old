@@ -332,7 +332,7 @@ func (m *GetNicknameResponse) Unmarshal(dAtA []byte) error {
 			}
 			b := dAtA[iNdEx]
 			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
+			wire |= uint64(b&0x7F) << shift
 			if b < 0x80 {
 				break
 			}
@@ -360,7 +360,7 @@ func (m *GetNicknameResponse) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= (uint64(b) & 0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -370,6 +370,9 @@ func (m *GetNicknameResponse) Unmarshal(dAtA []byte) error {
 				return ErrInvalidLengthServices
 			}
 			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthServices
+			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -382,6 +385,9 @@ func (m *GetNicknameResponse) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			if skippy < 0 {
+				return ErrInvalidLengthServices
+			}
+			if (iNdEx + skippy) < 0 {
 				return ErrInvalidLengthServices
 			}
 			if (iNdEx + skippy) > l {
@@ -411,7 +417,7 @@ func (m *SayHelloRequest) Unmarshal(dAtA []byte) error {
 			}
 			b := dAtA[iNdEx]
 			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
+			wire |= uint64(b&0x7F) << shift
 			if b < 0x80 {
 				break
 			}
@@ -439,7 +445,7 @@ func (m *SayHelloRequest) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= (uint64(b) & 0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -449,6 +455,9 @@ func (m *SayHelloRequest) Unmarshal(dAtA []byte) error {
 				return ErrInvalidLengthServices
 			}
 			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthServices
+			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -461,6 +470,9 @@ func (m *SayHelloRequest) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			if skippy < 0 {
+				return ErrInvalidLengthServices
+			}
+			if (iNdEx + skippy) < 0 {
 				return ErrInvalidLengthServices
 			}
 			if (iNdEx + skippy) > l {
@@ -490,7 +502,7 @@ func (m *SayHelloResponse) Unmarshal(dAtA []byte) error {
 			}
 			b := dAtA[iNdEx]
 			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
+			wire |= uint64(b&0x7F) << shift
 			if b < 0x80 {
 				break
 			}
@@ -518,7 +530,7 @@ func (m *SayHelloResponse) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= (uint64(b) & 0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -528,6 +540,9 @@ func (m *SayHelloResponse) Unmarshal(dAtA []byte) error {
 				return ErrInvalidLengthServices
 			}
 			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthServices
+			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -540,6 +555,9 @@ func (m *SayHelloResponse) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			if skippy < 0 {
+				return ErrInvalidLengthServices
+			}
+			if (iNdEx + skippy) < 0 {
 				return ErrInvalidLengthServices
 			}
 			if (iNdEx + skippy) > l {
@@ -608,8 +626,11 @@ func skipServices(dAtA []byte) (n int, err error) {
 					break
 				}
 			}
-			iNdEx += length
 			if length < 0 {
+				return 0, ErrInvalidLengthServices
+			}
+			iNdEx += length
+			if iNdEx < 0 {
 				return 0, ErrInvalidLengthServices
 			}
 			return iNdEx, nil
@@ -640,6 +661,9 @@ func skipServices(dAtA []byte) (n int, err error) {
 					return 0, err
 				}
 				iNdEx = start + next
+				if iNdEx < 0 {
+					return 0, ErrInvalidLengthServices
+				}
 			}
 			return iNdEx, nil
 		case 4:

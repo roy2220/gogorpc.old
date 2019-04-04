@@ -23,35 +23,30 @@ const (
 
 type Error struct {
 	code     ErrorCode
-	isNative bool
-	context  string
+	methodID string
 }
 
 func (self Error) GetCode() ErrorCode {
 	return self.code
 }
 
-func (self Error) IsNative() bool {
-	return self.isNative
+func (self Error) IsMade() bool {
+	return self.methodID == ""
 }
 
 func (self Error) Error() string {
-	errorRecord, ok := errorTable[self.code]
+	record, ok := errorTable[self.code]
 	var result string
 
 	if ok {
-		errorDescription := errorRecord[1]
-		result = "pbrpc: " + errorDescription
+		description := record[1]
+		result = "pbrpc: " + description
 	} else {
 		result = fmt.Sprintf("pbrpc: error %d", self.code)
 	}
 
-	if !self.isNative {
-		result += " (from peer)"
-	}
-
-	if self.context != "" {
-		result += ": " + self.context
+	if self.methodID != "" {
+		result += fmt.Sprintf(" (from %s)", self.methodID)
 	}
 
 	return result
@@ -60,22 +55,22 @@ func (self Error) Error() string {
 type ErrorCode int32
 
 func (self ErrorCode) GetName() string {
-	errorRecord, ok := errorTable[self]
+	record, ok := errorTable[self]
 
 	if ok {
-		errorCodeName := errorRecord[0]
-		return errorCodeName
+		name := record[0]
+		return name
 	} else {
 		return fmt.Sprintf("E%d", self)
 	}
 }
 
 func (self ErrorCode) GoString() string {
-	errorRecord, ok := errorTable[self]
+	record, ok := errorTable[self]
 
 	if ok {
-		errorCodeName := errorRecord[0]
-		return fmt.Sprintf("<%s>", errorCodeName)
+		name := record[0]
+		return fmt.Sprintf("<%s>", name)
 	} else {
 		return fmt.Sprintf("<ErrorCode:%d>", self)
 	}
@@ -93,8 +88,16 @@ func RegisterError(errorCode ErrorCode, errorCodeName string, errorDescription s
 	errorTable[errorCode] = [2]string{errorCodeName, errorDescription}
 }
 
-func MakeError(errorCode ErrorCode) error {
-	return Error{errorCode, true, ""}
+func MakeError(errorCode ErrorCode) Error {
+	if errorCode < ErrorUserDefined {
+		panic(fmt.Errorf("pbrpc: error reserved: errorCode=%#v", errorCode))
+	}
+
+	return X_MakeError(errorCode)
+}
+
+func X_MakeError(errorCode ErrorCode) Error {
+	return Error{errorCode, ""}
 }
 
 var errorTable = map[ErrorCode][2]string{

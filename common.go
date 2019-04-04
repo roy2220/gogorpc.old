@@ -2,7 +2,6 @@ package pbrpc
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 )
@@ -63,8 +62,8 @@ func makeDeadline(context_ context.Context, timeout time.Duration) (time.Time, e
 	}
 }
 
-func representMethodID(serviceName string, methodName string) string {
-	return fmt.Sprintf("<%v.%v>", serviceName, methodName)
+func makeMethodID(serviceName string, methodName string) string {
+	return serviceName + "." + methodName
 }
 
 func makeMethodInterceptorLocator(serviceName string, methodIndex int32) string {
