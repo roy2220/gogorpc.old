@@ -55,6 +55,46 @@ func (self *ClientChannel) Initialize(policy *ClientChannelPolicy, serverAddress
 	return self
 }
 
+func (self *ClientChannel) CallMethod(
+	context_ context.Context,
+	serviceName string,
+	methodName string,
+	methodIndex int32,
+	extraData []byte,
+	request OutgoingMessage,
+	responseType reflect.Type,
+	autoRetryMethodCall bool,
+) (interface{}, error) {
+	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, extraData, true, context_)
+
+	if e != nil {
+		return nil, e
+	}
+
+	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
+	return self.callMethod(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
+}
+
+func (self *ClientChannel) CallMethodWithoutReturn(
+	context_ context.Context,
+	serviceName string,
+	methodName string,
+	methodIndex int32,
+	extraData []byte,
+	request OutgoingMessage,
+	responseType reflect.Type,
+	autoRetryMethodCall bool,
+) error {
+	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, extraData, false, nil)
+
+	if e != nil {
+		return e
+	}
+
+	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
+	return self.callMethodWithoutReturn(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
+}
+
 func (self *ClientChannel) Run(context_ context.Context) error {
 	if self.impl.isClosed() {
 		return nil
@@ -151,6 +191,46 @@ func (self *ServerChannel) Initialize(policy *ServerChannelPolicy, connection ne
 	return self
 }
 
+func (self *ServerChannel) CallMethod(
+	context_ context.Context,
+	serviceName string,
+	methodName string,
+	methodIndex int32,
+	extraData []byte,
+	request OutgoingMessage,
+	responseType reflect.Type,
+	autoRetryMethodCall bool,
+) (interface{}, error) {
+	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, extraData, true, context_)
+
+	if e != nil {
+		return nil, e
+	}
+
+	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
+	return self.callMethod(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
+}
+
+func (self *ServerChannel) CallMethodWithoutReturn(
+	context_ context.Context,
+	serviceName string,
+	methodName string,
+	methodIndex int32,
+	extraData []byte,
+	request OutgoingMessage,
+	responseType reflect.Type,
+	autoRetryMethodCall bool,
+) error {
+	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, extraData, false, nil)
+
+	if e != nil {
+		return e
+	}
+
+	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
+	return self.callMethodWithoutReturn(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
+}
+
 func (self *ServerChannel) Run(context_ context.Context) error {
 	if self.impl.isClosed() {
 		return nil
@@ -232,13 +312,8 @@ func (self RawMessage) MarshalTo(buffer []byte) (int, error) {
 }
 
 func GetContextVars(context_ context.Context) (*ContextVars, bool) {
-	value := context_.Value(contextVars{})
-
-	if value == nil {
-		return nil, false
-	}
-
-	return value.(*ContextVars), true
+	contextVars_, ok := context_.Value(contextVars{}).(*ContextVars)
+	return contextVars_, ok
 }
 
 func MustGetContextVars(context_ context.Context) *ContextVars {
@@ -262,143 +337,42 @@ func (self *channelBase) Stop() {
 	self.stop()
 }
 
-func (self *channelBase) CallMethod(
-	context_ context.Context,
-	serviceName string,
-	methodName string,
-	methodIndex int32,
-	extraData []byte,
-	request OutgoingMessage,
-	responseType reflect.Type,
-	autoRetryMethodCall bool,
-) (interface{}, error) {
-	contextVars_ := ContextVars{
-		Channel:     self.impl.holder,
-		ServiceName: serviceName,
-		MethodName:  methodName,
-		MethodIndex: methodIndex,
-		ExtraData:   extraData,
-	}
-
-	if parentContextVars, ok := GetContextVars(context_); ok {
-		contextVars_.TraceID = parentContextVars.TraceID
-		contextVars_.SpanParentID = parentContextVars.SpanID
-		contextVars_.SpanID = *parentContextVars.nextSpanID
-		*parentContextVars.nextSpanID++
-		contextVars_.nextSpanID = parentContextVars.nextSpanID
-	} else {
-		traceID, e := uuid.GenerateUUID4()
-
-		if e != nil {
-			return nil, e
-		}
-
-		contextVars_.TraceID = traceID
-		contextVars_.SpanParentID = 0
-		contextVars_.SpanID = 1
-		contextVars_.bufferOfNextSpanID = 2
-		contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
-	}
-
-	outgoingMethodInterceptors := make([]OutgoingMethodInterceptor, 0, normalNumberOfMethodInterceptors)
-	outgoingMethodInterceptors = append(outgoingMethodInterceptors, self.impl.policy.outgoingMethodInterceptors[""]...)
-	outgoingMethodInterceptors = append(outgoingMethodInterceptors, self.impl.policy.outgoingMethodInterceptors[contextVars_.ServiceName]...)
-
-	if contextVars_.MethodIndex >= 0 {
-		methodInterceptorLocator := makeMethodInterceptorLocator(contextVars_.ServiceName, contextVars_.MethodIndex)
-		outgoingMethodInterceptors = append(outgoingMethodInterceptors, self.impl.policy.outgoingMethodInterceptors[methodInterceptorLocator]...)
-	}
-
-	n := len(outgoingMethodInterceptors)
-
-	if n == 0 {
-		return self.callMethod(bindContextVars(context_, &contextVars_), &contextVars_, request, responseType, autoRetryMethodCall)
-	}
-
-	i := 0
-	var outgoingMethodDispatcher OutgoingMethodDispatcher
-
-	outgoingMethodDispatcher = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
-		if i == n {
-			return self.callMethod(context_, &contextVars_, request, responseType, autoRetryMethodCall)
-		} else {
-			outgoingMethodInterceptor := outgoingMethodInterceptors[i]
-			i++
-			return outgoingMethodInterceptor(context_, request, outgoingMethodDispatcher)
-		}
-	}
-
-	return outgoingMethodDispatcher(bindContextVars(context_, &contextVars_), request)
-}
-
-func (self *channelBase) CallMethodWithoutReturn(
-	context_ context.Context,
-	serviceName string,
-	methodName string,
-	methodIndex int32,
-	extraData []byte,
-	request OutgoingMessage,
-	responseType reflect.Type,
-	autoRetryMethodCall bool,
-) error {
-	traceID, e := uuid.GenerateUUID4()
-
-	if e != nil {
-		return e
-	}
-
-	contextVars_ := ContextVars{
-		Channel:      self.impl.holder,
-		ServiceName:  serviceName,
-		MethodName:   methodName,
-		MethodIndex:  methodIndex,
-		ExtraData:    extraData,
-		TraceID:      traceID,
-		SpanParentID: 0,
-		SpanID:       1,
-
-		bufferOfNextSpanID: 2,
-	}
-
-	contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
-	outgoingMethodInterceptors := make([]OutgoingMethodInterceptor, 0, normalNumberOfMethodInterceptors)
-	outgoingMethodInterceptors = append(outgoingMethodInterceptors, self.impl.policy.outgoingMethodInterceptors[""]...)
-	outgoingMethodInterceptors = append(outgoingMethodInterceptors, self.impl.policy.outgoingMethodInterceptors[contextVars_.ServiceName]...)
-
-	if contextVars_.MethodIndex >= 0 {
-		methodInterceptorLocator := makeMethodInterceptorLocator(contextVars_.ServiceName, contextVars_.MethodIndex)
-		outgoingMethodInterceptors = append(outgoingMethodInterceptors, self.impl.policy.outgoingMethodInterceptors[methodInterceptorLocator]...)
-	}
-
-	n := len(outgoingMethodInterceptors)
-
-	if n == 0 {
-		return self.callMethodWithoutReturn(bindContextVars(context_, &contextVars_), &contextVars_, request, responseType, autoRetryMethodCall)
-	}
-
-	i := 0
-	var outgoingMethodDispatcher OutgoingMethodDispatcher
-
-	outgoingMethodDispatcher = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
-		if i == n {
-			return nil, self.callMethodWithoutReturn(context_, &contextVars_, request, responseType, autoRetryMethodCall)
-		} else {
-			outgoingMethodInterceptor := outgoingMethodInterceptors[i]
-			i++
-			return outgoingMethodInterceptor(context_, request, outgoingMethodDispatcher)
-		}
-	}
-
-	_, e = outgoingMethodDispatcher(bindContextVars(context_, &contextVars_), request)
-	return e
-}
-
 func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClientSide bool) *channelBase {
 	self.impl.initialize(sub, policy, isClientSide)
 	return self
 }
 
 func (self *channelBase) callMethod(
+	outgoingMethodInterceptors []OutgoingMethodInterceptor,
+	context_ context.Context,
+	contextVars_ *ContextVars,
+	request OutgoingMessage,
+	responseType reflect.Type,
+	autoRetryMethodCall bool,
+) (interface{}, error) {
+	n := len(outgoingMethodInterceptors)
+
+	if n == 0 {
+		return self.doCallMethod(bindContextVars(context_, contextVars_), contextVars_, request, responseType, autoRetryMethodCall)
+	}
+
+	i := 0
+	var outgoingMethodDispatcher OutgoingMethodDispatcher
+
+	outgoingMethodDispatcher = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
+		if i == n {
+			return self.doCallMethod(context_, contextVars_, request, responseType, autoRetryMethodCall)
+		} else {
+			outgoingMethodInterceptor := outgoingMethodInterceptors[i]
+			i++
+			return outgoingMethodInterceptor(context_, request, outgoingMethodDispatcher)
+		}
+	}
+
+	return outgoingMethodDispatcher(bindContextVars(context_, contextVars_), request)
+}
+
+func (self *channelBase) doCallMethod(
 	context_ context.Context,
 	contextVars_ *ContextVars,
 	request OutgoingMessage,
@@ -442,6 +416,37 @@ func (self *channelBase) callMethod(
 }
 
 func (self *channelBase) callMethodWithoutReturn(
+	outgoingMethodInterceptors []OutgoingMethodInterceptor,
+	context_ context.Context,
+	contextVars_ *ContextVars,
+	request OutgoingMessage,
+	responseType reflect.Type,
+	autoRetryMethodCall bool,
+) error {
+	n := len(outgoingMethodInterceptors)
+
+	if n == 0 {
+		return self.doCallMethodWithoutReturn(bindContextVars(context_, contextVars_), contextVars_, request, responseType, autoRetryMethodCall)
+	}
+
+	i := 0
+	var outgoingMethodDispatcher OutgoingMethodDispatcher
+
+	outgoingMethodDispatcher = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
+		if i == n {
+			return nil, self.doCallMethodWithoutReturn(context_, contextVars_, request, responseType, autoRetryMethodCall)
+		} else {
+			outgoingMethodInterceptor := outgoingMethodInterceptors[i]
+			i++
+			return outgoingMethodInterceptor(context_, request, outgoingMethodDispatcher)
+		}
+	}
+
+	_, e := outgoingMethodDispatcher(bindContextVars(context_, contextVars_), request)
+	return e
+}
+
+func (self *channelBase) doCallMethodWithoutReturn(
 	context_ context.Context,
 	contextVars_ *ContextVars,
 	request OutgoingMessage,
@@ -459,6 +464,60 @@ func (self *channelBase) callMethodWithoutReturn(
 }
 
 var defaultChannelPolicy ChannelPolicy
+
+func makeContextVars(sub Channel, serviceName string, methodName string, methodIndex int32, extraData []byte, tryInheritSpan bool, context_ context.Context) (*ContextVars, error) {
+	contextVars_ := ContextVars{
+		Channel:     sub,
+		ServiceName: serviceName,
+		MethodName:  methodName,
+		MethodIndex: methodIndex,
+		ExtraData:   extraData,
+	}
+
+	var parentContextVars *ContextVars
+	var inheritSpan bool
+
+	if tryInheritSpan {
+		parentContextVars, inheritSpan = GetContextVars(context_)
+	} else {
+		inheritSpan = false
+	}
+
+	if inheritSpan {
+		contextVars_.TraceID = parentContextVars.TraceID
+		contextVars_.SpanParentID = parentContextVars.SpanID
+		contextVars_.SpanID = *parentContextVars.nextSpanID
+		*parentContextVars.nextSpanID++
+		contextVars_.nextSpanID = parentContextVars.nextSpanID
+	} else {
+		traceID, e := uuid.GenerateUUID4()
+
+		if e != nil {
+			return nil, e
+		}
+
+		contextVars_.TraceID = traceID
+		contextVars_.SpanParentID = 0
+		contextVars_.SpanID = 1
+		contextVars_.bufferOfNextSpanID = 2
+		contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
+	}
+
+	return &contextVars_, nil
+}
+
+func makeOutgoingMethodInterceptors(policy *ChannelPolicy, contextVars_ *ContextVars) []OutgoingMethodInterceptor {
+	outgoingMethodInterceptors := make([]OutgoingMethodInterceptor, 0, normalNumberOfMethodInterceptors)
+	outgoingMethodInterceptors = append(outgoingMethodInterceptors, policy.outgoingMethodInterceptors[""]...)
+	outgoingMethodInterceptors = append(outgoingMethodInterceptors, policy.outgoingMethodInterceptors[contextVars_.ServiceName]...)
+
+	if contextVars_.MethodIndex >= 0 {
+		methodInterceptorLocator := makeMethodInterceptorLocator(contextVars_.ServiceName, contextVars_.MethodIndex)
+		outgoingMethodInterceptors = append(outgoingMethodInterceptors, policy.outgoingMethodInterceptors[methodInterceptorLocator]...)
+	}
+
+	return outgoingMethodInterceptors
+}
 
 func shakeHandsWithServer(_ *ClientChannel, context_ context.Context, greeter func(context.Context, *[]byte) error) error {
 	handshake := []byte(nil)
