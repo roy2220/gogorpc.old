@@ -323,7 +323,17 @@ type methodCallerProxy struct {
 	methodCallerFetcher func(context.Context, string, *markingList) (string, MethodCaller, error)
 }
 
-func (self methodCallerProxy) CallMethod(context_ context.Context, serviceName string, methodName string, methodIndex int32, extraData []byte, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) (interface{}, error) {
+func (self methodCallerProxy) CallMethod(
+	context_ context.Context,
+	serviceName string,
+	methodName string,
+	methodIndex int32,
+	fifoKey string,
+	extraData []byte,
+	request OutgoingMessage,
+	responseType reflect.Type,
+	autoRetryMethodCall bool,
+) (interface{}, error) {
 	var excludedServerList markingList
 
 	for {
@@ -337,7 +347,7 @@ func (self methodCallerProxy) CallMethod(context_ context.Context, serviceName s
 			return nil, e
 		}
 
-		response, e := methodCaller.CallMethod(context_, serviceName, methodName, methodIndex, extraData, request, responseType, autoRetryMethodCall)
+		response, e := methodCaller.CallMethod(context_, serviceName, methodName, methodIndex, fifoKey, extraData, request, responseType, autoRetryMethodCall)
 
 		if e != nil {
 			if e2, ok := e.(Error); ok && e2.code == ErrorChannelTimedOut {
@@ -350,7 +360,17 @@ func (self methodCallerProxy) CallMethod(context_ context.Context, serviceName s
 	}
 }
 
-func (self methodCallerProxy) CallMethodWithoutReturn(context_ context.Context, serviceName string, methodName string, methodIndex int32, extraData []byte, request OutgoingMessage, responseType reflect.Type, autoRetryMethodCall bool) error {
+func (self methodCallerProxy) CallMethodWithoutReturn(
+	context_ context.Context,
+	serviceName string,
+	methodName string,
+	methodIndex int32,
+	fifoKey string,
+	extraData []byte,
+	request OutgoingMessage,
+	responseType reflect.Type,
+	autoRetryMethodCall bool,
+) error {
 	var excludedServerList markingList
 
 	for {
@@ -364,7 +384,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(context_ context.Context, 
 			return e
 		}
 
-		e = methodCaller.CallMethodWithoutReturn(context_, serviceName, methodName, methodIndex, extraData, request, responseType, autoRetryMethodCall)
+		e = methodCaller.CallMethodWithoutReturn(context_, serviceName, methodName, methodIndex, fifoKey, extraData, request, responseType, autoRetryMethodCall)
 
 		if e != nil {
 			if e2, ok := e.(Error); ok && e2.code == ErrorChannelTimedOut {

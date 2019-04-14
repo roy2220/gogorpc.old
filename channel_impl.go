@@ -18,6 +18,7 @@ import (
 	"github.com/let-z-go/toolkit/deque"
 	"github.com/let-z-go/toolkit/logger"
 	"github.com/let-z-go/toolkit/semaphore"
+	"github.com/let-z-go/toolkit/utils"
 	"github.com/let-z-go/toolkit/uuid"
 
 	"github.com/let-z-go/pbrpc/protocol"
@@ -211,6 +212,7 @@ type channelImpl struct {
 	pendingResultReturnCount int32
 	wgOfPendingResultReturns sync.WaitGroup
 	dequeOfResultReturns     *deque.Deque
+	asyncTaskExecutor        AsyncTaskExecutor
 }
 
 func (self *channelImpl) initialize(holder Channel, policy *ChannelPolicy, isClientSide bool) *channelImpl {
@@ -519,6 +521,7 @@ func (self *channelImpl) callMethod(
 	methodCall_ := poolOfMethodCalls.Get().(*methodCall)
 	methodCall_.serviceName = contextVars_.ServiceName
 	methodCall_.methodName = contextVars_.MethodName
+	methodCall_.fifoKey = contextVars_.FIFOKey
 	methodCall_.extraData = contextVars_.ExtraData
 	methodCall_.traceID = contextVars_.TraceID
 	methodCall_.spanID = contextVars_.SpanID
@@ -634,6 +637,17 @@ func (self *channelImpl) setState(newState ChannelState) {
 				}
 
 				return true
+			})
+
+			list_.Sort(func(listNode1 *list.ListNode, listNode2 *list.ListNode) bool {
+				methodCall1 := (*methodCall)(listNode1.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
+				methodCall2 := (*methodCall)(listNode2.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
+				x := methodCall1.sequenceNumber
+				y := methodCall2.sequenceNumber
+				z := int32(utils.Abs(int64(x-y))) & 0x40000000
+				x ^= z
+				y ^= z
+				return x < y
 			})
 
 			self.dequeOfMethodCalls.DiscardNodeRemovals(list_, retriedMethodCallCount)
@@ -861,6 +875,7 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 					SequenceNumber: methodCall_.sequenceNumber,
 					ServiceName:    methodCall_.serviceName,
 					MethodName:     methodCall_.methodName,
+					FifoKey:        methodCall_.fifoKey,
 					ExtraData:      methodCall_.extraData,
 					TraceId:        methodCall_.traceID[:],
 					SpanId:         methodCall_.spanID,
@@ -1022,7 +1037,9 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					return IllFormedMessageError
 				}
 
-				self.receiveRequest(context_, &requestHeader, messagePayload, &newPendingResultReturnCount)
+				if e := self.receiveRequest(context_, &requestHeader, messagePayload, &newPendingResultReturnCount); e != nil {
+					return e
+				}
 			case protocol.MESSAGE_RESPONSE:
 				var responseHeader protocol.ResponseHeader
 
@@ -1053,12 +1070,13 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 	}
 }
 
-func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader *protocol.RequestHeader, requestPayload []byte, pendingResultReturnCount *int32) {
+func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader *protocol.RequestHeader, requestPayload []byte, pendingResultReturnCount *int32) error {
 	contextVars_ := ContextVars{
 		Channel:      self.holder,
 		ServiceName:  requestHeader.ServiceName,
 		MethodName:   requestHeader.MethodName,
 		MethodIndex:  -1,
+		FIFOKey:      requestHeader.FifoKey,
 		ExtraData:    requestHeader.ExtraData,
 		TraceID:      uuid.UUIDFromBytes(requestHeader.TraceId),
 		SpanParentID: requestHeader.SpanId,
@@ -1076,23 +1094,20 @@ func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader 
 	*pendingResultReturnCount++
 
 	if *pendingResultReturnCount > self.incomingWindowSize {
-		self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorTooManyRequests, context_, &contextVars_, requestHeader.SequenceNumber)
-		return
+		return self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorTooManyRequests, context_, &contextVars_, requestHeader.SequenceNumber)
 	}
 
 	serviceHandler, ok := self.policy.serviceHandlers[contextVars_.ServiceName]
 
 	if !ok {
-		self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorNotFound, context_, &contextVars_, requestHeader.SequenceNumber)
-		return
+		return self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorNotFound, context_, &contextVars_, requestHeader.SequenceNumber)
 	}
 
 	methodTable := serviceHandler.X_GetMethodTable()
 	methodRecord, ok := methodTable.Search(contextVars_.MethodName)
 
 	if !ok {
-		self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorNotFound, context_, &contextVars_, requestHeader.SequenceNumber)
-		return
+		return self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorNotFound, context_, &contextVars_, requestHeader.SequenceNumber)
 	}
 
 	contextVars_.MethodIndex = methodRecord.Index
@@ -1101,11 +1116,10 @@ func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader 
 	request := reflect.New(methodRecord.RequestType).Interface().(IncomingMessage)
 
 	if e := request.Unmarshal(requestPayload); e != nil {
-		self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorBadRequest, context_, &contextVars_, requestHeader.SequenceNumber)
-		return
+		return self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorBadRequest, context_, &contextVars_, requestHeader.SequenceNumber)
 	}
 
-	self.acceptRequest(incomingMethodInterceptors, methodRecord, serviceHandler, context_, &contextVars_, request, requestHeader.SequenceNumber)
+	return self.acceptRequest(incomingMethodInterceptors, methodRecord, serviceHandler, context_, &contextVars_, request, requestHeader.SequenceNumber)
 }
 
 func (self *channelImpl) rejectRequest(
@@ -1115,17 +1129,17 @@ func (self *channelImpl) rejectRequest(
 	context_ context.Context,
 	contextVars_ *ContextVars,
 	sequenceNumber int32,
-) {
+) error {
 	if len(incomingMethodInterceptors) == 0 {
 		returnResult(sequenceNumber, *contextVars_.nextSpanID, errorCode, nil, self.dequeOfResultReturns)
-		return
+		return nil
 	}
 
 	var request RawMessage
 	request.Unmarshal(requestPayload)
 	self.wgOfPendingResultReturns.Add(1)
 
-	go func(
+	f := func(
 		incomingMethodInterceptors []IncomingMethodInterceptor,
 		errorCode ErrorCode,
 		context_ context.Context,
@@ -1135,26 +1149,28 @@ func (self *channelImpl) rejectRequest(
 		sequenceNumber int32,
 		dequeOfResultReturns *deque.Deque,
 		self *channelImpl,
-	) {
-		contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
-		n := len(incomingMethodInterceptors)
-		i := 0
-		var incomingMethodDispatcher IncomingMethodDispatcher
+	) func() {
+		return func() {
+			contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
+			n := len(incomingMethodInterceptors)
+			i := 0
+			var incomingMethodDispatcher IncomingMethodDispatcher
 
-		incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
-			if i == n {
-				return nil, X_MakeError(errorCode)
-			} else {
-				incomingMethodInterceptor := incomingMethodInterceptors[i]
-				i++
-				return incomingMethodInterceptor(context_, request, incomingMethodDispatcher)
+			incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
+				if i == n {
+					return nil, X_MakeError(errorCode)
+				} else {
+					incomingMethodInterceptor := incomingMethodInterceptors[i]
+					i++
+					return incomingMethodInterceptor(context_, request, incomingMethodDispatcher)
+				}
 			}
-		}
 
-		response, e := incomingMethodDispatcher(bindContextVars(context_, &contextVars_), &request)
-		errorCode2 := errorToErrorCode(e, logger_, &contextVars_, &request)
-		returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, response, dequeOfResultReturns)
-		self.wgOfPendingResultReturns.Done()
+			response, e := incomingMethodDispatcher(bindContextVars(context_, &contextVars_), &request)
+			errorCode2 := errorToErrorCode(e, logger_, &contextVars_, &request)
+			returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, response, dequeOfResultReturns)
+			self.wgOfPendingResultReturns.Done()
+		}
 	}(
 		incomingMethodInterceptors,
 		errorCode,
@@ -1166,6 +1182,17 @@ func (self *channelImpl) rejectRequest(
 		self.dequeOfResultReturns,
 		self,
 	)
+
+	if contextVars_.FIFOKey == "" {
+		go f()
+	} else {
+		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.FIFOKey, f); e != nil {
+			self.wgOfPendingResultReturns.Done()
+			return e
+		}
+	}
+
+	return nil
 }
 
 func (self *channelImpl) acceptRequest(
@@ -1176,10 +1203,10 @@ func (self *channelImpl) acceptRequest(
 	contextVars_ *ContextVars,
 	request interface{},
 	sequenceNumber int32,
-) {
+) error {
 	self.wgOfPendingResultReturns.Add(1)
 
-	go func(
+	f := func(
 		incomingMethodInterceptors []IncomingMethodInterceptor,
 		methodRecord *MethodRecord,
 		serviceHandler ServiceHandler,
@@ -1190,33 +1217,35 @@ func (self *channelImpl) acceptRequest(
 		sequenceNumber int32,
 		dequeOfResultReturns *deque.Deque,
 		self *channelImpl,
-	) {
-		contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
-		var response OutgoingMessage
-		var e error
+	) func() {
+		return func() {
+			contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
+			var response OutgoingMessage
+			var e error
 
-		if n := len(incomingMethodInterceptors); n == 0 {
-			response, e = methodRecord.Handler(serviceHandler, bindContextVars(context_, &contextVars_), request)
-		} else {
-			i := 0
-			var incomingMethodDispatcher IncomingMethodDispatcher
+			if n := len(incomingMethodInterceptors); n == 0 {
+				response, e = methodRecord.Handler(serviceHandler, bindContextVars(context_, &contextVars_), request)
+			} else {
+				i := 0
+				var incomingMethodDispatcher IncomingMethodDispatcher
 
-			incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
-				if i == n {
-					return methodRecord.Handler(serviceHandler, context_, request)
-				} else {
-					incomingMethodInterceptor := incomingMethodInterceptors[i]
-					i++
-					return incomingMethodInterceptor(context_, request, incomingMethodDispatcher)
+				incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
+					if i == n {
+						return methodRecord.Handler(serviceHandler, context_, request)
+					} else {
+						incomingMethodInterceptor := incomingMethodInterceptors[i]
+						i++
+						return incomingMethodInterceptor(context_, request, incomingMethodDispatcher)
+					}
 				}
+
+				response, e = incomingMethodDispatcher(bindContextVars(context_, &contextVars_), request)
 			}
 
-			response, e = incomingMethodDispatcher(bindContextVars(context_, &contextVars_), request)
+			errorCode2 := errorToErrorCode(e, logger_, &contextVars_, request)
+			returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, response, dequeOfResultReturns)
+			self.wgOfPendingResultReturns.Done()
 		}
-
-		errorCode2 := errorToErrorCode(e, logger_, &contextVars_, request)
-		returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, response, dequeOfResultReturns)
-		self.wgOfPendingResultReturns.Done()
 	}(
 		incomingMethodInterceptors,
 		methodRecord,
@@ -1229,6 +1258,17 @@ func (self *channelImpl) acceptRequest(
 		self.dequeOfResultReturns,
 		self,
 	)
+
+	if contextVars_.FIFOKey == "" {
+		go f()
+	} else {
+		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.FIFOKey, f); e != nil {
+			self.wgOfPendingResultReturns.Done()
+			return e
+		}
+	}
+
+	return nil
 }
 
 func (self *channelImpl) receiveResponse(context_ context.Context, responseHeader *protocol.ResponseHeader, responsePayload []byte, completedMethodCallCount *int32) error {
@@ -1274,7 +1314,7 @@ func (self *channelImpl) getMinHeartbeatInterval() time.Duration {
 
 func (self *channelImpl) getSequenceNumber() int32 {
 	sequenceNumber := self.nextSequenceNumber
-	self.nextSequenceNumber = int32(uint32(sequenceNumber+1) & 0xFFFFFFF)
+	self.nextSequenceNumber = int32((uint32(sequenceNumber) + 1) & 0x7FFFFFFF)
 	return sequenceNumber
 }
 
@@ -1283,6 +1323,7 @@ type methodCall struct {
 	sequenceNumber int32
 	serviceName    string
 	methodName     string
+	fifoKey        string
 	extraData      []byte
 	traceID        uuid.UUID
 	spanID         int32
