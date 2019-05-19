@@ -13,7 +13,7 @@ import (
 )
 
 type Acceptor interface {
-	Accept(context.Context, string, time.Duration, AcceptorEventHandler) error
+	Accept(context_ context.Context, bindAddress string, gracefulShutdownTimeout time.Duration, eventHandler AcceptorEventHandler) (e error)
 }
 
 type AcceptorEventHandler struct {

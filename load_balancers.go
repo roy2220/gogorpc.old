@@ -10,7 +10,7 @@ import (
 )
 
 type loadBalancer interface {
-	selectServer(string, serviceProviderList, uintptr, *markingList) (string, bool)
+	selectServer(serviceName string, serviceProviderList_ serviceProviderList, lbArgument uintptr, excludedServerList *markingList) (serverAddress string, ok bool)
 }
 
 type serviceProviderList struct {

@@ -6,8 +6,8 @@ import (
 )
 
 type ServiceHandler interface {
-	X_GetName() string
-	X_GetMethodTable() MethodTable
+	X_GetName() (serviceName string)
+	X_GetMethodTable() (methodTable MethodTable)
 }
 
 type MethodTable []MethodRecord

@@ -135,8 +135,8 @@ func (self *ServerPolicy) Validate() *ServerPolicy {
 }
 
 type ServerChannelFactory interface {
-	CreateProduct(*ServerChannelPolicy, net.Conn) (*ServerChannel, error)
-	DestroyProduct(*ServerChannel)
+	CreateProduct(productPolicy *ServerChannelPolicy, connection net.Conn) (product *ServerChannel, e error)
+	DestroyProduct(product *ServerChannel)
 }
 
 const defaultWeight = 5

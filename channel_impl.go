@@ -40,6 +40,7 @@ type ChannelPolicy struct {
 	Timeout            time.Duration
 	IncomingWindowSize int32
 	OutgoingWindowSize int32
+	ForcedFIFOMode     bool
 	Transport          *TransportPolicy
 
 	validateOnce               sync.Once
@@ -1088,7 +1089,7 @@ func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader 
 	}
 
 	contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
-	incomingMethodInterceptors := make([]IncomingMethodInterceptor, 0, normalNumberOfMethodInterceptors)
+	incomingMethodInterceptors := poolOfIncomingMethodInterceptors.Get().([]IncomingMethodInterceptor)
 	incomingMethodInterceptors = append(incomingMethodInterceptors, self.policy.incomingMethodInterceptors[""]...)
 	incomingMethodInterceptors = append(incomingMethodInterceptors, self.policy.incomingMethodInterceptors[contextVars_.ServiceName]...)
 	*pendingResultReturnCount++
@@ -1131,6 +1132,7 @@ func (self *channelImpl) rejectRequest(
 	sequenceNumber int32,
 ) error {
 	if len(incomingMethodInterceptors) == 0 {
+		poolOfIncomingMethodInterceptors.Put(incomingMethodInterceptors)
 		returnResult(sequenceNumber, *contextVars_.nextSpanID, errorCode, nil, self.dequeOfResultReturns)
 		return nil
 	}
@@ -1158,6 +1160,7 @@ func (self *channelImpl) rejectRequest(
 
 			incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
 				if i == n {
+					poolOfIncomingMethodInterceptors.Put(incomingMethodInterceptors)
 					return nil, X_MakeError(errorCode)
 				} else {
 					incomingMethodInterceptor := incomingMethodInterceptors[i]
@@ -1183,12 +1186,19 @@ func (self *channelImpl) rejectRequest(
 		self,
 	)
 
-	if contextVars_.FIFOKey == "" {
-		go f()
-	} else {
-		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.FIFOKey, f); e != nil {
+	if self.policy.ForcedFIFOMode {
+		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, "", f); e != nil {
 			self.wgOfPendingResultReturns.Done()
 			return e
+		}
+	} else {
+		if contextVars_.FIFOKey == "" {
+			go f()
+		} else {
+			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.FIFOKey, f); e != nil {
+				self.wgOfPendingResultReturns.Done()
+				return e
+			}
 		}
 	}
 
@@ -1224,6 +1234,7 @@ func (self *channelImpl) acceptRequest(
 			var e error
 
 			if n := len(incomingMethodInterceptors); n == 0 {
+				poolOfIncomingMethodInterceptors.Put(incomingMethodInterceptors)
 				response, e = methodRecord.Handler(serviceHandler, bindContextVars(context_, &contextVars_), request)
 			} else {
 				i := 0
@@ -1231,6 +1242,7 @@ func (self *channelImpl) acceptRequest(
 
 				incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
 					if i == n {
+						poolOfIncomingMethodInterceptors.Put(incomingMethodInterceptors)
 						return methodRecord.Handler(serviceHandler, context_, request)
 					} else {
 						incomingMethodInterceptor := incomingMethodInterceptors[i]
@@ -1373,6 +1385,7 @@ var channelState2ErrorCode = [...]ErrorCode{
 
 var poolOfMethodCalls = sync.Pool{New: func() interface{} { return &methodCall{} }}
 var poolOfResultReturns = sync.Pool{New: func() interface{} { return &resultReturn{} }}
+var poolOfIncomingMethodInterceptors = sync.Pool{New: func() interface{} { return make([]IncomingMethodInterceptor, 0, normalNumberOfMethodInterceptors) }}
 
 func errorToErrorCode(e error, logger *logger.Logger, contextVars_ *ContextVars, request interface{}) ErrorCode {
 	if e == nil {

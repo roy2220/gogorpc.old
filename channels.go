@@ -15,15 +15,31 @@ import (
 
 type Channel interface {
 	MethodCaller
-	AddListener(int) (*ChannelListener, error)
-	RemoveListener(listener *ChannelListener) error
-	Run(context.Context) error
+	AddListener(maxNumberOfStateChanges int) (listener *ChannelListener, e error)
+	RemoveListener(listener *ChannelListener) (e error)
+	Run(context_ context.Context) (e error)
 	Stop()
 }
 
 type MethodCaller interface {
-	CallMethod(context.Context, string, string, int32, string, []byte, OutgoingMessage, reflect.Type, bool) (interface{}, error)
-	CallMethodWithoutReturn(context.Context, string, string, int32, string, []byte, OutgoingMessage, reflect.Type, bool) error
+	CallMethod(context_ context.Context,
+		serviceName string,
+		methodName string,
+		methodIndex int32,
+		fifoKey string,
+		extraData []byte,
+		request OutgoingMessage,
+		responseType reflect.Type,
+		autoRetryMethodCall bool) (response interface{}, e error)
+	CallMethodWithoutReturn(context_ context.Context,
+		serviceName string,
+		methodName string,
+		methodIndex int32,
+		fifoKey string,
+		extraData []byte,
+		request OutgoingMessage,
+		responseType reflect.Type,
+		autoRetryMethodCall bool) (e error)
 }
 
 type ClientChannel struct {
@@ -358,6 +374,7 @@ func (self *channelBase) callMethod(
 	n := len(outgoingMethodInterceptors)
 
 	if n == 0 {
+		poolOfOutgoingMethodInterceptors.Put(outgoingMethodInterceptors)
 		return self.doCallMethod(bindContextVars(context_, contextVars_), contextVars_, request, responseType, autoRetryMethodCall)
 	}
 
@@ -366,6 +383,7 @@ func (self *channelBase) callMethod(
 
 	outgoingMethodDispatcher = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
 		if i == n {
+			poolOfOutgoingMethodInterceptors.Put(outgoingMethodInterceptors)
 			return self.doCallMethod(context_, contextVars_, request, responseType, autoRetryMethodCall)
 		} else {
 			outgoingMethodInterceptor := outgoingMethodInterceptors[i]
@@ -431,6 +449,7 @@ func (self *channelBase) callMethodWithoutReturn(
 	n := len(outgoingMethodInterceptors)
 
 	if n == 0 {
+		poolOfOutgoingMethodInterceptors.Put(outgoingMethodInterceptors)
 		return self.doCallMethodWithoutReturn(bindContextVars(context_, contextVars_), contextVars_, request, responseType, autoRetryMethodCall)
 	}
 
@@ -439,6 +458,7 @@ func (self *channelBase) callMethodWithoutReturn(
 
 	outgoingMethodDispatcher = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
 		if i == n {
+			poolOfOutgoingMethodInterceptors.Put(outgoingMethodInterceptors)
 			return nil, self.doCallMethodWithoutReturn(context_, contextVars_, request, responseType, autoRetryMethodCall)
 		} else {
 			outgoingMethodInterceptor := outgoingMethodInterceptors[i]
@@ -469,6 +489,7 @@ func (self *channelBase) doCallMethodWithoutReturn(
 }
 
 var defaultChannelPolicy ChannelPolicy
+var poolOfOutgoingMethodInterceptors = sync.Pool{New: func() interface{} { return make([]OutgoingMethodInterceptor, 0, normalNumberOfMethodInterceptors) }}
 
 func makeContextVars(
 	sub Channel,
@@ -522,7 +543,7 @@ func makeContextVars(
 }
 
 func makeOutgoingMethodInterceptors(policy *ChannelPolicy, contextVars_ *ContextVars) []OutgoingMethodInterceptor {
-	outgoingMethodInterceptors := make([]OutgoingMethodInterceptor, 0, normalNumberOfMethodInterceptors)
+	outgoingMethodInterceptors := poolOfOutgoingMethodInterceptors.Get().([]OutgoingMethodInterceptor)
 	outgoingMethodInterceptors = append(outgoingMethodInterceptors, policy.outgoingMethodInterceptors[""]...)
 	outgoingMethodInterceptors = append(outgoingMethodInterceptors, policy.outgoingMethodInterceptors[contextVars_.ServiceName]...)
 
