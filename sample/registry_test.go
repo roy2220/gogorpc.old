@@ -54,8 +54,8 @@ func TestRegistry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	zksp := &zk.SessionPolicy{Logger: *(&logger.Logger{}).Initialize("zk", logger.SeverityInfo, os.Stdout, os.Stderr)}
 	zkc := (&zk.Client{}).Initialize(zksp, []string{"192.168.33.1:2181"}, nil, nil, "/")
-	cp := &pbrpc.ClientChannelPolicy{ChannelPolicy: &pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-cli", logger.SeverityInfo, os.Stdout, os.Stderr)}}
-	reg := (&pbrpc.Registry{}).Initialize(zkc, cp)
+	rp := &pbrpc.RegistryPolicy{Channel: &pbrpc.ClientChannelPolicy{ChannelPolicy: &pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-cli", logger.SeverityInfo, os.Stdout, os.Stderr)}}}
+	reg := (&pbrpc.Registry{}).Initialize(zkc, rp)
 	sp1 := (&pbrpc.ServerPolicy{Registry: reg, Channel: &pbrpc.ServerChannelPolicy{
 		ChannelPolicy: (&pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv1", logger.SeverityInfo, os.Stdout, os.Stderr)}).RegisterServiceHandler(&ServerServiceHandler1{})}})
 	s1 := (&pbrpc.Server{}).Initialize(sp1, "127.0.0.1:8888", "")
@@ -250,8 +250,8 @@ func BenchmarkRegistry(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	zksp := &zk.SessionPolicy{Logger: *(&logger.Logger{}).Initialize("zk", logger.SeverityInfo, os.Stdout, os.Stderr)}
 	zkc := (&zk.Client{}).Initialize(zksp, []string{"192.168.33.1:2181"}, nil, nil, "/")
-	cp := &pbrpc.ClientChannelPolicy{ChannelPolicy: &pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-cli", logger.SeverityInfo, os.Stdout, os.Stderr)}}
-	reg := (&pbrpc.Registry{}).Initialize(zkc, cp)
+	rp := &pbrpc.RegistryPolicy{Channel: &pbrpc.ClientChannelPolicy{ChannelPolicy: &pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-cli", logger.SeverityInfo, os.Stdout, os.Stderr)}}}
+	reg := (&pbrpc.Registry{}).Initialize(zkc, rp)
 	sp1 := (&pbrpc.ServerPolicy{Registry: reg, Channel: &pbrpc.ServerChannelPolicy{
 		ChannelPolicy: (&pbrpc.ChannelPolicy{Logger: *(&logger.Logger{}).Initialize("pbrpc-srv1", logger.SeverityInfo, os.Stdout, os.Stderr)}).RegisterServiceHandler(&ServerServiceHandler1{})}})
 	s1 := (&pbrpc.Server{}).Initialize(sp1, "127.0.0.1:8891", "")

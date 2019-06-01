@@ -22,44 +22,57 @@ const (
 
 type ClientServiceClient struct {
     methodCaller pbrpc.MethodCaller
+    fifoKey      string
     extraData    []byte
     autoRetry    bool
 }
 
-func (self ClientServiceClient) GetNickname(context_ context.Context) (*GetNicknameResponse, error) {
-    _ = pbrpc.IncomingMessage(&GetNicknameResponse{})
-    methodRecord := &methodTableOfClientService[ClientService_GetNickname]
-    response, e := self.methodCaller.CallMethod(context_, ClientServiceName, methodRecord.Name, methodRecord.Index, self.extraData, &pbrpc.Void{}, methodRecord.ResponseType, self.autoRetry)
-
-    if e != nil {
-        return nil, e
+func MakeClientServiceClient(methodCaller pbrpc.MethodCaller) ClientServiceClient {
+    return ClientServiceClient{
+        methodCaller: methodCaller,
+        fifoKey: "",
+        extraData: nil,
+        autoRetry: false,
     }
-
-    return response.(*GetNicknameResponse), e
 }
 
-func (self ClientServiceClient) WithAutoRetry(autoRetry bool) ClientServiceClient {
+func (self ClientServiceClient) WithFIFOKey(fifoKey string) ClientServiceClient {
     return ClientServiceClient{
         methodCaller: self.methodCaller,
+        fifoKey: fifoKey,
         extraData: self.extraData,
-        autoRetry: autoRetry,
+        autoRetry: self.autoRetry,
     }
 }
 
 func (self ClientServiceClient) WithExtraData(extraData []byte) ClientServiceClient {
     return ClientServiceClient{
         methodCaller: self.methodCaller,
+        fifoKey: self.fifoKey,
         extraData: extraData,
         autoRetry: self.autoRetry,
     }
 }
 
-func MakeClientServiceClient(methodCaller pbrpc.MethodCaller) ClientServiceClient {
+func (self ClientServiceClient) WithAutoRetry(autoRetry bool) ClientServiceClient {
     return ClientServiceClient{
-        methodCaller: methodCaller,
-        extraData: nil,
-        autoRetry: false,
+        methodCaller: self.methodCaller,
+        fifoKey: self.fifoKey,
+        extraData: self.extraData,
+        autoRetry: autoRetry,
     }
+}
+
+func (self ClientServiceClient) GetNickname(context_ context.Context) (*GetNicknameResponse, error) {
+    _ = pbrpc.IncomingMessage(&GetNicknameResponse{})
+    methodRecord := &methodTableOfClientService[ClientService_GetNickname]
+    response, e := self.methodCaller.CallMethod(context_, ClientServiceName, methodRecord.Name, methodRecord.Index, self.fifoKey, self.extraData, &pbrpc.Void{}, methodRecord.ResponseType, self.autoRetry)
+
+    if e != nil {
+        return nil, e
+    }
+
+    return response.(*GetNicknameResponse), e
 }
 
 type ClientServiceHandlerBase struct {}
@@ -104,44 +117,57 @@ const (
 
 type ServerServiceClient struct {
     methodCaller pbrpc.MethodCaller
+    fifoKey      string
     extraData    []byte
     autoRetry    bool
 }
 
-func (self ServerServiceClient) SayHello(context_ context.Context, request *SayHelloRequest) (*SayHelloResponse, error) {
-    _ = pbrpc.IncomingMessage(&SayHelloResponse{})
-    methodRecord := &methodTableOfServerService[ServerService_SayHello]
-    response, e := self.methodCaller.CallMethod(context_, ServerServiceName, methodRecord.Name, methodRecord.Index, self.extraData, request, methodRecord.ResponseType, self.autoRetry)
-
-    if e != nil {
-        return nil, e
+func MakeServerServiceClient(methodCaller pbrpc.MethodCaller) ServerServiceClient {
+    return ServerServiceClient{
+        methodCaller: methodCaller,
+        fifoKey: "",
+        extraData: nil,
+        autoRetry: false,
     }
-
-    return response.(*SayHelloResponse), e
 }
 
-func (self ServerServiceClient) WithAutoRetry(autoRetry bool) ServerServiceClient {
+func (self ServerServiceClient) WithFIFOKey(fifoKey string) ServerServiceClient {
     return ServerServiceClient{
         methodCaller: self.methodCaller,
+        fifoKey: fifoKey,
         extraData: self.extraData,
-        autoRetry: autoRetry,
+        autoRetry: self.autoRetry,
     }
 }
 
 func (self ServerServiceClient) WithExtraData(extraData []byte) ServerServiceClient {
     return ServerServiceClient{
         methodCaller: self.methodCaller,
+        fifoKey: self.fifoKey,
         extraData: extraData,
         autoRetry: self.autoRetry,
     }
 }
 
-func MakeServerServiceClient(methodCaller pbrpc.MethodCaller) ServerServiceClient {
+func (self ServerServiceClient) WithAutoRetry(autoRetry bool) ServerServiceClient {
     return ServerServiceClient{
-        methodCaller: methodCaller,
-        extraData: nil,
-        autoRetry: false,
+        methodCaller: self.methodCaller,
+        fifoKey: self.fifoKey,
+        extraData: self.extraData,
+        autoRetry: autoRetry,
     }
+}
+
+func (self ServerServiceClient) SayHello(context_ context.Context, request *SayHelloRequest) (*SayHelloResponse, error) {
+    _ = pbrpc.IncomingMessage(&SayHelloResponse{})
+    methodRecord := &methodTableOfServerService[ServerService_SayHello]
+    response, e := self.methodCaller.CallMethod(context_, ServerServiceName, methodRecord.Name, methodRecord.Index, self.fifoKey, self.extraData, request, methodRecord.ResponseType, self.autoRetry)
+
+    if e != nil {
+        return nil, e
+    }
+
+    return response.(*SayHelloResponse), e
 }
 
 type ServerServiceHandlerBase struct {}

@@ -24,7 +24,7 @@ func TestServer(t *testing.T) {
 	}
 
 	cp1 := sp.Channel
-	s := (&Server{}).Initialize(sp, "", "", context.Background())
+	s := (&Server{}).Initialize(sp, "", "")
 
 	cp2 := &ClientChannelPolicy{
 		ChannelPolicy: &ChannelPolicy{
@@ -35,7 +35,8 @@ func TestServer(t *testing.T) {
 		},
 	}
 
-	c := (&ClientChannel{}).Initialize(cp2, nil, context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	c := (&ClientChannel{}).Initialize(cp2, nil)
 	var wg sync.WaitGroup
 	wg.Add(1)
 
@@ -44,15 +45,15 @@ func TestServer(t *testing.T) {
 			// time.Sleep(time.Second)
 			// c.impl.transport.connection.Close()
 			time.Sleep(2 * time.Second)
-			s.Stop(true)
+			cancel()
 		}()
 
 		time.Sleep(time.Second / 2)
-		c.Run()
+		c.Run(context.Background())
 		wg.Done()
 	}()
 
-	s.Run()
+	s.Run(ctx)
 	wg.Wait()
 
 	if c.impl.timeout != cp1.Timeout {
@@ -75,28 +76,30 @@ func TestServerGreeting(t *testing.T) {
 				Logger: *(&logger.Logger{}).Initialize("pbrpctest-srv", logger.SeverityInfo, os.Stdout, os.Stderr),
 			},
 
-			Handshaker: func(_ *ServerChannel, _ context.Context, handshake []byte) ([]byte, error) {
-				n, e := strconv.Atoi(string(handshake))
+			Handshaker: func(_ *ServerChannel, _ context.Context, handshake *[]byte) (bool, error) {
+				n, e := strconv.Atoi(string(*handshake))
 
 				if e != nil {
 					t.Errorf("%v", e)
-					return nil, e
+					return false, e
 				}
 
-				return []byte(strconv.Itoa(n + 1)), nil
+				*handshake = []byte(strconv.Itoa(n + 1))
+				return true, nil
 			},
 		},
 	}
 
-	s := (&Server{}).Initialize(sp, "", "", context.Background())
+	s := (&Server{}).Initialize(sp, "", "")
 
 	cp2 := &ClientChannelPolicy{
 		ChannelPolicy: &ChannelPolicy{
 			Logger: *(&logger.Logger{}).Initialize("pbrpctest-cli", logger.SeverityInfo, os.Stdout, os.Stderr),
 		},
 
-		Handshaker: func(_ *ClientChannel, context_ context.Context, greeter func(context.Context, []byte) ([]byte, error)) error {
-			handshake, e := greeter(context_, []byte("99"))
+		Handshaker: func(_ *ClientChannel, context_ context.Context, greeter func(context.Context, *[]byte) error) error {
+			handshake := []byte("99")
+			e := greeter(context_, &handshake)
 
 			if e == nil && string(handshake) != "100" {
 				t.Errorf("%#v", handshake)
@@ -106,21 +109,22 @@ func TestServerGreeting(t *testing.T) {
 		},
 	}
 
-	c := (&ClientChannel{}).Initialize(cp2, nil, context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	c := (&ClientChannel{}).Initialize(cp2, nil)
 	var wg sync.WaitGroup
 	wg.Add(1)
 
 	go func() {
 		go func() {
 			time.Sleep(2 * time.Second)
-			s.Stop(true)
+			cancel()
 		}()
 
 		time.Sleep(time.Second / 2)
-		c.Run()
+		c.Run(context.Background())
 		wg.Done()
 	}()
 
-	s.Run()
+	s.Run(ctx)
 	wg.Wait()
 }

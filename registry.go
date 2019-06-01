@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"reflect"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ const (
 
 type Registry struct {
 	client                          *zk.Client
-	channelPolicy                   *ClientChannelPolicy
+	policy                          *RegistryPolicy
 	serviceName2ServiceProviderList lazy_map.LazyMap
 	randomizedLoadBalancer          randomizedLoadBalancer
 	roundRobinLoadBalancer          roundRobinLoadBalancer
@@ -36,13 +37,13 @@ type Registry struct {
 	openness                        int32
 }
 
-func (self *Registry) Initialize(client *zk.Client, channelPolicy *ClientChannelPolicy) *Registry {
+func (self *Registry) Initialize(client *zk.Client, policy *RegistryPolicy) *Registry {
 	if self.openness != 0 {
 		panic(errors.New("pbrpc: registry already initialized"))
 	}
 
 	self.client = client
-	self.channelPolicy = channelPolicy
+	self.policy = policy.Validate()
 	self.condition.Initialize(&self.lock)
 	self.openness = 1
 	return self
@@ -95,20 +96,20 @@ func (self *Registry) AddServiceProviders(context_ context.Context, serviceNames
 	serviceProviderKey := makeServiceProviderKey(serverAddress, weight)
 
 	for i, serviceName := range serviceNames {
-		serviceProvidersPath := makeServiceProvidersPath(serviceName)
+		serviceProvidersPath := self.makeServiceProvidersPath(serviceName)
 
 		if e := utils.CreateP(self.client, context_, serviceProvidersPath); e != nil {
 			return e
 		}
 
-		self.channelPolicy.Logger.Infof("service provider addition: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
+		self.policy.Channel.Logger.Infof("service provider addition: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
 
-		if _, e := self.client.Create(context_, serviceProvidersPath+"/"+serviceProviderKey, nil, nil, zk.CreateEphemeral, false); e != nil {
+		if _, e := self.client.Create(context_, path.Join(serviceProvidersPath, serviceProviderKey), nil, nil, zk.CreateEphemeral, false); e != nil {
 			for j := i - 1; j >= 0; j-- {
 				serviceName := serviceNames[j]
-				serviceProvidersPath := makeServiceProvidersPath(serviceName)
-				self.channelPolicy.Logger.Infof("service provider removal: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
-				self.client.Delete(context_, serviceProvidersPath+"/"+serviceProviderKey, -1, true)
+				serviceProvidersPath := self.makeServiceProvidersPath(serviceName)
+				self.policy.Channel.Logger.Infof("service provider removal: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
+				self.client.Delete(context_, path.Join(serviceProvidersPath, serviceProviderKey), -1, true)
 			}
 
 			return e
@@ -124,10 +125,10 @@ func (self *Registry) RemoveServiceProviders(context_ context.Context, serviceNa
 	e := error(nil)
 
 	for _, serviceName := range serviceNames {
-		serviceProvidersPath := makeServiceProvidersPath(serviceName)
-		self.channelPolicy.Logger.Infof("service provider removal: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
+		serviceProvidersPath := self.makeServiceProvidersPath(serviceName)
+		self.policy.Channel.Logger.Infof("service provider removal: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
 
-		if e2 := self.client.Delete(context_, serviceProvidersPath+"/"+serviceProviderKey, -1, true); e2 != nil {
+		if e2 := self.client.Delete(context_, path.Join(serviceProvidersPath, serviceProviderKey), -1, true); e2 != nil {
 			if e3, ok := e2.(zk.Error); !(ok && e3.GetCode() == zk.ErrorNoNode) {
 				e = e2
 			}
@@ -208,11 +209,15 @@ func (self *Registry) checkUninitialized() {
 	}
 }
 
+func (self *Registry) makeServiceProvidersPath(serviceName string) string {
+	return fmt.Sprintf(self.policy.ServiceProvidersPathFormat, serviceName)
+}
+
 func (self *Registry) fetchServiceProviderList(context_ context.Context, serviceName string) (serviceProviderList, error) {
 	var watcher *zk.Watcher
 
 	value, valueClearer, e := self.serviceName2ServiceProviderList.GetOrSetValue(serviceName, func() (interface{}, error) {
-		serviceProvidersPath := makeServiceProvidersPath(serviceName)
+		serviceProvidersPath := self.makeServiceProvidersPath(serviceName)
 		var response *zk.GetChildren2Response
 		var e error
 		response, watcher, e = self.client.GetChildren2W(context_, serviceProvidersPath, true)
@@ -252,7 +257,7 @@ func (self *Registry) fetchServiceProviderList(context_ context.Context, service
 
 func (self *Registry) fetchChannel(serverAddress string) (*ClientChannel, error) {
 	value, valueClearer, _ := self.serverAddress2Channel.GetOrSetValue(serverAddress, func() (interface{}, error) {
-		channel := (&ClientChannel{}).Initialize(self.channelPolicy, []string{serverAddress})
+		channel := (&ClientChannel{}).Initialize(self.policy.Channel, []string{serverAddress})
 		return channel, nil
 	})
 
@@ -272,7 +277,7 @@ func (self *Registry) fetchChannel(serverAddress string) (*ClientChannel, error)
 			}()
 
 			e := channel.Run(context_)
-			self.channelPolicy.Logger.Infof("channel run-out: serverAddress=%#v, e=%q", serverAddress, e)
+			self.policy.Channel.Logger.Infof("channel run-out: serverAddress=%#v, e=%q", serverAddress, e)
 		}); e != nil {
 			valueClearer()
 			return nil, e
@@ -302,6 +307,27 @@ func (self *Registry) postAsyncTask(asyncTask func(context.Context)) error {
 
 func (self *Registry) isClosed() bool {
 	return atomic.LoadInt32(&self.openness) != 1
+}
+
+type RegistryPolicy struct {
+	ServiceProvidersPathFormat string
+	Channel                    *ClientChannelPolicy
+
+	validateOnce sync.Once
+}
+
+func (self *RegistryPolicy) Validate() *RegistryPolicy {
+	self.validateOnce.Do(func() {
+		if self.ServiceProvidersPathFormat == "" {
+			self.ServiceProvidersPathFormat = defaultServiceProvidersPathFormat
+		}
+
+		if self.Channel == nil {
+			self.Channel = &defaultClientChannelPolicy
+		}
+	})
+
+	return self
 }
 
 type LBType uint8
@@ -397,11 +423,10 @@ func (self methodCallerProxy) CallMethodWithoutReturn(
 	}
 }
 
-var noServerError = errors.New("pbrpc: no server")
+const defaultServiceProvidersPathFormat = "service_providers/%s"
 
-func makeServiceProvidersPath(serviceName string) string {
-	return "service_providers/" + serviceName
-}
+var defaultClientChannelPolicy ClientChannelPolicy
+var noServerError = errors.New("pbrpc: no server")
 
 func makeServiceProviderKey(serverAddress string, weight int32) string {
 	return serverAddress + "|" + strconv.Itoa(int(weight))
