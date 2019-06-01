@@ -489,7 +489,7 @@ func (self *channelBase) doCallMethodWithoutReturn(
 }
 
 var defaultChannelPolicy ChannelPolicy
-var poolOfOutgoingMethodInterceptors = sync.Pool{New: func() interface{} { return make([]OutgoingMethodInterceptor, 0, normalNumberOfMethodInterceptors) }}
+var poolOfOutgoingMethodInterceptors = sync.Pool{New: func() interface{} { return make([]OutgoingMethodInterceptor, normalNumberOfMethodInterceptors) }}
 
 func makeContextVars(
 	sub Channel,
@@ -543,7 +543,7 @@ func makeContextVars(
 }
 
 func makeOutgoingMethodInterceptors(policy *ChannelPolicy, contextVars_ *ContextVars) []OutgoingMethodInterceptor {
-	outgoingMethodInterceptors := poolOfOutgoingMethodInterceptors.Get().([]OutgoingMethodInterceptor)
+	outgoingMethodInterceptors := poolOfOutgoingMethodInterceptors.Get().([]OutgoingMethodInterceptor)[:0]
 	outgoingMethodInterceptors = append(outgoingMethodInterceptors, policy.outgoingMethodInterceptors[""]...)
 	outgoingMethodInterceptors = append(outgoingMethodInterceptors, policy.outgoingMethodInterceptors[contextVars_.ServiceName]...)
 

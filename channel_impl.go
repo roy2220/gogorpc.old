@@ -1089,7 +1089,7 @@ func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader 
 	}
 
 	contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
-	incomingMethodInterceptors := poolOfIncomingMethodInterceptors.Get().([]IncomingMethodInterceptor)
+	incomingMethodInterceptors := poolOfIncomingMethodInterceptors.Get().([]IncomingMethodInterceptor)[:0]
 	incomingMethodInterceptors = append(incomingMethodInterceptors, self.policy.incomingMethodInterceptors[""]...)
 	incomingMethodInterceptors = append(incomingMethodInterceptors, self.policy.incomingMethodInterceptors[contextVars_.ServiceName]...)
 	*pendingResultReturnCount++
@@ -1385,7 +1385,7 @@ var channelState2ErrorCode = [...]ErrorCode{
 
 var poolOfMethodCalls = sync.Pool{New: func() interface{} { return &methodCall{} }}
 var poolOfResultReturns = sync.Pool{New: func() interface{} { return &resultReturn{} }}
-var poolOfIncomingMethodInterceptors = sync.Pool{New: func() interface{} { return make([]IncomingMethodInterceptor, 0, normalNumberOfMethodInterceptors) }}
+var poolOfIncomingMethodInterceptors = sync.Pool{New: func() interface{} { return make([]IncomingMethodInterceptor, normalNumberOfMethodInterceptors) }}
 
 func errorToErrorCode(e error, logger *logger.Logger, contextVars_ *ContextVars, request interface{}) ErrorCode {
 	if e == nil {
