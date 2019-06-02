@@ -355,7 +355,7 @@ func (self methodCallerProxy) CallMethod(
 	methodName string,
 	methodIndex int32,
 	fifoKey string,
-	extraData []byte,
+	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
@@ -367,7 +367,7 @@ func (self methodCallerProxy) CallMethod(
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{ErrorNotFound, makeMethodID(serviceName, methodName)}
+				e = Error{ErrorNotFound, false, ""}
 			}
 
 			return nil, e
@@ -392,7 +392,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(
 	methodName string,
 	methodIndex int32,
 	fifoKey string,
-	extraData []byte,
+	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
@@ -404,7 +404,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{ErrorNotFound, makeMethodID(serviceName, methodName)}
+				e = Error{ErrorNotFound, false, ""}
 			}
 
 			return e

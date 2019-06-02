@@ -22,8 +22,9 @@ const (
 )
 
 type Error struct {
-	code     ErrorCode
-	methodID string
+	code   ErrorCode
+	isMade bool
+	desc   string
 }
 
 func (self Error) GetCode() ErrorCode {
@@ -31,25 +32,28 @@ func (self Error) GetCode() ErrorCode {
 }
 
 func (self Error) IsMade() bool {
-	return self.methodID == ""
+	return self.isMade
+}
+
+func (self Error) GetDesc() string {
+	if self.desc != "" {
+		return self.desc
+	}
+
+	record, ok := errorTable[self.code]
+	var desc string
+
+	if ok {
+		desc = record[1]
+	} else {
+		desc = fmt.Sprintf("error %d", self.code)
+	}
+
+	return desc
 }
 
 func (self Error) Error() string {
-	record, ok := errorTable[self.code]
-	var result string
-
-	if ok {
-		description := record[1]
-		result = "pbrpc: " + description
-	} else {
-		result = fmt.Sprintf("pbrpc: error %d", self.code)
-	}
-
-	if self.methodID != "" {
-		result += fmt.Sprintf(" (from %s)", self.methodID)
-	}
-
-	return result
+	return "pbrpc: " + self.GetDesc()
 }
 
 type ErrorCode int32
@@ -76,7 +80,7 @@ func (self ErrorCode) GoString() string {
 	}
 }
 
-func RegisterError(errorCode ErrorCode, errorCodeName string, errorDescription string) {
+func RegisterError(errorCode ErrorCode, errorCodeName string, errorDesc string) {
 	if errorCode < ErrorUserDefined {
 		panic(fmt.Errorf("pbrpc: error reserved: errorCode=%#v", errorCode))
 	}
@@ -85,7 +89,15 @@ func RegisterError(errorCode ErrorCode, errorCodeName string, errorDescription s
 		panic(fmt.Errorf("pbrpc: error registered: errorCode=%#v", errorCode))
 	}
 
-	errorTable[errorCode] = [2]string{errorCodeName, errorDescription}
+	if errorCodeName == "" {
+		panic(fmt.Errorf("pbrpc: empty error code name: errorCode=%#v", errorCode))
+	}
+
+	if errorDesc == "" {
+		panic(fmt.Errorf("pbrpc: empty error desc: errorCode=%#v", errorCode))
+	}
+
+	errorTable[errorCode] = [2]string{errorCodeName, errorDesc}
 }
 
 func MakeError(errorCode ErrorCode) Error {
@@ -93,11 +105,15 @@ func MakeError(errorCode ErrorCode) Error {
 		panic(fmt.Errorf("pbrpc: error reserved: errorCode=%#v", errorCode))
 	}
 
-	return X_MakeError(errorCode)
+	return X_MakeError(errorCode, "")
 }
 
-func X_MakeError(errorCode ErrorCode) Error {
-	return Error{errorCode, ""}
+func X_MakeError(errorCode ErrorCode, errorDesc string) Error {
+	return Error{errorCode, true, errorDesc}
+}
+
+func X_MustGetErrorDesc(errorCode ErrorCode) string {
+	return errorTable[errorCode][1]
 }
 
 var errorTable = map[ErrorCode][2]string{

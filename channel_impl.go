@@ -513,10 +513,11 @@ func (self *channelImpl) callMethod(
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
-	callback func(interface{}, ErrorCode),
+	callback func(interface{}, ErrorCode, string),
 ) error {
 	if self.isClosed() {
-		return Error{self.getErrorCode(), makeMethodID(contextVars_.ServiceName, contextVars_.MethodName)}
+		errorCode := self.getErrorCode()
+		return Error{errorCode, false, ""}
 	}
 
 	methodCall_ := poolOfMethodCalls.Get().(*methodCall)
@@ -534,7 +535,8 @@ func (self *channelImpl) callMethod(
 
 	if e := self.dequeOfMethodCalls.AppendNode(context_, &methodCall_.listNode); e != nil {
 		if e == semaphore.SemaphoreClosedError {
-			e = Error{self.getErrorCode(), makeMethodID(contextVars_.ServiceName, contextVars_.MethodName)}
+			errorCode := self.getErrorCode()
+			e = Error{errorCode, false, ""}
 		}
 
 		return e
@@ -632,7 +634,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 					list_.AppendNode(&methodCall_.listNode)
 					retriedMethodCallCount++
 				} else {
-					methodCall_.callback(nil, errorCode)
+					methodCall_.callback(nil, errorCode, "")
 					completedMethodCallCount++
 					poolOfMethodCalls.Put(methodCall_)
 				}
@@ -688,7 +690,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
-					methodCall_.callback(nil, errorCode2)
+					methodCall_.callback(nil, errorCode2, "")
 					listNode.Reset()
 					poolOfMethodCalls.Put(methodCall_)
 				}
@@ -699,9 +701,9 @@ func (self *channelImpl) setState(newState ChannelState) {
 				methodCall_ := value.(*methodCall)
 
 				if methodCallsAreRetriable && methodCall_.autoRetry {
-					methodCall_.callback(nil, errorCode2)
+					methodCall_.callback(nil, errorCode2, "")
 				} else {
-					methodCall_.callback(nil, errorCode)
+					methodCall_.callback(nil, errorCode, "")
 				}
 
 				poolOfMethodCalls.Put(methodCall_)
@@ -797,6 +799,15 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
 					listNode.Reset()
+
+					if !methodCall_.autoRetry {
+						methodCall_.serviceName = ""
+						methodCall_.methodName = ""
+						methodCall_.fifoKey = ""
+						methodCall_.extraData = nil
+						methodCall_.request = nil
+					}
+
 					self.pendingMethodCalls.Store(methodCall_.sequenceNumber, methodCall_)
 				}
 			} else {
@@ -904,7 +915,7 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 					if e == PacketPayloadTooLargeError {
 						listNode.Remove()
 						taskOfMethodCalls.numberOfListNodes--
-						methodCall_.callback(nil, ErrorPacketPayloadTooLarge)
+						methodCall_.callback(nil, ErrorPacketPayloadTooLarge, "")
 						completedMethodCallCount++
 						listNode.Reset()
 						poolOfMethodCalls.Put(methodCall_)
@@ -929,6 +940,7 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 					SequenceNumber: resultReturn_.sequenceNumber,
 					NextSpanId:     resultReturn_.nextSpanID,
 					ErrorCode:      int32(resultReturn_.errorCode),
+					ErrorDesc:      resultReturn_.errorDesc,
 				}
 
 				responseHeaderSize := responseHeader.Size()
@@ -1133,7 +1145,7 @@ func (self *channelImpl) rejectRequest(
 ) error {
 	if len(incomingMethodInterceptors) == 0 {
 		poolOfIncomingMethodInterceptors.Put(incomingMethodInterceptors)
-		returnResult(sequenceNumber, *contextVars_.nextSpanID, errorCode, nil, self.dequeOfResultReturns)
+		returnResult(sequenceNumber, *contextVars_.nextSpanID, errorCode, X_MustGetErrorDesc(errorCode), nil, self.dequeOfResultReturns)
 		return nil
 	}
 
@@ -1161,7 +1173,7 @@ func (self *channelImpl) rejectRequest(
 			incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
 				if i == n {
 					poolOfIncomingMethodInterceptors.Put(incomingMethodInterceptors)
-					return nil, X_MakeError(errorCode)
+					return nil, X_MakeError(errorCode, "")
 				} else {
 					incomingMethodInterceptor := incomingMethodInterceptors[i]
 					i++
@@ -1170,8 +1182,8 @@ func (self *channelImpl) rejectRequest(
 			}
 
 			response, e := incomingMethodDispatcher(bindContextVars(context_, &contextVars_), &request)
-			errorCode2 := errorToErrorCode(e, logger_, &contextVars_, &request)
-			returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, response, dequeOfResultReturns)
+			errorCode2, errorDesc2 := parseError(e, logger_, &contextVars_, &request)
+			returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, errorDesc2, response, dequeOfResultReturns)
 			self.wgOfPendingResultReturns.Done()
 		}
 	}(
@@ -1254,8 +1266,8 @@ func (self *channelImpl) acceptRequest(
 				response, e = incomingMethodDispatcher(bindContextVars(context_, &contextVars_), request)
 			}
 
-			errorCode2 := errorToErrorCode(e, logger_, &contextVars_, request)
-			returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, response, dequeOfResultReturns)
+			errorCode2, errorDesc2 := parseError(e, logger_, &contextVars_, request)
+			returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, errorDesc2, response, dequeOfResultReturns)
 			self.wgOfPendingResultReturns.Done()
 		}
 	}(
@@ -1302,9 +1314,9 @@ func (self *channelImpl) receiveResponse(context_ context.Context, responseHeade
 			return IllFormedMessageError
 		}
 
-		methodCall_.callback(response, 0)
+		methodCall_.callback(response, 0, "")
 	} else {
-		methodCall_.callback(nil, ErrorCode(responseHeader.ErrorCode))
+		methodCall_.callback(nil, ErrorCode(responseHeader.ErrorCode), responseHeader.ErrorDesc)
 	}
 
 	*completedMethodCallCount++
@@ -1336,14 +1348,14 @@ type methodCall struct {
 	serviceName    string
 	methodName     string
 	fifoKey        string
-	extraData      []byte
+	extraData      map[string][]byte
 	traceID        uuid.UUID
 	spanID         int32
 	nextSpanID     *int32
 	request        OutgoingMessage
 	responseType   reflect.Type
 	autoRetry      bool
-	callback       func(interface{}, ErrorCode)
+	callback       func(interface{}, ErrorCode, string)
 }
 
 type resultReturn struct {
@@ -1351,6 +1363,7 @@ type resultReturn struct {
 	sequenceNumber int32
 	nextSpanID     int32
 	errorCode      ErrorCode
+	errorDesc      string
 	response       OutgoingMessage
 }
 
@@ -1387,32 +1400,34 @@ var poolOfMethodCalls = sync.Pool{New: func() interface{} { return &methodCall{}
 var poolOfResultReturns = sync.Pool{New: func() interface{} { return &resultReturn{} }}
 var poolOfIncomingMethodInterceptors = sync.Pool{New: func() interface{} { return make([]IncomingMethodInterceptor, normalNumberOfMethodInterceptors) }}
 
-func errorToErrorCode(e error, logger *logger.Logger, contextVars_ *ContextVars, request interface{}) ErrorCode {
+func parseError(e error, logger *logger.Logger, contextVars_ *ContextVars, request interface{}) (ErrorCode, string) {
 	if e == nil {
-		return 0
+		return 0, ""
 	} else {
 		if e2, ok := e.(Error); ok && e2.IsMade() {
-			return e2.code
+			return e2.code, e2.GetDesc()
 		} else {
 			logger.Errorf(
-				"internal server error: traceID=%q, spanID=%#v, methodID=%#v, request=%q, e=%q",
+				"internal server error: traceID=%q, spanID=%#v, serviceName=%#v, methodName=%#v, request=%q, e=%q",
 				contextVars_.TraceID,
 				contextVars_.SpanID,
-				makeMethodID(contextVars_.ServiceName, contextVars_.MethodName),
+				contextVars_.ServiceName,
+				contextVars_.MethodName,
 				request,
 				e,
 			)
 
-			return ErrorInternalServer
+			return ErrorInternalServer, X_MustGetErrorDesc(ErrorInternalServer)
 		}
 	}
 }
 
-func returnResult(sequenceNumber int32, nextSpanID int32, errorCode ErrorCode, response OutgoingMessage, dequeOfResultReturns *deque.Deque) error {
+func returnResult(sequenceNumber int32, nextSpanID int32, errorCode ErrorCode, errorDesc string, response OutgoingMessage, dequeOfResultReturns *deque.Deque) error {
 	resultReturn_ := poolOfResultReturns.Get().(*resultReturn)
 	resultReturn_.sequenceNumber = sequenceNumber
 	resultReturn_.nextSpanID = nextSpanID
 	resultReturn_.errorCode = errorCode
+	resultReturn_.errorDesc = errorDesc
 	resultReturn_.response = response
 	return dequeOfResultReturns.AppendNode(nil, &resultReturn_.listNode)
 }

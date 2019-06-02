@@ -62,10 +62,6 @@ func makeDeadline(context_ context.Context, timeout time.Duration) (time.Time, e
 	}
 }
 
-func makeMethodID(serviceName string, methodName string) string {
-	return serviceName + "." + methodName
-}
-
 func makeMethodInterceptorLocator(serviceName string, methodIndex int32) string {
 	serviceNameLength := len(serviceName)
 	rawMethodInterceptorLocator := make([]byte, serviceNameLength+1, serviceNameLength+5)

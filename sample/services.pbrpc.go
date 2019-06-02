@@ -23,7 +23,7 @@ const (
 type ClientServiceClient struct {
     methodCaller pbrpc.MethodCaller
     fifoKey      string
-    extraData    []byte
+    extraData    map[string][]byte
     autoRetry    bool
 }
 
@@ -45,7 +45,7 @@ func (self ClientServiceClient) WithFIFOKey(fifoKey string) ClientServiceClient 
     }
 }
 
-func (self ClientServiceClient) WithExtraData(extraData []byte) ClientServiceClient {
+func (self ClientServiceClient) WithExtraData(extraData map[string][]byte) ClientServiceClient {
     return ClientServiceClient{
         methodCaller: self.methodCaller,
         fifoKey: self.fifoKey,
@@ -99,7 +99,7 @@ var methodTableOfClientService = pbrpc.MethodTable{
             methodHandler, ok := serviceHandler.(interface { GetNickname(context.Context) (*GetNicknameResponse, error) })
 
             if !ok {
-                return nil, pbrpc.X_MakeError(pbrpc.ErrorNotImplemented)
+                return nil, pbrpc.X_MakeError(pbrpc.ErrorNotImplemented, "")
             }
 
             return methodHandler.GetNickname(context_)
@@ -118,7 +118,7 @@ const (
 type ServerServiceClient struct {
     methodCaller pbrpc.MethodCaller
     fifoKey      string
-    extraData    []byte
+    extraData    map[string][]byte
     autoRetry    bool
 }
 
@@ -140,7 +140,7 @@ func (self ServerServiceClient) WithFIFOKey(fifoKey string) ServerServiceClient 
     }
 }
 
-func (self ServerServiceClient) WithExtraData(extraData []byte) ServerServiceClient {
+func (self ServerServiceClient) WithExtraData(extraData map[string][]byte) ServerServiceClient {
     return ServerServiceClient{
         methodCaller: self.methodCaller,
         fifoKey: self.fifoKey,
@@ -194,7 +194,7 @@ var methodTableOfServerService = pbrpc.MethodTable{
             methodHandler, ok := serviceHandler.(interface { SayHello(context.Context, *SayHelloRequest) (*SayHelloResponse, error) })
 
             if !ok {
-                return nil, pbrpc.X_MakeError(pbrpc.ErrorNotImplemented)
+                return nil, pbrpc.X_MakeError(pbrpc.ErrorNotImplemented, "")
             }
 
             return methodHandler.SayHello(context_, request.(*SayHelloRequest))

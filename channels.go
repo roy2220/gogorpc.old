@@ -27,7 +27,7 @@ type MethodCaller interface {
 		methodName string,
 		methodIndex int32,
 		fifoKey string,
-		extraData []byte,
+		extraData map[string][]byte,
 		request OutgoingMessage,
 		responseType reflect.Type,
 		autoRetryMethodCall bool) (response interface{}, e error)
@@ -36,7 +36,7 @@ type MethodCaller interface {
 		methodName string,
 		methodIndex int32,
 		fifoKey string,
-		extraData []byte,
+		extraData map[string][]byte,
 		request OutgoingMessage,
 		responseType reflect.Type,
 		autoRetryMethodCall bool) (e error)
@@ -77,7 +77,7 @@ func (self *ClientChannel) CallMethod(
 	methodName string,
 	methodIndex int32,
 	fifoKey string,
-	extraData []byte,
+	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
@@ -98,7 +98,7 @@ func (self *ClientChannel) CallMethodWithoutReturn(
 	methodName string,
 	methodIndex int32,
 	fifoKey string,
-	extraData []byte,
+	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
@@ -215,7 +215,7 @@ func (self *ServerChannel) CallMethod(
 	methodName string,
 	methodIndex int32,
 	fifoKey string,
-	extraData []byte,
+	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
@@ -236,7 +236,7 @@ func (self *ServerChannel) CallMethodWithoutReturn(
 	methodName string,
 	methodIndex int32,
 	fifoKey string,
-	extraData []byte,
+	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
@@ -305,7 +305,7 @@ type ContextVars struct {
 	MethodName   string
 	MethodIndex  int32
 	FIFOKey      string
-	ExtraData    []byte
+	ExtraData    map[string][]byte
 	TraceID      uuid.UUID
 	SpanParentID int32
 	SpanID       int32
@@ -405,9 +405,9 @@ func (self *channelBase) doCallMethod(
 	var response interface{}
 	error_ := make(chan error, 1)
 
-	callback := func(response2 interface{}, errorCode ErrorCode) {
+	callback := func(response2 interface{}, errorCode ErrorCode, errorDesc string) {
 		if errorCode != 0 {
-			error_ <- Error{errorCode, makeMethodID(contextVars_.ServiceName, contextVars_.MethodName)}
+			error_ <- Error{errorCode, false, errorDesc}
 			return
 		}
 
@@ -484,7 +484,7 @@ func (self *channelBase) doCallMethodWithoutReturn(
 		request,
 		responseType,
 		autoRetryMethodCall,
-		func(interface{}, ErrorCode) {},
+		func(interface{}, ErrorCode, string) {},
 	)
 }
 
@@ -497,7 +497,7 @@ func makeContextVars(
 	methodName string,
 	methodIndex int32,
 	fifoKey string,
-	extraData []byte,
+	extraData map[string][]byte,
 	tryInheritSpan bool,
 	context_ context.Context,
 ) (*ContextVars, error) {

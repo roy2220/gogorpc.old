@@ -28,7 +28,7 @@ message RequestHeader {
     string service_name = 2;
     string method_name = 3;
     string fifo_key = 4;
-    bytes extra_data = 5;
+    map<string, bytes> extra_data = 5;
     bytes trace_id = 6;
     int32 span_id = 7;
 }
@@ -40,13 +40,14 @@ enum ErrorCode {
     ERROR_BAD_REQUEST = 3;
     ERROR_NOT_IMPLEMENTED = 4;
     ERROR_INTERNAL_SERVER = 5;
-    ERROR_USER_DEFINED = 256;
+    ERROR_USER_DEFINED = 10000;
 }
 
 message ResponseHeader {
     int32 sequence_number = 1;
     int32 next_span_id = 2;
     int32 error_code = 3;
+    string error_desc = 4;
 }
 
 message Heartbeat {}
