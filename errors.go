@@ -25,17 +25,18 @@ type Error struct {
 	code   ErrorCode
 	isMade bool
 	desc   string
+	data   []byte
 }
 
-func (self Error) GetCode() ErrorCode {
+func (self *Error) GetCode() ErrorCode {
 	return self.code
 }
 
-func (self Error) IsMade() bool {
+func (self *Error) IsMade() bool {
 	return self.isMade
 }
 
-func (self Error) GetDesc() string {
+func (self *Error) GetDesc() string {
 	if self.desc != "" {
 		return self.desc
 	}
@@ -52,8 +53,16 @@ func (self Error) GetDesc() string {
 	return desc
 }
 
-func (self Error) Error() string {
-	return "pbrpc: " + self.GetDesc()
+func (self *Error) GetData() []byte {
+	return self.data
+}
+
+func (self *Error) Error() string {
+	if self.data == nil {
+		return fmt.Sprintf("pbrpc: %s", self.GetDesc())
+	} else {
+		return fmt.Sprintf("pbrpc: %s: errorData=%q", self.GetDesc(), self.data)
+	}
 }
 
 type ErrorCode int32
@@ -100,16 +109,16 @@ func RegisterError(errorCode ErrorCode, errorCodeName string, errorDesc string) 
 	errorTable[errorCode] = [2]string{errorCodeName, errorDesc}
 }
 
-func MakeError(errorCode ErrorCode) *Error {
+func MakeError(errorCode ErrorCode, errorData []byte) *Error {
 	if errorCode < ErrorUserDefined {
 		panic(fmt.Errorf("pbrpc: error reserved: errorCode=%#v", errorCode))
 	}
 
-	return X_MakeError(errorCode, "")
+	return X_MakeError(errorCode, "", errorData)
 }
 
-func X_MakeError(errorCode ErrorCode, errorDesc string) *Error {
-	return &Error{errorCode, true, errorDesc}
+func X_MakeError(errorCode ErrorCode, errorDesc string, errorData []byte) *Error {
+	return &Error{errorCode, true, errorDesc, errorData}
 }
 
 func X_MustGetErrorDesc(errorCode ErrorCode) string {

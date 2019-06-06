@@ -99,7 +99,7 @@ var methodTableOfClientService = pbrpc.MethodTable{
             methodHandler, ok := serviceHandler.(interface { GetNickname(context.Context) (*GetNicknameResponse, error) })
 
             if !ok {
-                return nil, pbrpc.X_MakeError(pbrpc.ErrorNotImplemented, "")
+                return nil, pbrpc.X_MakeError(pbrpc.ErrorNotImplemented, "", nil)
             }
 
             return methodHandler.GetNickname(context_)
@@ -194,7 +194,7 @@ var methodTableOfServerService = pbrpc.MethodTable{
             methodHandler, ok := serviceHandler.(interface { SayHello(context.Context, *SayHelloRequest) (*SayHelloResponse, error) })
 
             if !ok {
-                return nil, pbrpc.X_MakeError(pbrpc.ErrorNotImplemented, "")
+                return nil, pbrpc.X_MakeError(pbrpc.ErrorNotImplemented, "", nil)
             }
 
             return methodHandler.SayHello(context_, request.(*SayHelloRequest))

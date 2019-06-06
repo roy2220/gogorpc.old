@@ -405,9 +405,9 @@ func (self *channelBase) doCallMethod(
 	var response interface{}
 	error_ := make(chan error, 1)
 
-	callback := func(response2 interface{}, errorCode ErrorCode, errorDesc string) {
+	callback := func(response2 interface{}, errorCode ErrorCode, errorDesc string, errorData []byte) {
 		if errorCode != 0 {
-			error_ <- &Error{code: errorCode}
+			error_ <- &Error{code: errorCode, desc: errorDesc, data: errorData}
 			return
 		}
 
@@ -484,7 +484,7 @@ func (self *channelBase) doCallMethodWithoutReturn(
 		request,
 		responseType,
 		autoRetryMethodCall,
-		func(interface{}, ErrorCode, string) {},
+		func(interface{}, ErrorCode, string, []byte) {},
 	)
 }
 
