@@ -1277,12 +1277,19 @@ func (self *channelImpl) acceptRequest(
 		self,
 	)
 
-	if contextVars_.FIFOKey == "" {
-		go f()
-	} else {
-		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.FIFOKey, f); e != nil {
+	if self.policy.ForcedFIFOMode {
+		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, "", f); e != nil {
 			self.wgOfPendingResultReturns.Done()
 			return e
+		}
+	} else {
+		if contextVars_.FIFOKey == "" {
+			go f()
+		} else {
+			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.FIFOKey, f); e != nil {
+				self.wgOfPendingResultReturns.Done()
+				return e
+			}
 		}
 	}
 
