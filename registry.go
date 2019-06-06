@@ -129,7 +129,7 @@ func (self *Registry) RemoveServiceProviders(context_ context.Context, serviceNa
 		self.policy.Channel.Logger.Infof("service provider removal: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
 
 		if e2 := self.client.Delete(context_, path.Join(serviceProvidersPath, serviceProviderKey), -1, true); e2 != nil {
-			if e3, ok := e2.(zk.Error); !(ok && e3.GetCode() == zk.ErrorNoNode) {
+			if e3, ok := e2.(*zk.Error); !(ok && e3.GetCode() == zk.ErrorNoNode) {
 				e = e2
 			}
 		}
@@ -160,7 +160,7 @@ func (self *Registry) GetMethodCaller(lbType LBType, lbArgument uintptr) MethodC
 		serviceProviderList_, e := self.fetchServiceProviderList(context_, serviceName)
 
 		if e != nil {
-			if e2, ok := e.(zk.Error); ok && e2.GetCode() == zk.ErrorNoNode {
+			if e2, ok := e.(*zk.Error); ok && e2.GetCode() == zk.ErrorNoNode {
 				e = noServerError
 			}
 
@@ -367,7 +367,7 @@ func (self methodCallerProxy) CallMethod(
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{ErrorNotFound, false, ""}
+				e = &Error{code: ErrorNotFound}
 			}
 
 			return nil, e
@@ -376,7 +376,7 @@ func (self methodCallerProxy) CallMethod(
 		response, e := methodCaller.CallMethod(context_, serviceName, methodName, methodIndex, fifoKey, extraData, request, responseType, autoRetryMethodCall)
 
 		if e != nil {
-			if e2, ok := e.(Error); ok && e2.code == ErrorChannelTimedOut {
+			if e2, ok := e.(*Error); ok && e2.code == ErrorChannelTimedOut {
 				excludedServerList.addItem(serverAddress)
 				continue
 			}
@@ -404,7 +404,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(
 
 		if e != nil {
 			if e == noServerError {
-				e = Error{ErrorNotFound, false, ""}
+				e = &Error{code: ErrorNotFound}
 			}
 
 			return e
@@ -413,7 +413,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(
 		e = methodCaller.CallMethodWithoutReturn(context_, serviceName, methodName, methodIndex, fifoKey, extraData, request, responseType, autoRetryMethodCall)
 
 		if e != nil {
-			if e2, ok := e.(Error); ok && e2.code == ErrorChannelTimedOut {
+			if e2, ok := e.(*Error); ok && e2.code == ErrorChannelTimedOut {
 				excludedServerList.addItem(serverAddress)
 				continue
 			}

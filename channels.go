@@ -379,20 +379,20 @@ func (self *channelBase) callMethod(
 	}
 
 	i := 0
-	var outgoingMethodDispatcher OutgoingMethodDispatcher
+	var outgoingMethodHandler OutgoingMethodHandler
 
-	outgoingMethodDispatcher = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
+	outgoingMethodHandler = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
 		if i == n {
 			poolOfOutgoingMethodInterceptors.Put(outgoingMethodInterceptors)
 			return self.doCallMethod(context_, contextVars_, request, responseType, autoRetryMethodCall)
 		} else {
 			outgoingMethodInterceptor := outgoingMethodInterceptors[i]
 			i++
-			return outgoingMethodInterceptor(context_, request, outgoingMethodDispatcher)
+			return outgoingMethodInterceptor(context_, request, outgoingMethodHandler)
 		}
 	}
 
-	return outgoingMethodDispatcher(bindContextVars(context_, contextVars_), request)
+	return outgoingMethodHandler(bindContextVars(context_, contextVars_), request)
 }
 
 func (self *channelBase) doCallMethod(
@@ -407,7 +407,7 @@ func (self *channelBase) doCallMethod(
 
 	callback := func(response2 interface{}, errorCode ErrorCode, errorDesc string) {
 		if errorCode != 0 {
-			error_ <- Error{errorCode, false, errorDesc}
+			error_ <- &Error{code: errorCode}
 			return
 		}
 
@@ -454,20 +454,20 @@ func (self *channelBase) callMethodWithoutReturn(
 	}
 
 	i := 0
-	var outgoingMethodDispatcher OutgoingMethodDispatcher
+	var outgoingMethodHandler OutgoingMethodHandler
 
-	outgoingMethodDispatcher = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
+	outgoingMethodHandler = func(context_ context.Context, request OutgoingMessage) (interface{}, error) {
 		if i == n {
 			poolOfOutgoingMethodInterceptors.Put(outgoingMethodInterceptors)
 			return nil, self.doCallMethodWithoutReturn(context_, contextVars_, request, responseType, autoRetryMethodCall)
 		} else {
 			outgoingMethodInterceptor := outgoingMethodInterceptors[i]
 			i++
-			return outgoingMethodInterceptor(context_, request, outgoingMethodDispatcher)
+			return outgoingMethodInterceptor(context_, request, outgoingMethodHandler)
 		}
 	}
 
-	_, e := outgoingMethodDispatcher(bindContextVars(context_, contextVars_), request)
+	_, e := outgoingMethodHandler(bindContextVars(context_, contextVars_), request)
 	return e
 }
 

@@ -24,12 +24,12 @@ func (ServerServiceHandler) SayHello(context_ context.Context, request *sample.S
 	return response2, nil
 }
 
-func InterceptIncomingMethod(context_ context.Context, request interface{}, incomingMethodDispatcher pbrpc.IncomingMethodDispatcher) (pbrpc.OutgoingMessage, error) {
+func InterceptIncomingMethod(context_ context.Context, request interface{}, incomingMethodHandler pbrpc.IncomingMethodHandler) (pbrpc.OutgoingMessage, error) {
 	contextVars := pbrpc.MustGetContextVars(context_)
 	fmt.Printf("%v.%v begin\n", contextVars.ServiceName, contextVars.MethodName)
 	fmt.Printf("trace_id=%q, spanParentID=%#v, spanID=%#v\n", contextVars.TraceID, contextVars.SpanParentID, contextVars.SpanID)
 	fmt.Printf("request=%q\n", request)
-	response, e := incomingMethodDispatcher(context_, request)
+	response, e := incomingMethodHandler(context_, request)
 	fmt.Printf("response=%q\n", response)
 	fmt.Printf("%v.%v end\n", contextVars.ServiceName, contextVars.MethodName)
 	return response, e

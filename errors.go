@@ -100,7 +100,7 @@ func RegisterError(errorCode ErrorCode, errorCodeName string, errorDesc string) 
 	errorTable[errorCode] = [2]string{errorCodeName, errorDesc}
 }
 
-func MakeError(errorCode ErrorCode) Error {
+func MakeError(errorCode ErrorCode) *Error {
 	if errorCode < ErrorUserDefined {
 		panic(fmt.Errorf("pbrpc: error reserved: errorCode=%#v", errorCode))
 	}
@@ -108,8 +108,8 @@ func MakeError(errorCode ErrorCode) Error {
 	return X_MakeError(errorCode, "")
 }
 
-func X_MakeError(errorCode ErrorCode, errorDesc string) Error {
-	return Error{errorCode, true, errorDesc}
+func X_MakeError(errorCode ErrorCode, errorDesc string) *Error {
+	return &Error{errorCode, true, errorDesc}
 }
 
 func X_MustGetErrorDesc(errorCode ErrorCode) string {

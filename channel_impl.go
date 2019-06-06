@@ -136,11 +136,11 @@ func (self *ChannelPolicy) Validate() *ChannelPolicy {
 	return self
 }
 
-type IncomingMethodInterceptor func(context.Context, interface{}, IncomingMethodDispatcher) (OutgoingMessage, error)
-type OutgoingMethodInterceptor func(context.Context, OutgoingMessage, OutgoingMethodDispatcher) (interface{}, error)
+type IncomingMethodInterceptor func(context.Context, interface{}, IncomingMethodHandler) (OutgoingMessage, error)
+type OutgoingMethodInterceptor func(context.Context, OutgoingMessage, OutgoingMethodHandler) (interface{}, error)
 
-type IncomingMethodDispatcher func(context.Context, interface{}) (OutgoingMessage, error)
-type OutgoingMethodDispatcher func(context.Context, OutgoingMessage) (interface{}, error)
+type IncomingMethodHandler func(context.Context, interface{}) (OutgoingMessage, error)
+type OutgoingMethodHandler func(context.Context, OutgoingMessage) (interface{}, error)
 
 type IncomingMessage interface {
 	proto.Unmarshaler
@@ -488,7 +488,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, h
 
 func (self *channelImpl) dispatch(context_ context.Context, cancel context.CancelFunc) error {
 	if state := self.getState(); state != ChannelConnected && state != ChannelAccepted {
-		panic(invalidChannelStateError{fmt.Sprintf("state=%#v", state)})
+		panic(&invalidChannelStateError{fmt.Sprintf("state=%#v", state)})
 	}
 
 	errors_ := make(chan error, 2)
@@ -517,7 +517,7 @@ func (self *channelImpl) callMethod(
 ) error {
 	if self.isClosed() {
 		errorCode := self.getErrorCode()
-		return Error{errorCode, false, ""}
+		return &Error{code: errorCode}
 	}
 
 	methodCall_ := poolOfMethodCalls.Get().(*methodCall)
@@ -536,7 +536,7 @@ func (self *channelImpl) callMethod(
 	if e := self.dequeOfMethodCalls.AppendNode(context_, &methodCall_.listNode); e != nil {
 		if e == semaphore.SemaphoreClosedError {
 			errorCode := self.getErrorCode()
-			e = Error{errorCode, false, ""}
+			e = &Error{code: errorCode}
 		}
 
 		return e
@@ -562,7 +562,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 		switch newState {
 		case ChannelConnecting:
 		default:
-			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
+			panic(&invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 		}
 	case ChannelConnecting:
 		switch newState {
@@ -572,7 +572,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 		case ChannelClosed:
 			errorCode = ErrorChannelBroken
 		default:
-			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
+			panic(&invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 		}
 	case ChannelConnected:
 		switch newState {
@@ -581,13 +581,13 @@ func (self *channelImpl) setState(newState ChannelState) {
 		case ChannelClosed:
 			errorCode = ErrorChannelBroken
 		default:
-			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
+			panic(&invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 		}
 	case ChannelNotAccepted:
 		switch newState {
 		case ChannelAccepting:
 		default:
-			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
+			panic(&invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 		}
 	case ChannelAccepting:
 		switch newState {
@@ -595,17 +595,17 @@ func (self *channelImpl) setState(newState ChannelState) {
 		case ChannelClosed:
 			errorCode = ErrorChannelBroken
 		default:
-			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
+			panic(&invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 		}
 	case ChannelAccepted:
 		switch newState {
 		case ChannelClosed:
 			errorCode = ErrorChannelBroken
 		default:
-			panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
+			panic(&invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 		}
 	default:
-		panic(invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
+		panic(&invalidChannelStateError{fmt.Sprintf("oldState=%#v, newState=%#v", oldState, newState)})
 	}
 
 	atomic.StoreInt32(&self.state, int32(newState))
@@ -1168,20 +1168,20 @@ func (self *channelImpl) rejectRequest(
 			contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
 			n := len(incomingMethodInterceptors)
 			i := 0
-			var incomingMethodDispatcher IncomingMethodDispatcher
+			var incomingMethodHandler IncomingMethodHandler
 
-			incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
+			incomingMethodHandler = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
 				if i == n {
 					poolOfIncomingMethodInterceptors.Put(incomingMethodInterceptors)
 					return nil, X_MakeError(errorCode, "")
 				} else {
 					incomingMethodInterceptor := incomingMethodInterceptors[i]
 					i++
-					return incomingMethodInterceptor(context_, request, incomingMethodDispatcher)
+					return incomingMethodInterceptor(context_, request, incomingMethodHandler)
 				}
 			}
 
-			response, e := incomingMethodDispatcher(bindContextVars(context_, &contextVars_), &request)
+			response, e := incomingMethodHandler(bindContextVars(context_, &contextVars_), &request)
 			errorCode2, errorDesc2 := parseError(e, logger_, &contextVars_, &request)
 			returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, errorDesc2, response, dequeOfResultReturns)
 			self.wgOfPendingResultReturns.Done()
@@ -1250,20 +1250,20 @@ func (self *channelImpl) acceptRequest(
 				response, e = methodRecord.Handler(serviceHandler, bindContextVars(context_, &contextVars_), request)
 			} else {
 				i := 0
-				var incomingMethodDispatcher IncomingMethodDispatcher
+				var incomingMethodHandler IncomingMethodHandler
 
-				incomingMethodDispatcher = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
+				incomingMethodHandler = func(context_ context.Context, request interface{}) (OutgoingMessage, error) {
 					if i == n {
 						poolOfIncomingMethodInterceptors.Put(incomingMethodInterceptors)
 						return methodRecord.Handler(serviceHandler, context_, request)
 					} else {
 						incomingMethodInterceptor := incomingMethodInterceptors[i]
 						i++
-						return incomingMethodInterceptor(context_, request, incomingMethodDispatcher)
+						return incomingMethodInterceptor(context_, request, incomingMethodHandler)
 					}
 				}
 
-				response, e = incomingMethodDispatcher(bindContextVars(context_, &contextVars_), request)
+				response, e = incomingMethodHandler(bindContextVars(context_, &contextVars_), request)
 			}
 
 			errorCode2, errorDesc2 := parseError(e, logger_, &contextVars_, request)
@@ -1404,7 +1404,7 @@ func parseError(e error, logger *logger.Logger, contextVars_ *ContextVars, reque
 	if e == nil {
 		return 0, ""
 	} else {
-		if e2, ok := e.(Error); ok && e2.IsMade() {
+		if e2, ok := e.(*Error); ok && e2.IsMade() {
 			return e2.code, e2.GetDesc()
 		} else {
 			logger.Errorf(
