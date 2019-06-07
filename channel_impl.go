@@ -25,6 +25,12 @@ import (
 )
 
 const (
+	FIFOOff FIFOMode = iota
+	FIFOHalf
+	FIFOFull
+)
+
+const (
 	ChannelNo ChannelState = iota
 	ChannelNotConnected
 	ChannelConnecting
@@ -40,7 +46,7 @@ type ChannelPolicy struct {
 	Timeout            time.Duration
 	IncomingWindowSize int32
 	OutgoingWindowSize int32
-	ForcedFIFOMode     bool
+	FIFOMode           FIFOMode
 	Transport          *TransportPolicy
 
 	validateOnce               sync.Once
@@ -134,6 +140,21 @@ func (self *ChannelPolicy) Validate() *ChannelPolicy {
 	})
 
 	return self
+}
+
+type FIFOMode uint8
+
+func (self FIFOMode) GoString() string {
+	switch self {
+	case FIFOOff:
+		return "<FIFOOff>"
+	case FIFOHalf:
+		return "<FIFOHalf>"
+	case FIFOFull:
+		return "<FIFOFull>"
+	default:
+		return fmt.Sprintf("<FIFOMode:%d>", self)
+	}
 }
 
 type IncomingMethodInterceptor func(context.Context, interface{}, IncomingMethodHandler) (OutgoingMessage, error)
@@ -375,7 +396,12 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 	self.transport.close(true)
 	self.transport = *transport_
 	self.setState(ChannelConnected)
-	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", serverAddress, self.id, self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v",
+		serverAddress,
+		self.id,
+		self.timeout/time.Millisecond,
+		self.incomingWindowSize,
+		self.outgoingWindowSize)
 	return nil
 }
 
@@ -482,7 +508,12 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, h
 	self.transport.close(true)
 	self.transport = *transport_
 	self.setState(ChannelAccepted)
-	self.policy.Logger.Infof("channel establishment: clientAddress=%q, id=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v", clientAddress, self.id, self.timeout, self.incomingWindowSize, self.outgoingWindowSize)
+	self.policy.Logger.Infof("channel establishment: clientAddress=%q, id=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v",
+		clientAddress,
+		self.id,
+		self.timeout/time.Millisecond,
+		self.incomingWindowSize,
+		self.outgoingWindowSize)
 	return nil
 }
 
@@ -1190,20 +1221,25 @@ func (self *channelImpl) rejectRequest(
 		self,
 	)
 
-	if self.policy.ForcedFIFOMode {
-		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, "", f); e != nil {
-			self.wgOfPendingResultReturns.Done()
-			return e
-		}
-	} else {
+	switch self.policy.FIFOMode {
+	case FIFOHalf:
 		if contextVars_.ResourceID == "" {
 			go f()
 		} else {
-			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.ResourceID, f); e != nil {
+			resourceKey := makeResourceKey(contextVars_.ServiceName, contextVars_.ResourceID)
+
+			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, resourceKey, f); e != nil {
 				self.wgOfPendingResultReturns.Done()
 				return e
 			}
 		}
+	case FIFOFull:
+		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, "", f); e != nil {
+			self.wgOfPendingResultReturns.Done()
+			return e
+		}
+	default:
+		go f()
 	}
 
 	return nil
@@ -1277,20 +1313,25 @@ func (self *channelImpl) acceptRequest(
 		self,
 	)
 
-	if self.policy.ForcedFIFOMode {
-		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, "", f); e != nil {
-			self.wgOfPendingResultReturns.Done()
-			return e
-		}
-	} else {
+	switch self.policy.FIFOMode {
+	case FIFOHalf:
 		if contextVars_.ResourceID == "" {
 			go f()
 		} else {
-			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.ResourceID, f); e != nil {
+			resourceKey := makeResourceKey(contextVars_.ServiceName, contextVars_.ResourceID)
+
+			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, resourceKey, f); e != nil {
 				self.wgOfPendingResultReturns.Done()
 				return e
 			}
 		}
+	case FIFOFull:
+		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, "", f); e != nil {
+			self.wgOfPendingResultReturns.Done()
+			return e
+		}
+	default:
+		go f()
 	}
 
 	return nil
@@ -1409,6 +1450,10 @@ var poolOfMethodCalls = sync.Pool{New: func() interface{} { return &methodCall{}
 var poolOfResultReturns = sync.Pool{New: func() interface{} { return &resultReturn{} }}
 var poolOfIncomingMethodInterceptors = sync.Pool{New: func() interface{} { return make([]IncomingMethodInterceptor, normalNumberOfMethodInterceptors) }}
 
+func makeResourceKey(serviceName string, resourceID string) string {
+	return serviceName + ":" + resourceID
+}
+
 func parseError(response OutgoingMessage, e error, logger *logger.Logger, contextVars_ *ContextVars, request interface{}) (OutgoingMessage, ErrorCode, string) {
 	if e == nil {
 		return response, 0, ""
@@ -1417,11 +1462,12 @@ func parseError(response OutgoingMessage, e error, logger *logger.Logger, contex
 			return RawMessage(e2.GetData()), e2.code, e2.GetDesc()
 		} else {
 			logger.Errorf(
-				"internal server error: traceID=%q, spanID=%#v, serviceName=%#v, methodName=%#v, request=%q, e=%q",
+				"internal server error: traceID=%q, spanID=%#v, serviceName=%#v, methodName=%#v, resourceID=%#v, request=%q, e=%q",
 				contextVars_.TraceID,
 				contextVars_.SpanID,
 				contextVars_.ServiceName,
 				contextVars_.MethodName,
+				contextVars_.ResourceID,
 				request,
 				e,
 			)
