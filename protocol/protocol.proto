@@ -27,7 +27,7 @@ message RequestHeader {
     int32 sequence_number = 1;
     string service_name = 2;
     string method_name = 3;
-    string fifo_key = 4;
+    string resource_id = 4;
     map<string, bytes> extra_data = 5;
     bytes trace_id = 6;
     int32 span_id = 7;

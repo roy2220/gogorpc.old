@@ -26,7 +26,7 @@ type MethodCaller interface {
 		serviceName string,
 		methodName string,
 		methodIndex int32,
-		fifoKey string,
+		resourceID string,
 		extraData map[string][]byte,
 		request OutgoingMessage,
 		responseType reflect.Type,
@@ -35,7 +35,7 @@ type MethodCaller interface {
 		serviceName string,
 		methodName string,
 		methodIndex int32,
-		fifoKey string,
+		resourceID string,
 		extraData map[string][]byte,
 		request OutgoingMessage,
 		responseType reflect.Type,
@@ -76,13 +76,13 @@ func (self *ClientChannel) CallMethod(
 	serviceName string,
 	methodName string,
 	methodIndex int32,
-	fifoKey string,
+	resourceID string,
 	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) (interface{}, error) {
-	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, fifoKey, extraData, true, context_)
+	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, true, context_)
 
 	if e != nil {
 		return nil, e
@@ -97,13 +97,13 @@ func (self *ClientChannel) CallMethodWithoutReturn(
 	serviceName string,
 	methodName string,
 	methodIndex int32,
-	fifoKey string,
+	resourceID string,
 	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) error {
-	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, fifoKey, extraData, false, nil)
+	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, false, nil)
 
 	if e != nil {
 		return e
@@ -214,13 +214,13 @@ func (self *ServerChannel) CallMethod(
 	serviceName string,
 	methodName string,
 	methodIndex int32,
-	fifoKey string,
+	resourceID string,
 	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) (interface{}, error) {
-	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, fifoKey, extraData, true, context_)
+	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, true, context_)
 
 	if e != nil {
 		return nil, e
@@ -235,13 +235,13 @@ func (self *ServerChannel) CallMethodWithoutReturn(
 	serviceName string,
 	methodName string,
 	methodIndex int32,
-	fifoKey string,
+	resourceID string,
 	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) error {
-	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, fifoKey, extraData, false, nil)
+	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, false, nil)
 
 	if e != nil {
 		return e
@@ -304,7 +304,7 @@ type ContextVars struct {
 	ServiceName  string
 	MethodName   string
 	MethodIndex  int32
-	FIFOKey      string
+	ResourceID   string
 	ExtraData    map[string][]byte
 	TraceID      uuid.UUID
 	SpanParentID int32
@@ -496,7 +496,7 @@ func makeContextVars(
 	serviceName string,
 	methodName string,
 	methodIndex int32,
-	fifoKey string,
+	resourceID string,
 	extraData map[string][]byte,
 	tryInheritSpan bool,
 	context_ context.Context,
@@ -506,7 +506,7 @@ func makeContextVars(
 		ServiceName: serviceName,
 		MethodName:  methodName,
 		MethodIndex: methodIndex,
-		FIFOKey:     fifoKey,
+		ResourceID:  resourceID,
 		ExtraData:   extraData,
 	}
 

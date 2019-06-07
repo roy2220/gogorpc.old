@@ -354,7 +354,7 @@ func (self methodCallerProxy) CallMethod(
 	serviceName string,
 	methodName string,
 	methodIndex int32,
-	fifoKey string,
+	resourceID string,
 	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
@@ -373,7 +373,7 @@ func (self methodCallerProxy) CallMethod(
 			return nil, e
 		}
 
-		response, e := methodCaller.CallMethod(context_, serviceName, methodName, methodIndex, fifoKey, extraData, request, responseType, autoRetryMethodCall)
+		response, e := methodCaller.CallMethod(context_, serviceName, methodName, methodIndex, resourceID, extraData, request, responseType, autoRetryMethodCall)
 
 		if e != nil {
 			if e2, ok := e.(*Error); ok && e2.code == ErrorChannelTimedOut {
@@ -391,7 +391,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(
 	serviceName string,
 	methodName string,
 	methodIndex int32,
-	fifoKey string,
+	resourceID string,
 	extraData map[string][]byte,
 	request OutgoingMessage,
 	responseType reflect.Type,
@@ -410,7 +410,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(
 			return e
 		}
 
-		e = methodCaller.CallMethodWithoutReturn(context_, serviceName, methodName, methodIndex, fifoKey, extraData, request, responseType, autoRetryMethodCall)
+		e = methodCaller.CallMethodWithoutReturn(context_, serviceName, methodName, methodIndex, resourceID, extraData, request, responseType, autoRetryMethodCall)
 
 		if e != nil {
 			if e2, ok := e.(*Error); ok && e2.code == ErrorChannelTimedOut {

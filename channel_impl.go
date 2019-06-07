@@ -523,7 +523,7 @@ func (self *channelImpl) callMethod(
 	methodCall_ := poolOfMethodCalls.Get().(*methodCall)
 	methodCall_.serviceName = contextVars_.ServiceName
 	methodCall_.methodName = contextVars_.MethodName
-	methodCall_.fifoKey = contextVars_.FIFOKey
+	methodCall_.resourceID = contextVars_.ResourceID
 	methodCall_.extraData = contextVars_.ExtraData
 	methodCall_.traceID = contextVars_.TraceID
 	methodCall_.spanID = contextVars_.SpanID
@@ -803,7 +803,7 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 					if !methodCall_.autoRetry {
 						methodCall_.serviceName = ""
 						methodCall_.methodName = ""
-						methodCall_.fifoKey = ""
+						methodCall_.resourceID = ""
 						methodCall_.extraData = nil
 						methodCall_.request = nil
 					}
@@ -887,7 +887,7 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 					SequenceNumber: methodCall_.sequenceNumber,
 					ServiceName:    methodCall_.serviceName,
 					MethodName:     methodCall_.methodName,
-					FifoKey:        methodCall_.fifoKey,
+					ResourceId:     methodCall_.resourceID,
 					ExtraData:      methodCall_.extraData,
 					TraceId:        methodCall_.traceID[:],
 					SpanId:         methodCall_.spanID,
@@ -1079,7 +1079,7 @@ func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader 
 		ServiceName:  requestHeader.ServiceName,
 		MethodName:   requestHeader.MethodName,
 		MethodIndex:  -1,
-		FIFOKey:      requestHeader.FifoKey,
+		ResourceID:   requestHeader.ResourceId,
 		ExtraData:    requestHeader.ExtraData,
 		TraceID:      uuid.UUIDFromBytes(requestHeader.TraceId),
 		SpanParentID: requestHeader.SpanId,
@@ -1196,10 +1196,10 @@ func (self *channelImpl) rejectRequest(
 			return e
 		}
 	} else {
-		if contextVars_.FIFOKey == "" {
+		if contextVars_.ResourceID == "" {
 			go f()
 		} else {
-			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.FIFOKey, f); e != nil {
+			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.ResourceID, f); e != nil {
 				self.wgOfPendingResultReturns.Done()
 				return e
 			}
@@ -1283,10 +1283,10 @@ func (self *channelImpl) acceptRequest(
 			return e
 		}
 	} else {
-		if contextVars_.FIFOKey == "" {
+		if contextVars_.ResourceID == "" {
 			go f()
 		} else {
-			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.FIFOKey, f); e != nil {
+			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, contextVars_.ResourceID, f); e != nil {
 				self.wgOfPendingResultReturns.Done()
 				return e
 			}
@@ -1356,7 +1356,7 @@ type methodCall struct {
 	sequenceNumber int32
 	serviceName    string
 	methodName     string
-	fifoKey        string
+	resourceID     string
 	extraData      map[string][]byte
 	traceID        uuid.UUID
 	spanID         int32

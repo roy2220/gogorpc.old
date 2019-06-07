@@ -13,14 +13,14 @@ import (
 )
 
 type AsyncTaskExecutor struct {
-	fifoKey2DequeOfAsyncTaskItems lazy_map.LazyMap
+	key2DequeOfAsyncTaskItems lazy_map.LazyMap
 }
 
-func (self *AsyncTaskExecutor) ExecuteAsyncTask(context_ context.Context, fifoKey string, asyncTask func()) error {
+func (self *AsyncTaskExecutor) ExecuteAsyncTask(context_ context.Context, key string, asyncTask func()) error {
 	retryDelay := time.Duration(0)
 
 	for {
-		value, valueClearer, _ := self.fifoKey2DequeOfAsyncTaskItems.GetOrSetValue(fifoKey, func() (interface{}, error) {
+		value, valueClearer, _ := self.key2DequeOfAsyncTaskItems.GetOrSetValue(key, func() (interface{}, error) {
 			dequeOfAsyncTaskItems := (&deque.Deque{}).Initialize(math.MaxInt32)
 			return dequeOfAsyncTaskItems, nil
 		})
