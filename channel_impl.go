@@ -522,19 +522,19 @@ func (self *channelImpl) dispatch(context_ context.Context, cancel context.Cance
 		panic(&invalidChannelStateError{fmt.Sprintf("state=%#v", state)})
 	}
 
-	errors_ := make(chan error, 2)
+	error_ := make(chan error, 1)
 
 	go func() {
-		errors_ <- self.sendMessages(context_, cancel)
+		error_ <- self.sendMessages(context_, cancel)
 	}()
 
-	go func() {
-		errors_ <- self.receiveMessages(context_)
-	}()
-
-	e := <-errors_
+	e := self.receiveMessages(context_)
 	cancel()
-	<-errors_
+
+	if e2 := <-error_; e2 != context_.Err() {
+		e = e2
+	}
+
 	return e
 }
 
@@ -693,8 +693,8 @@ func (self *channelImpl) setState(newState ChannelState) {
 			getListNode := list_.GetNodesSafely()
 
 			for listNode := getListNode(); listNode != nil; listNode = getListNode() {
-				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
 				listNode.Reset()
+				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
 				poolOfResultReturns.Put(resultReturn_)
 			}
 		} else {
@@ -720,9 +720,9 @@ func (self *channelImpl) setState(newState ChannelState) {
 				getListNode := list_.GetNodesSafely()
 
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
+					listNode.Reset()
 					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
 					methodCall_.callback(nil, errorCode2, "", nil)
-					listNode.Reset()
 					poolOfMethodCalls.Put(methodCall_)
 				}
 			}
@@ -748,8 +748,8 @@ func (self *channelImpl) setState(newState ChannelState) {
 				getListNode := list_.GetNodesSafely()
 
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
-					resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
 					listNode.Reset()
+					resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
 					poolOfResultReturns.Put(resultReturn_)
 				}
 			}
@@ -828,8 +828,8 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 				getListNode := taskOfMethodCalls.list.GetNodesSafely()
 
 				for listNode := getListNode(); listNode != nil; listNode = getListNode() {
-					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
 					listNode.Reset()
+					methodCall_ := (*methodCall)(listNode.GetContainer(unsafe.Offsetof(methodCall{}.listNode)))
 
 					if !methodCall_.autoRetry {
 						methodCall_.serviceName = ""
@@ -850,8 +850,8 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 			getListNode := taskOfResultReturns.list.GetNodesSafely()
 
 			for listNode := getListNode(); listNode != nil; listNode = getListNode() {
-				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
 				listNode.Reset()
+				resultReturn_ := (*resultReturn)(listNode.GetContainer(unsafe.Offsetof(resultReturn{}.listNode)))
 				poolOfResultReturns.Put(resultReturn_)
 			}
 
@@ -887,22 +887,10 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 			default:
 			}
 		case <-time.After(self.getMinHeartbeatInterval()):
-			heartbeat := protocol.Heartbeat{}
-			heartbeatSize := heartbeat.Size()
-
-			if e := self.transport.write(func(byteStream *byte_stream.ByteStream) error {
-				return byteStream.WriteDirectly(3+heartbeatSize, func(buffer []byte) error {
-					buffer[0] = uint8(protocol.MESSAGE_HEARTBEAT)
-					buffer[1] = uint8(heartbeatSize >> 8)
-					buffer[2] = uint8(heartbeatSize)
-					_, e := heartbeat.MarshalTo(buffer[3:])
-					return e
-				})
-			}); e != nil {
-				cancel()
-				<-errors_
-				<-errors_
-				return e
+			select {
+			case taskOfMethodCalls = <-tasksOfMethodCalls:
+			case taskOfResultReturns = <-tasksOfResultReturns:
+			default:
 			}
 		}
 
@@ -945,10 +933,10 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 				}); e != nil {
 					if e == PacketPayloadTooLargeError {
 						listNode.Remove()
+						listNode.Reset()
 						taskOfMethodCalls.numberOfListNodes--
 						methodCall_.callback(nil, ErrorPacketPayloadTooLarge, "", nil)
 						completedMethodCallCount++
-						listNode.Reset()
 						poolOfMethodCalls.Put(methodCall_)
 						continue
 					}
@@ -999,49 +987,41 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 			}
 		}
 
-		cleanup(true)
+		if taskOfMethodCalls.list == nil && taskOfResultReturns.list == nil {
+			heartbeat := protocol.Heartbeat{}
+			heartbeatSize := heartbeat.Size()
 
-		for {
-			if e := self.transport.flush(context_, self.getMinHeartbeatInterval()); e != nil {
-				if e2, ok := e.(*net.OpError); ok && e2.Timeout() {
-					continue
-				}
-
-				cancel()
-				<-errors_
-				<-errors_
+			if e := self.transport.write(func(byteStream *byte_stream.ByteStream) error {
+				return byteStream.WriteDirectly(3+heartbeatSize, func(buffer []byte) error {
+					buffer[0] = uint8(protocol.MESSAGE_HEARTBEAT)
+					buffer[1] = uint8(heartbeatSize >> 8)
+					buffer[2] = uint8(heartbeatSize)
+					_, e := heartbeat.MarshalTo(buffer[3:])
+					return e
+				})
+			}); e != nil {
+				cleanup(false)
 				return e
 			}
+		}
 
-			break
+		cleanup(true)
+
+		if e := self.transport.flush(context_, 0); e != nil {
+			cancel()
+			<-errors_
+			<-errors_
+			return e
 		}
 	}
 }
 
 func (self *channelImpl) receiveMessages(context_ context.Context) error {
 	for {
-		timeoutCount := 0
-		var data [][]byte
+		data, e := self.transport.peekInBatch(context_, 2*self.getMinHeartbeatInterval())
 
-		for {
-			var e error
-			data, e = self.transport.peekInBatch(context_, self.getMinHeartbeatInterval())
-
-			if e != nil {
-				if e2, ok := e.(*net.OpError); ok && e2.Timeout() {
-					timeoutCount++
-
-					if timeoutCount == 2 {
-						return e
-					}
-
-					continue
-				}
-
-				return e
-			}
-
-			break
+		if e != nil {
+			return e
 		}
 
 		oldPendingResultReturnCount := atomic.LoadInt32(&self.pendingResultReturnCount)

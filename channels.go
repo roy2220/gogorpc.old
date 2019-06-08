@@ -82,12 +82,7 @@ func (self *ClientChannel) CallMethod(
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) (interface{}, error) {
-	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, true, context_)
-
-	if e != nil {
-		return nil, e
-	}
-
+	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, true, context_)
 	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
 	return self.callMethod(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
 }
@@ -103,12 +98,7 @@ func (self *ClientChannel) CallMethodWithoutReturn(
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) error {
-	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, false, nil)
-
-	if e != nil {
-		return e
-	}
-
+	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, false, nil)
 	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
 	return self.callMethodWithoutReturn(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
 }
@@ -120,7 +110,6 @@ func (self *ClientChannel) Run(context_ context.Context) error {
 
 	context2, cancel2 := context.WithCancel(context_)
 	self.stop = cancel2
-
 	var e error
 
 	for {
@@ -147,7 +136,7 @@ func (self *ClientChannel) Run(context_ context.Context) error {
 		}
 
 		self.serverAddresses.Reset(nil, 0, self.impl.getTimeout()/3)
-		e = self.impl.dispatch(context2, cancel2)
+		e = self.impl.dispatch(context.WithCancel(context2))
 
 		if e != nil {
 			if e != io.EOF {
@@ -220,12 +209,7 @@ func (self *ServerChannel) CallMethod(
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) (interface{}, error) {
-	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, true, context_)
-
-	if e != nil {
-		return nil, e
-	}
-
+	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, true, context_)
 	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
 	return self.callMethod(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
 }
@@ -241,12 +225,7 @@ func (self *ServerChannel) CallMethodWithoutReturn(
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) error {
-	contextVars_, e := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, false, nil)
-
-	if e != nil {
-		return e
-	}
-
+	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, false, nil)
 	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
 	return self.callMethodWithoutReturn(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
 }
@@ -500,7 +479,7 @@ func makeContextVars(
 	extraData map[string][]byte,
 	tryInheritSpan bool,
 	context_ context.Context,
-) (*ContextVars, error) {
+) *ContextVars {
 	contextVars_ := ContextVars{
 		Channel:     sub,
 		ServiceName: serviceName,
@@ -526,20 +505,14 @@ func makeContextVars(
 		*parentContextVars.nextSpanID++
 		contextVars_.nextSpanID = parentContextVars.nextSpanID
 	} else {
-		traceID, e := uuid.GenerateUUID4()
-
-		if e != nil {
-			return nil, e
-		}
-
-		contextVars_.TraceID = traceID
+		contextVars_.TraceID = uuid.GenerateUUID4Fast()
 		contextVars_.SpanParentID = 0
 		contextVars_.SpanID = 1
 		contextVars_.bufferOfNextSpanID = 2
 		contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
 	}
 
-	return &contextVars_, nil
+	return &contextVars_
 }
 
 func makeOutgoingMethodInterceptors(policy *ChannelPolicy, contextVars_ *ContextVars) []OutgoingMethodInterceptor {

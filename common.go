@@ -47,18 +47,23 @@ func (self *markingList) getNumberOfMarkedItems() int {
 	return self.markedItemCount
 }
 
-func makeDeadline(context_ context.Context, timeout time.Duration) (time.Time, error) {
-	if e := context_.Err(); e != nil {
-		return time.Time{}, e
-	}
-
+func makeDeadline(context_ context.Context, timeout time.Duration) time.Time {
 	deadline1, ok := context_.Deadline()
-	deadline2 := time.Now().Add(timeout)
 
-	if ok && deadline1.Before(deadline2) {
-		return deadline1, nil
+	if timeout < 1 {
+		if ok {
+			return deadline1
+		} else {
+			return time.Time{}
+		}
 	} else {
-		return deadline2, nil
+		deadline2 := time.Now().Add(timeout)
+
+		if ok && deadline1.Before(deadline2) {
+			return deadline1
+		} else {
+			return deadline2
+		}
 	}
 }
 

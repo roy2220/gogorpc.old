@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/let-z-go/toolkit/byte_stream"
-	"golang.org/x/net/websocket"
 )
 
 type TransportPolicy struct {
@@ -50,19 +49,19 @@ const packetHeaderSize = 4
 
 type transport struct {
 	policy           *TransportPolicy
-	connection       net.Conn
+	connection       connection
 	inputByteStream  byte_stream.ByteStream
 	outputByteStream byte_stream.ByteStream
 	openness         int
 }
 
-func (self *transport) initialize(policy *TransportPolicy, connection net.Conn) *transport {
+func (self *transport) initialize(policy *TransportPolicy, rawConnection net.Conn) *transport {
 	if self.openness != 0 {
 		panic(errors.New("pbrpc: transport already initialized"))
 	}
 
 	self.policy = policy.Validate()
-	self.connection = connection
+	self.connection.establish(rawConnection)
 	self.inputByteStream.ReserveBuffer(int(policy.InitialReadBufferSize))
 	self.openness = 1
 	return self
@@ -73,15 +72,8 @@ func (self *transport) close(force bool) error {
 		return TransportClosedError
 	}
 
-	if force {
-		if connection, ok := self.connection.(*net.TCPConn); ok {
-			connection.SetLinger(0)
-		}
-	}
-
-	e := self.connection.Close()
+	e := self.connection.close(force)
 	self.policy = nil
-	self.connection = nil
 	self.inputByteStream.GC()
 	self.outputByteStream.GC()
 	self.openness = -1
@@ -181,48 +173,10 @@ func (self *transport) flush(context_ context.Context, timeout time.Duration) er
 		return TransportClosedError
 	}
 
-	deadline, e := makeDeadline(context_, timeout)
-
-	if e != nil {
-		return e
-	}
-
-	if e := self.connection.SetWriteDeadline(deadline); e != nil {
-		return e
-	}
-
+	deadline := makeDeadline(context_, timeout)
 	data := self.outputByteStream.GetData()
-	var nn int
-
-	switch connection := self.connection.(type) {
-	case *websocket.Conn:
-		i := 0
-		nn = 0
-
-		for {
-			j := i + maxWebSocketFramePayloadSize
-			var n int
-
-			if j >= len(data) {
-				n, e = connection.Write(data[i:])
-				nn += n
-				break
-			}
-
-			n, e = connection.Write(data[i:j])
-			nn += n
-
-			if e != nil {
-				break
-			}
-
-			i = j
-		}
-	default:
-		nn, e = self.connection.Write(data)
-	}
-
-	self.outputByteStream.Skip(nn)
+	n, e := self.connection.write(context_, deadline, data)
+	self.outputByteStream.Skip(n)
 	return e
 }
 
@@ -235,23 +189,15 @@ func (self *transport) doPeek(context_ context.Context, timeout time.Duration) (
 		return nil, TransportClosedError
 	}
 
-	deadlineIsSet := false
+	deadlineIsMade := false
+	var deadline time.Time
 
 	if self.inputByteStream.GetDataSize() < packetHeaderSize {
-		deadline, e := makeDeadline(context_, timeout)
-
-		if e != nil {
-			return nil, e
-		}
-
-		if e := self.connection.SetReadDeadline(deadline); e != nil {
-			return nil, e
-		}
-
-		deadlineIsSet = true
+		deadline = makeDeadline(context_, timeout)
+		deadlineIsMade = true
 
 		for {
-			dataSize, e := self.connection.Read(self.inputByteStream.GetBuffer())
+			dataSize, e := self.connection.read(context_, deadline, self.inputByteStream.GetBuffer())
 
 			if dataSize == 0 {
 				return nil, e
@@ -279,22 +225,14 @@ func (self *transport) doPeek(context_ context.Context, timeout time.Duration) (
 	packetSize := packetHeaderSize + packetPayloadSize
 
 	if bufferSize := packetSize - self.inputByteStream.GetDataSize(); bufferSize >= 1 {
-		if !deadlineIsSet {
-			deadline, e := makeDeadline(context_, timeout)
-
-			if e != nil {
-				return nil, e
-			}
-
-			if e := self.connection.SetReadDeadline(deadline); e != nil {
-				return nil, e
-			}
+		if !deadlineIsMade {
+			deadline = makeDeadline(context_, timeout)
 		}
 
 		self.inputByteStream.ReserveBuffer(bufferSize)
 
 		for {
-			dataSize, e := self.connection.Read(self.inputByteStream.GetBuffer())
+			dataSize, e := self.connection.read(context_, deadline, self.inputByteStream.GetBuffer())
 
 			if dataSize == 0 {
 				return nil, e
