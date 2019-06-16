@@ -13,14 +13,14 @@ type ServiceHandler interface {
 type MethodTable []MethodRecord
 
 func (self MethodTable) Search(name string) (*MethodRecord, bool) {
-	if len(self) >= 1 {
+	if n := len(self); n >= 1 {
 		i := 0
-		j := len(self) - 1
+		j := n - 1
 
 		for i < j {
 			k := (i + j) / 2
 
-			if (&self[k]).Name < name {
+			if self[k].Name < name {
 				i = k + 1
 			} else {
 				j = k

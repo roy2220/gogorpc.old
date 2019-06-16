@@ -18,9 +18,33 @@ type serviceProviderList struct {
 	version int64
 }
 
+func (self *serviceProviderList) findServer(serverID int32) (string, bool) {
+	if n := len(self.items); n >= 1 {
+		i := 0
+		j := n - 1
+
+		for i < j {
+			k := (i + j) / 2
+
+			if self.items[k].serverID < serverID {
+				i = k + 1
+			} else {
+				j = k
+			}
+		}
+
+		if self.items[i].serverID == serverID {
+			return self.items[i].serverAddress, true
+		}
+	}
+
+	return "", false
+}
+
 type serviceProvider struct {
 	serverAddress string
 	weight        int32
+	serverID      int32
 }
 
 type randomizedState struct {

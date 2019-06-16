@@ -49,19 +49,67 @@ type ChannelPolicy struct {
 	FIFOMode           FIFOMode
 	Transport          *TransportPolicy
 
-	validateOnce               sync.Once
-	serviceHandlers            map[string]ServiceHandler
+	validateOnce sync.Once
+
+	serviceHandlers []struct {
+		key   string
+		value ServiceHandler
+	}
+
 	incomingMethodInterceptors map[string][]IncomingMethodInterceptor
 	outgoingMethodInterceptors map[string][]OutgoingMethodInterceptor
 }
 
 func (self *ChannelPolicy) RegisterServiceHandler(serviceHandler ServiceHandler) *ChannelPolicy {
-	if self.serviceHandlers == nil {
-		self.serviceHandlers = map[string]ServiceHandler{}
+	n := len(self.serviceHandlers)
+	serviceName := serviceHandler.X_GetName()
+
+	for i := 0; i < n; i++ {
+		if self.serviceHandlers[i].key >= serviceName {
+			if self.serviceHandlers[i].key > serviceName {
+				self.serviceHandlers = append(self.serviceHandlers, self.serviceHandlers[n-1])
+
+				for j := n - 1; j > i; j-- {
+					self.serviceHandlers[j] = self.serviceHandlers[j-1]
+				}
+
+				self.serviceHandlers[i].key = serviceName
+			}
+
+			self.serviceHandlers[i].value = serviceHandler
+			return self
+		}
 	}
 
-	self.serviceHandlers[serviceHandler.X_GetName()] = serviceHandler
+	self.serviceHandlers = append(self.serviceHandlers, struct {
+		key   string
+		value ServiceHandler
+	}{serviceName, serviceHandler})
+
 	return self
+}
+
+func (self *ChannelPolicy) FindServiceHandler(serviceName string) (ServiceHandler, bool) {
+	if n := len(self.serviceHandlers); n >= 1 {
+		i := 0
+		j := n - 1
+
+		for i < j {
+			k := (i + j) / 2
+
+			if self.serviceHandlers[k].key < serviceName {
+				i = k + 1
+			} else {
+				j = k
+			}
+		}
+
+		if self.serviceHandlers[i].key == serviceName {
+			return self.serviceHandlers[i].value, true
+		}
+	}
+
+	return nil, false
 }
 
 func (self *ChannelPolicy) AddIncomingMethodInterceptor(serviceName string, methodIndex int32, incomingMethodInterceptor IncomingMethodInterceptor) *ChannelPolicy {
@@ -211,8 +259,8 @@ var HandshakeRejectedError = errors.New("pbrpc: handshake rejected")
 var IllFormedMessageError = errors.New("pbrpc: ill-formed message")
 
 const defaultChannelTimeout = 6 * time.Second
-const minChannelTimeout = 4 * time.Second
-const maxChannelTimeout = 40 * time.Second
+const minChannelTimeout = 3 * time.Second
+const maxChannelTimeout = 60 * time.Second
 const defaultChannelWindowSize = 1 << 17
 const minChannelWindowSize = 1
 const maxChannelWindowSize = 1 << 20
@@ -234,7 +282,7 @@ type channelImpl struct {
 	pendingResultReturnCount int32
 	wgOfPendingResultReturns sync.WaitGroup
 	dequeOfResultReturns     *deque.Deque
-	asyncTaskExecutor        AsyncTaskExecutor
+	asyncTaskExecutor        asyncTaskExecutor
 }
 
 func (self *channelImpl) initialize(holder Channel, policy *ChannelPolicy, isClientSide bool) *channelImpl {
@@ -312,7 +360,7 @@ func (self *channelImpl) removeListener(listener *ChannelListener) error {
 }
 
 func (self *channelImpl) connect(connector Connector, context_ context.Context, serverAddress string, handshaker ClientHandshaker) error {
-	self.policy.Logger.Infof("channel connection: id=%q, serverAddress=%#v", self.id, serverAddress)
+	self.policy.Logger.Infof("channel connection: channelID=%q, serverAddress=%#v", self.id, serverAddress)
 	self.setState(ChannelConnecting)
 	connection, e := connector.Connect(context_, serverAddress)
 
@@ -396,7 +444,7 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 	self.transport.close(true)
 	self.transport = *transport_
 	self.setState(ChannelConnected)
-	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, id=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v",
+	self.policy.Logger.Infof("channel establishment: serverAddress=%#v, channelID=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v",
 		serverAddress,
 		self.id,
 		self.timeout/time.Millisecond,
@@ -405,9 +453,9 @@ func (self *channelImpl) connect(connector Connector, context_ context.Context, 
 	return nil
 }
 
-func (self *channelImpl) accept(context_ context.Context, connection net.Conn, handshaker ServerHandshaker) error {
+func (self *channelImpl) accept(context_ context.Context, serverID int32, connection net.Conn, handshaker ServerHandshaker) error {
 	clientAddress := connection.RemoteAddr()
-	self.policy.Logger.Infof("channel acceptance: clientAddress=%q", clientAddress)
+	self.policy.Logger.Infof("channel acceptance: serverID=%#v, clientAddress=%q", serverID, clientAddress)
 	self.setState(ChannelAccepting)
 	transport_ := (&transport{}).initialize(self.policy.Transport, connection)
 	data, e := transport_.peek(context_, minChannelTimeout)
@@ -508,7 +556,8 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, h
 	self.transport.close(true)
 	self.transport = *transport_
 	self.setState(ChannelAccepted)
-	self.policy.Logger.Infof("channel establishment: clientAddress=%q, id=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v",
+	self.policy.Logger.Infof("channel establishment: serverID=%#v, clientAddress=%q, channelID=%q, timeout=%#v, incomingWindowSize=%#v, outgoingWindowSize=%#v",
+		serverID,
 		clientAddress,
 		self.id,
 		self.timeout/time.Millisecond,
@@ -517,7 +566,7 @@ func (self *channelImpl) accept(context_ context.Context, connection net.Conn, h
 	return nil
 }
 
-func (self *channelImpl) dispatch(context_ context.Context, cancel context.CancelFunc) error {
+func (self *channelImpl) dispatch(context_ context.Context, cancel context.CancelFunc, serverID int32) error {
 	if state := self.getState(); state != ChannelConnected && state != ChannelAccepted {
 		panic(&invalidChannelStateError{fmt.Sprintf("state=%#v", state)})
 	}
@@ -528,7 +577,7 @@ func (self *channelImpl) dispatch(context_ context.Context, cancel context.Cance
 		error_ <- self.sendMessages(context_, cancel)
 	}()
 
-	e := self.receiveMessages(context_)
+	e := self.receiveMessages(context_, serverID)
 	cancel()
 
 	if e2 := <-error_; e2 != context_.Err() {
@@ -640,7 +689,7 @@ func (self *channelImpl) setState(newState ChannelState) {
 	}
 
 	atomic.StoreInt32(&self.state, int32(newState))
-	self.policy.Logger.Infof("channel state change: id=%q, oldState=%#v, newState=%#v", self.id, oldState, newState)
+	self.policy.Logger.Infof("channel state change: channelID=%q, oldState=%#v, newState=%#v", self.id, oldState, newState)
 	self.lockOfListeners.Lock()
 
 	for listener := range self.listeners {
@@ -1016,7 +1065,7 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 	}
 }
 
-func (self *channelImpl) receiveMessages(context_ context.Context) error {
+func (self *channelImpl) receiveMessages(context_ context.Context, serverID int32) error {
 	for {
 		data, e := self.transport.peekInBatch(context_, 2*self.getMinHeartbeatInterval())
 
@@ -1051,7 +1100,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					return IllFormedMessageError
 				}
 
-				if e := self.receiveRequest(context_, &requestHeader, messagePayload, &newPendingResultReturnCount); e != nil {
+				if e := self.receiveRequest(context_, serverID, &requestHeader, messagePayload, &newPendingResultReturnCount); e != nil {
 					return e
 				}
 			case protocol.MESSAGE_RESPONSE:
@@ -1061,7 +1110,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 					return IllFormedMessageError
 				}
 
-				if e := self.receiveResponse(context_, &responseHeader, messagePayload, &completedMethodCallCount); e != nil {
+				if e := self.receiveResponse(context_, serverID, &responseHeader, messagePayload, &completedMethodCallCount); e != nil {
 					return e
 				}
 			case protocol.MESSAGE_HEARTBEAT:
@@ -1084,7 +1133,7 @@ func (self *channelImpl) receiveMessages(context_ context.Context) error {
 	}
 }
 
-func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader *protocol.RequestHeader, requestPayload []byte, pendingResultReturnCount *int32) error {
+func (self *channelImpl) receiveRequest(context_ context.Context, serverID int32, requestHeader *protocol.RequestHeader, requestPayload []byte, pendingResultReturnCount *int32) error {
 	contextVars_ := ContextVars{
 		Channel:      self.holder,
 		ServiceName:  requestHeader.ServiceName,
@@ -1095,6 +1144,7 @@ func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader 
 		TraceID:      uuid.UUIDFromBytes(requestHeader.TraceId),
 		SpanParentID: requestHeader.SpanId,
 		SpanID:       requestHeader.SpanId + 1,
+		ServerID:     serverID,
 
 		logger:             &self.policy.Logger,
 		sequenceNumber:     requestHeader.SequenceNumber,
@@ -1111,7 +1161,7 @@ func (self *channelImpl) receiveRequest(context_ context.Context, requestHeader 
 		return self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorTooManyRequests, context_, &contextVars_, requestHeader.SequenceNumber)
 	}
 
-	serviceHandler, ok := self.policy.serviceHandlers[contextVars_.ServiceName]
+	serviceHandler, ok := self.policy.FindServiceHandler(contextVars_.ServiceName)
 
 	if !ok {
 		return self.rejectRequest(requestPayload, incomingMethodInterceptors, ErrorNotFound, context_, &contextVars_, requestHeader.SequenceNumber)
@@ -1208,13 +1258,13 @@ func (self *channelImpl) rejectRequest(
 		} else {
 			resourceKey := makeResourceKey(contextVars_.ServiceName, contextVars_.ResourceID)
 
-			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, resourceKey, f); e != nil {
+			if e := self.asyncTaskExecutor.executeAsyncTask(context_, resourceKey, f); e != nil {
 				self.wgOfPendingResultReturns.Done()
 				return e
 			}
 		}
 	case FIFOFull:
-		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, "", f); e != nil {
+		if e := self.asyncTaskExecutor.executeAsyncTask(context_, "", f); e != nil {
 			self.wgOfPendingResultReturns.Done()
 			return e
 		}
@@ -1300,13 +1350,13 @@ func (self *channelImpl) acceptRequest(
 		} else {
 			resourceKey := makeResourceKey(contextVars_.ServiceName, contextVars_.ResourceID)
 
-			if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, resourceKey, f); e != nil {
+			if e := self.asyncTaskExecutor.executeAsyncTask(context_, resourceKey, f); e != nil {
 				self.wgOfPendingResultReturns.Done()
 				return e
 			}
 		}
 	case FIFOFull:
-		if e := self.asyncTaskExecutor.ExecuteAsyncTask(context_, "", f); e != nil {
+		if e := self.asyncTaskExecutor.executeAsyncTask(context_, "", f); e != nil {
 			self.wgOfPendingResultReturns.Done()
 			return e
 		}
@@ -1317,11 +1367,11 @@ func (self *channelImpl) acceptRequest(
 	return nil
 }
 
-func (self *channelImpl) receiveResponse(context_ context.Context, responseHeader *protocol.ResponseHeader, responsePayload []byte, completedMethodCallCount *int32) error {
+func (self *channelImpl) receiveResponse(context_ context.Context, serverID int32, responseHeader *protocol.ResponseHeader, responsePayload []byte, completedMethodCallCount *int32) error {
 	value, ok := self.pendingMethodCalls.Load(responseHeader.SequenceNumber)
 
 	if !ok {
-		self.policy.Logger.Warningf("ignored response: id=%q, responseHeader=%q", self.id, responseHeader)
+		self.policy.Logger.Warningf("ignored response: serverID=%#v, channelID=%q, responseHeader=%q", serverID, self.id, responseHeader)
 		return nil
 	}
 
@@ -1442,7 +1492,8 @@ func parseError(response OutgoingMessage, e error, logger *logger.Logger, contex
 			return RawMessage(e2.GetData()), e2.code, e2.GetDesc()
 		} else {
 			logger.Errorf(
-				"internal server error: traceID=%q, spanID=%#v, serviceName=%#v, methodName=%#v, resourceID=%#v, request=%q, e=%q",
+				"internal server error: serverID=%#v, traceID=%q, spanID=%#v, serviceName=%#v, methodName=%#v, resourceID=%#v, request=%q, e=%q",
+				contextVars_.ServerID,
 				contextVars_.TraceID,
 				contextVars_.SpanID,
 				contextVars_.ServiceName,

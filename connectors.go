@@ -9,7 +9,7 @@ import (
 )
 
 type Connector interface {
-	Connect(context_ context.Context, serverAddres string) (connection net.Conn, e error)
+	Connect(context_ context.Context, serverAddress string) (connection net.Conn, e error)
 }
 
 type TCPConnector struct{}

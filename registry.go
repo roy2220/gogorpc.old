@@ -2,10 +2,12 @@ package pbrpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,53 +93,6 @@ func (self *Registry) Run(context_ context.Context) error {
 	}
 }
 
-func (self *Registry) AddServiceProviders(context_ context.Context, serviceNames []string, serverAddress string, weight int32) error {
-	self.checkUninitialized()
-	serviceProviderKey := makeServiceProviderKey(serverAddress, weight)
-
-	for i, serviceName := range serviceNames {
-		serviceProvidersPath := self.makeServiceProvidersPath(serviceName)
-
-		if e := utils.CreateP(self.client, context_, serviceProvidersPath); e != nil {
-			return e
-		}
-
-		self.policy.Channel.Logger.Infof("service provider addition: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
-
-		if _, e := self.client.Create(context_, path.Join(serviceProvidersPath, serviceProviderKey), nil, nil, zk.CreateEphemeral, false); e != nil {
-			for j := i - 1; j >= 0; j-- {
-				serviceName := serviceNames[j]
-				serviceProvidersPath := self.makeServiceProvidersPath(serviceName)
-				self.policy.Channel.Logger.Infof("service provider removal: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
-				self.client.Delete(context_, path.Join(serviceProvidersPath, serviceProviderKey), -1, true)
-			}
-
-			return e
-		}
-	}
-
-	return nil
-}
-
-func (self *Registry) RemoveServiceProviders(context_ context.Context, serviceNames []string, serverAddress string, weight int32) error {
-	self.checkUninitialized()
-	serviceProviderKey := makeServiceProviderKey(serverAddress, weight)
-	e := error(nil)
-
-	for _, serviceName := range serviceNames {
-		serviceProvidersPath := self.makeServiceProvidersPath(serviceName)
-		self.policy.Channel.Logger.Infof("service provider removal: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverAddress, weight)
-
-		if e2 := self.client.Delete(context_, path.Join(serviceProvidersPath, serviceProviderKey), -1, true); e2 != nil {
-			if e3, ok := e2.(*zk.Error); !(ok && e3.GetCode() == zk.ErrorNoNode) {
-				e = e2
-			}
-		}
-	}
-
-	return e
-}
-
 func (self *Registry) GetMethodCaller(lbType LBType, lbArgument uintptr) MethodCaller {
 	var loadBalancer_ loadBalancer
 
@@ -183,7 +138,88 @@ func (self *Registry) GetMethodCaller(lbType LBType, lbArgument uintptr) MethodC
 	}}
 }
 
-func (self *Registry) GetMethodCallerWithoutLB(serverAddress string) MethodCaller {
+func (self *Registry) GetMethodCallerOfService(serviceName string, lbType LBType, lbArgument uintptr) MethodCaller {
+	var loadBalancer_ loadBalancer
+
+	switch lbType {
+	case LBRandomized:
+		loadBalancer_ = &self.randomizedLoadBalancer
+	case LBRoundRobin:
+		loadBalancer_ = &self.roundRobinLoadBalancer
+	case LBConsistentHashing:
+		loadBalancer_ = &self.consistentHashingLoadBalancer
+	default:
+		panic(fmt.Errorf("pbrpc: invalid load balancing type: lbType=%#v", lbType))
+	}
+
+	return methodCallerProxy{func(context_ context.Context, _ string, excludedServerList *markingList) (string, MethodCaller, error) {
+		if self.isClosed() {
+			return "", nil, RegistryClosedError
+		}
+
+		serviceProviderList_, e := self.fetchServiceProviderList(context_, serviceName)
+
+		if e != nil {
+			if e2, ok := e.(*zk.Error); ok && e2.GetCode() == zk.ErrorNoNode {
+				e = noServerError
+			}
+
+			return "", nil, e
+		}
+
+		serverAddress, ok := loadBalancer_.selectServer(serviceName, serviceProviderList_, lbArgument, excludedServerList)
+
+		if !ok {
+			return "", nil, noServerError
+		}
+
+		channel, e := self.fetchChannel(serverAddress)
+
+		if e != nil {
+			return "", nil, e
+		}
+
+		return serverAddress, channel, nil
+	}}
+}
+
+func (self *Registry) GetMethodCallerByServerID(serviceName string, serverID int32) MethodCaller {
+	return methodCallerProxy{func(context_ context.Context, _ string, excludedServerList *markingList) (string, MethodCaller, error) {
+		if self.isClosed() {
+			return "", nil, RegistryClosedError
+		}
+
+		serviceProviderList_, e := self.fetchServiceProviderList(context_, serviceName)
+
+		if e != nil {
+			if e2, ok := e.(*zk.Error); ok && e2.GetCode() == zk.ErrorNoNode {
+				e = noServerError
+			}
+
+			return "", nil, e
+		}
+
+		serverAddress, ok := serviceProviderList_.findServer(serverID)
+
+		if !ok {
+			return "", nil, noServerError
+		}
+
+		if excludedServerList.markItem(serverAddress) {
+			return "", nil, noServerError
+		}
+
+		channel, e := self.fetchChannel(serverAddress)
+
+		if e != nil {
+			return "", nil, e
+		}
+
+		return serverAddress, channel, nil
+	}}
+}
+
+func (self *Registry) GetMethodCallerByServerAddress(serverAddress string) MethodCaller {
 	return methodCallerProxy{func(_ context.Context, _ string, excludedServerList *markingList) (string, MethodCaller, error) {
 		if self.isClosed() {
 			return "", nil, RegistryClosedError
@@ -201,6 +237,98 @@ func (self *Registry) GetMethodCallerWithoutLB(serverAddress string) MethodCalle
 
 		return serverAddress, channel, nil
 	}}
+}
+
+func (self *Registry) registerServer(context_ context.Context, serverInfo_ *serverInfo) (int32, error) {
+	self.checkUninitialized()
+	data, e := json.MarshalIndent(serverInfo_, "", "\t")
+
+	if e != nil {
+		return 0, e
+	}
+
+	if e := utils.CreateP(self.client, context_, self.policy.ServersPath); e != nil {
+		return 0, e
+	}
+
+	response, e := self.client.Create(context_, path.Join(self.policy.ServersPath, "s"), data, nil, zk.CreateEphemeralSequential, false)
+
+	if e != nil {
+		return 0, e
+	}
+
+	paths := []string{response.Path}
+
+	cleanup := func() {
+		for i := len(paths) - 1; i >= 0; i-- {
+			self.client.Delete(context_, paths[i], -1, true)
+		}
+	}
+
+	var serverID int32
+
+	if temp, e := strconv.ParseInt(path.Base(response.Path)[1:], 10, 32); e == nil {
+		serverID = int32(temp)
+	} else {
+		cleanup()
+		return 0, e
+	}
+
+	serviceProviderKey := makeServiceProviderKey(serverInfo_.Address, serverInfo_.Weight, serverID)
+
+	for _, serviceName := range serverInfo_.ProvidedServiceNames {
+		serviceProvidersPath := self.makeServiceProvidersPath(serviceName)
+
+		if e := utils.CreateP(self.client, context_, serviceProvidersPath); e != nil {
+			cleanup()
+			return 0, e
+		}
+
+		response, e = self.client.Create(context_, path.Join(serviceProvidersPath, serviceProviderKey), nil, nil, zk.CreateEphemeral, false)
+
+		if e != nil {
+			cleanup()
+			return 0, e
+		}
+
+		paths = append(paths, response.Path)
+		self.policy.Channel.Logger.Infof("service provider addition: serviceName=%#v, serverAddress=%#v, weight=%#v", serviceName, serverInfo_.Address, serverInfo_.Weight)
+	}
+
+	return serverID, nil
+}
+
+func (self *Registry) unregisterServer(context_ context.Context, serverID int32) error {
+	self.checkUninitialized()
+	serverPath := path.Join(self.policy.ServersPath, fmt.Sprintf("s%010d", serverID))
+	response, e := self.client.GetData(context_, serverPath, true)
+
+	if e != nil {
+		return e
+	}
+
+	var serverInfo_ serverInfo
+
+	if e := json.Unmarshal(response.Data, &serverInfo_); e != nil {
+		return e
+	}
+
+	serviceProviderKey := makeServiceProviderKey(serverInfo_.Address, serverInfo_.Weight, serverID)
+
+	for i := len(serverInfo_.ProvidedServiceNames) - 1; i >= 0; i-- {
+		serviceName := serverInfo_.ProvidedServiceNames[i]
+		serviceProvidersPath := self.makeServiceProvidersPath(serviceName)
+
+		if e2 := self.client.Delete(context_, path.Join(serviceProvidersPath, serviceProviderKey), -1, true); e2 != nil {
+			e = e2
+		}
+	}
+
+	if e2 := self.client.Delete(context_, serverPath, -1, true); e2 != nil {
+		e = e2
+	}
+
+	return e
 }
 
 func (self *Registry) checkUninitialized() {
@@ -310,6 +438,7 @@ func (self *Registry) isClosed() bool {
 }
 
 type RegistryPolicy struct {
+	ServersPath                string
 	ServiceProvidersPathFormat string
 	Channel                    *ClientChannelPolicy
 
@@ -318,6 +447,10 @@ type RegistryPolicy struct {
 
 func (self *RegistryPolicy) Validate() *RegistryPolicy {
 	self.validateOnce.Do(func() {
+		if self.ServersPath == "" {
+			self.ServersPath = defaultServersPath
+		}
+
 		if self.ServiceProvidersPathFormat == "" {
 			self.ServiceProvidersPathFormat = defaultServiceProvidersPathFormat
 		}
@@ -343,6 +476,12 @@ func (self LBType) GoString() string {
 	default:
 		return fmt.Sprintf("<LBType:%d>", self)
 	}
+}
+
+type serverInfo struct {
+	Address              string   `json:"address"`
+	Weight               int32    `json:"weight"`
+	ProvidedServiceNames []string `json:"provided_service_names"`
 }
 
 type methodCallerProxy struct {
@@ -423,13 +562,14 @@ func (self methodCallerProxy) CallMethodWithoutReturn(
 	}
 }
 
+const defaultServersPath = "servers"
 const defaultServiceProvidersPathFormat = "service_providers/%s"
 
 var defaultClientChannelPolicy ClientChannelPolicy
 var noServerError = errors.New("pbrpc: no server")
 
-func makeServiceProviderKey(serverAddress string, weight int32) string {
-	return serverAddress + "|" + strconv.Itoa(int(weight))
+func makeServiceProviderKey(serverAddress string, weight int32, serverID int32) string {
+	return fmt.Sprintf("%s,%d,%d", serverAddress, weight, serverID)
 }
 
 func convertToServiceProviderList(response *zk.GetChildren2Response) serviceProviderList {
@@ -445,28 +585,49 @@ func convertToServiceProviderList(response *zk.GetChildren2Response) serviceProv
 		serviceProviderList_.items = append(serviceProviderList_.items, serviceProvider)
 	}
 
+	sort.Slice(serviceProviderList_.items, func(i, j int) bool {
+		return serviceProviderList_.items[i].serverID < serviceProviderList_.items[j].serverID
+	})
+
 	serviceProviderList_.version = response.Stat.PZxid
 	return serviceProviderList_
 }
 
 func parseServiceProviderKey(serviceProviderKey string) (serviceProvider, bool) {
-	i := strings.IndexByte(serviceProviderKey, '|')
+	i := strings.IndexByte(serviceProviderKey, ',')
 
 	if i < 0 {
 		return serviceProvider{}, false
 	}
 
-	serverAddress := serviceProviderKey[:i]
-	weight, e := strconv.ParseUint(serviceProviderKey[i+1:], 10, 31)
+	j := i + 1 + strings.IndexByte(serviceProviderKey[i+1:], ',')
 
-	if e != nil || weight == 0 {
+	if j == i {
 		return serviceProvider{}, false
 	}
 
-	var serviceProvider_ serviceProvider
-	serviceProvider_.serverAddress = serverAddress
-	serviceProvider_.weight = int32(weight)
-	return serviceProvider_, true
+	serverAddress := serviceProviderKey[:i]
+	var weight int32
+
+	if temp, e := strconv.ParseUint(serviceProviderKey[i+1:j], 10, 31); e == nil && temp >= 1 {
+		weight = int32(temp)
+	} else {
+		return serviceProvider{}, false
+	}
+
+	var serverID int32
+
+	if temp, e := strconv.ParseInt(serviceProviderKey[j+1:], 10, 32); e == nil {
+		serverID = int32(temp)
+	} else {
+		return serviceProvider{}, false
+	}
+
+	return serviceProvider{
+		serverAddress: serverAddress,
+		weight:        weight,
+		serverID:      serverID,
+	}, true
 }
 
 var RegistryClosedError = errors.New("pbrpc: registry closed")

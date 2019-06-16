@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -12,6 +13,7 @@ type Server struct {
 	policy           *ServerPolicy
 	bindAddress      string
 	discoveryAddress string
+	id               int32
 	openness         int32
 }
 
@@ -28,6 +30,7 @@ func (self *Server) Initialize(policy *ServerPolicy, bindAddress string, discove
 
 	self.bindAddress = bindAddress
 	self.discoveryAddress = discoveryAddress
+	self.id = -1
 	self.openness = 1
 	return self
 }
@@ -39,12 +42,12 @@ func (self *Server) Run(context_ context.Context) error {
 
 	acceptorEventHandler := AcceptorEventHandler{
 		OnListen: func(_ context.Context, listener net.Listener) error {
-			self.policy.Channel.Logger.Infof("listening on %s", listener.Addr())
+			self.policy.Channel.Logger.Infof("listening on %s: serverID=%#v", listener.Addr(), self.id)
 			return nil
 		},
 
 		OnConnect: func(context_ context.Context, connection net.Conn) {
-			channel, e := self.policy.ChannelFactory.CreateProduct(self.policy.Channel, connection)
+			channel, e := self.policy.ChannelFactory.CreateProduct(self.policy.Channel, self.id, connection)
 			logger_ := &self.policy.Channel.Logger
 
 			if e != nil {
@@ -59,35 +62,43 @@ func (self *Server) Run(context_ context.Context) error {
 		},
 
 		OnClose: func() {
-			self.policy.Channel.Logger.Infof("closing")
+			self.policy.Channel.Logger.Infof("closing: serverID=%d", self.id)
 		},
 	}
 
 	if self.policy.Registry != nil {
 		onListen, onClose := acceptorEventHandler.OnListen, acceptorEventHandler.OnClose
-		serviceNames := []string(nil)
+		serviceNames := make([]string, len(self.policy.Channel.serviceHandlers))
 
-		for serviceName := range self.policy.Channel.serviceHandlers {
-			serviceNames = append(serviceNames, serviceName)
+		for i := range serviceNames {
+			serviceNames[i] = self.policy.Channel.serviceHandlers[i].key
 		}
 
 		address := self.discoveryAddress
 
 		acceptorEventHandler.OnListen = func(context_ context.Context, listener net.Listener) error {
-			if e := onListen(context_, listener); e != nil {
-				return e
-			}
-
 			if address == "" {
 				address = listener.Addr().String()
 			}
 
-			return self.policy.Registry.AddServiceProviders(context_, serviceNames, address, self.policy.Weight)
+			serverID, e := self.policy.Registry.registerServer(context_, &serverInfo{
+				Address:              address,
+				Weight:               self.policy.Weight,
+				ProvidedServiceNames: serviceNames,
+			})
+
+			if e != nil {
+				return e
+			}
+
+			atomic.StoreInt32(&self.id, serverID)
+			onListen(context_, listener)
+			return nil
 		}
 
 		acceptorEventHandler.OnClose = func() {
 			onClose()
-			self.policy.Registry.RemoveServiceProviders(context.Background(), serviceNames, address, self.policy.Weight)
+			self.policy.Registry.unregisterServer(context.Background(), self.id)
 		}
 	}
 
@@ -97,6 +108,10 @@ func (self *Server) Run(context_ context.Context) error {
 	self.discoveryAddress = ""
 	self.openness = -1
 	return e
+}
+
+func (self *Server) GetID() int32 {
+	return atomic.LoadInt32(&self.id)
 }
 
 type ServerPolicy struct {
@@ -135,7 +150,7 @@ func (self *ServerPolicy) Validate() *ServerPolicy {
 }
 
 type ServerChannelFactory interface {
-	CreateProduct(productPolicy *ServerChannelPolicy, connection net.Conn) (product *ServerChannel, e error)
+	CreateProduct(productPolicy *ServerChannelPolicy, creatorID int32, connection net.Conn) (product *ServerChannel, e error)
 	DestroyProduct(product *ServerChannel)
 }
 
@@ -143,8 +158,8 @@ const defaultWeight = 5
 
 type defaultServerChannelFactory struct{}
 
-func (defaultServerChannelFactory) CreateProduct(productPolicy *ServerChannelPolicy, connection net.Conn) (*ServerChannel, error) {
-	return (&ServerChannel{}).Initialize(productPolicy, connection), nil
+func (defaultServerChannelFactory) CreateProduct(productPolicy *ServerChannelPolicy, creatorID int32, connection net.Conn) (*ServerChannel, error) {
+	return (&ServerChannel{}).Initialize(productPolicy, creatorID, connection), nil
 }
 
 func (defaultServerChannelFactory) DestroyProduct(_ *ServerChannel) {

@@ -136,7 +136,8 @@ func (self *ClientChannel) Run(context_ context.Context) error {
 		}
 
 		self.serverAddresses.Reset(nil, 0, self.impl.getTimeout()/3)
-		e = self.impl.dispatch(context.WithCancel(context2))
+		context3, cancel3 = context.WithCancel(context2)
+		e = self.impl.dispatch(context3, cancel3, -1)
 
 		if e != nil {
 			if e != io.EOF {
@@ -188,12 +189,14 @@ type ServerChannel struct {
 	channelBase
 
 	policy     *ServerChannelPolicy
+	creatorID  int32
 	connection net.Conn
 }
 
-func (self *ServerChannel) Initialize(policy *ServerChannelPolicy, connection net.Conn) *ServerChannel {
+func (self *ServerChannel) Initialize(policy *ServerChannelPolicy, creatorID int32, connection net.Conn) *ServerChannel {
 	self.initialize(self, policy.Validate().ChannelPolicy, false)
 	self.policy = policy
+	self.creatorID = creatorID
 	self.connection = connection
 	return self
 }
@@ -244,12 +247,12 @@ func (self *ServerChannel) Run(context_ context.Context) error {
 		self.connection = nil
 	}
 
-	if e := self.impl.accept(context2, self.connection, self.policy.Handshaker); e != nil {
+	if e := self.impl.accept(context2, self.creatorID, self.connection, self.policy.Handshaker); e != nil {
 		cleanup()
 		return e
 	}
 
-	e := self.impl.dispatch(context2, cancel2)
+	e := self.impl.dispatch(context2, cancel2, self.creatorID)
 	cleanup()
 	return e
 }
@@ -288,6 +291,7 @@ type ContextVars struct {
 	TraceID      uuid.UUID
 	SpanParentID int32
 	SpanID       int32
+	ServerID     int32
 
 	logger             *logger.Logger
 	sequenceNumber     int32
@@ -504,12 +508,14 @@ func makeContextVars(
 		contextVars_.SpanID = *parentContextVars.nextSpanID
 		*parentContextVars.nextSpanID++
 		contextVars_.nextSpanID = parentContextVars.nextSpanID
+		contextVars_.ServerID = parentContextVars.ServerID
 	} else {
 		contextVars_.TraceID = uuid.GenerateUUID4Fast()
 		contextVars_.SpanParentID = 0
 		contextVars_.SpanID = 1
 		contextVars_.bufferOfNextSpanID = 2
 		contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
+		contextVars_.ServerID = -1
 	}
 
 	return &contextVars_

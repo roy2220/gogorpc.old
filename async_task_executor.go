@@ -12,11 +12,11 @@ import (
 	"github.com/let-z-go/toolkit/semaphore"
 )
 
-type AsyncTaskExecutor struct {
+type asyncTaskExecutor struct {
 	key2DequeOfAsyncTaskItems lazy_map.LazyMap
 }
 
-func (self *AsyncTaskExecutor) ExecuteAsyncTask(context_ context.Context, key string, asyncTask func()) error {
+func (self *asyncTaskExecutor) executeAsyncTask(context_ context.Context, key string, asyncTask func()) error {
 	retryDelay := time.Duration(0)
 
 	for {
