@@ -71,9 +71,10 @@ type asyncTaskItem struct {
 
 func processAsyncTaskItems(dequeOfAsyncTaskItems *deque.Deque, valueClearer func()) {
 	for {
-		context_, _ := context.WithTimeout(context.Background(), 3*time.Second)
+		context_, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		listOfAsyncTaskItems := (&list.List{}).Initialize()
 		_, e := dequeOfAsyncTaskItems.RemoveAllNodes(context_, true, listOfAsyncTaskItems)
+		cancel()
 
 		if e != nil {
 			dequeOfAsyncTaskItems.Close(listOfAsyncTaskItems)
