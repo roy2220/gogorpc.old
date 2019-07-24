@@ -55,24 +55,24 @@ type transport struct {
 	openness         int
 }
 
-func (self *transport) initialize(policy *TransportPolicy, rawConnection net.Conn) *transport {
+func (self *transport) Initialize(policy *TransportPolicy, rawConnection net.Conn) *transport {
 	if self.openness != 0 {
 		panic(errors.New("pbrpc: transport already initialized"))
 	}
 
 	self.policy = policy.Validate()
-	self.connection.establish(rawConnection)
+	self.connection.Establish(rawConnection)
 	self.inputByteStream.ReserveBuffer(int(policy.InitialReadBufferSize))
 	self.openness = 1
 	return self
 }
 
-func (self *transport) close(force bool) error {
+func (self *transport) Close(force bool) error {
 	if self.isClosed() {
 		return TransportClosedError
 	}
 
-	e := self.connection.close(force)
+	e := self.connection.Close(force)
 	self.policy = nil
 	self.inputByteStream.GC()
 	self.outputByteStream.GC()
@@ -80,7 +80,7 @@ func (self *transport) close(force bool) error {
 	return e
 }
 
-func (self *transport) peek(context_ context.Context, timeout time.Duration) ([]byte, error) {
+func (self *transport) Peek(context_ context.Context, timeout time.Duration) ([]byte, error) {
 	packet, e := self.doPeek(context_, timeout)
 
 	if e != nil {
@@ -91,7 +91,7 @@ func (self *transport) peek(context_ context.Context, timeout time.Duration) ([]
 	return packetPayload, nil
 }
 
-func (self *transport) skip(packetPayload []byte) error {
+func (self *transport) Skip(packetPayload []byte) error {
 	if self.isClosed() {
 		return TransportClosedError
 	}
@@ -101,7 +101,7 @@ func (self *transport) skip(packetPayload []byte) error {
 	return nil
 }
 
-func (self *transport) peekInBatch(context_ context.Context, timeout time.Duration) ([][]byte, error) {
+func (self *transport) PeekInBatch(context_ context.Context, timeout time.Duration) ([][]byte, error) {
 	packet, e := self.doPeek(context_, timeout)
 
 	if e != nil {
@@ -125,7 +125,7 @@ func (self *transport) peekInBatch(context_ context.Context, timeout time.Durati
 	return packetPayloads, nil
 }
 
-func (self *transport) skipInBatch(packetPayloads [][]byte) error {
+func (self *transport) SkipInBatch(packetPayloads [][]byte) error {
 	if self.isClosed() {
 		return TransportClosedError
 	}
@@ -140,7 +140,7 @@ func (self *transport) skipInBatch(packetPayloads [][]byte) error {
 	return nil
 }
 
-func (self *transport) write(callback func(*byte_stream.ByteStream) error) error {
+func (self *transport) Write(callback func(*byte_stream.ByteStream) error) error {
 	if self.isClosed() {
 		return TransportClosedError
 	}
@@ -168,14 +168,14 @@ func (self *transport) write(callback func(*byte_stream.ByteStream) error) error
 	return nil
 }
 
-func (self *transport) flush(context_ context.Context, timeout time.Duration) error {
+func (self *transport) Flush(context_ context.Context, timeout time.Duration) error {
 	if self.isClosed() {
 		return TransportClosedError
 	}
 
 	deadline := makeDeadline(context_, timeout)
 	data := self.outputByteStream.GetData()
-	n, e := self.connection.write(context_, deadline, data)
+	n, e := self.connection.Write(context_, deadline, data)
 	self.outputByteStream.Skip(n)
 	return e
 }
@@ -197,7 +197,7 @@ func (self *transport) doPeek(context_ context.Context, timeout time.Duration) (
 		deadlineIsMade = true
 
 		for {
-			dataSize, e := self.connection.read(context_, deadline, self.inputByteStream.GetBuffer())
+			dataSize, e := self.connection.Read(context_, deadline, self.inputByteStream.GetBuffer())
 
 			if dataSize == 0 {
 				return nil, e
@@ -232,7 +232,7 @@ func (self *transport) doPeek(context_ context.Context, timeout time.Duration) (
 		self.inputByteStream.ReserveBuffer(bufferSize)
 
 		for {
-			dataSize, e := self.connection.read(context_, deadline, self.inputByteStream.GetBuffer())
+			dataSize, e := self.connection.Read(context_, deadline, self.inputByteStream.GetBuffer())
 
 			if dataSize == 0 {
 				return nil, e

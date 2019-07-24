@@ -15,12 +15,12 @@ type markingList struct {
 	markedItemCount int
 }
 
-func (self *markingList) addItem(item string) {
+func (self *markingList) AddItem(item string) {
 	self.items = append(self.items, item)
 	self.itemIsMarked = append(self.itemIsMarked, false)
 }
 
-func (self *markingList) markItem(item string) bool {
+func (self *markingList) MarkItem(item string) bool {
 	for i, item2 := range self.items {
 		if item2 == item {
 			if !self.itemIsMarked[i] {
@@ -35,7 +35,7 @@ func (self *markingList) markItem(item string) bool {
 	return false
 }
 
-func (self *markingList) unmarkItems() {
+func (self *markingList) UnmarkItems() {
 	for i := range self.items {
 		self.itemIsMarked[i] = false
 	}
@@ -43,7 +43,7 @@ func (self *markingList) unmarkItems() {
 	self.markedItemCount = 0
 }
 
-func (self *markingList) getNumberOfMarkedItems() int {
+func (self *markingList) GetNumberOfMarkedItems() int {
 	return self.markedItemCount
 }
 

@@ -67,7 +67,7 @@ func (self *ClientChannel) Initialize(policy *ClientChannelPolicy, serverAddress
 		values[i] = serverAddress
 	}
 
-	self.serverAddresses.Reset(values, 3, self.impl.getTimeout())
+	self.serverAddresses.Reset(values, 3, self.impl.GetTimeout())
 	return self
 }
 
@@ -104,7 +104,7 @@ func (self *ClientChannel) CallMethodWithoutReturn(
 }
 
 func (self *ClientChannel) Run(context_ context.Context) error {
-	if self.impl.isClosed() {
+	if self.impl.IsClosed() {
 		return nil
 	}
 
@@ -122,7 +122,7 @@ func (self *ClientChannel) Run(context_ context.Context) error {
 
 		context3, cancel3 := context.WithDeadline(context2, self.serverAddresses.WhenNextValueUsable())
 		serverAddress := value.(string)
-		e = self.impl.connect(self.policy.Connector, context3, serverAddress, self.policy.Handshaker)
+		e = self.impl.Connect(self.policy.Connector, context3, serverAddress, self.policy.Handshaker)
 		cancel3()
 
 		if e != nil {
@@ -135,9 +135,9 @@ func (self *ClientChannel) Run(context_ context.Context) error {
 			continue
 		}
 
-		self.serverAddresses.Reset(nil, 0, self.impl.getTimeout()/3)
+		self.serverAddresses.Reset(nil, 0, self.impl.GetTimeout()/3)
 		context3, cancel3 = context.WithCancel(context2)
-		e = self.impl.dispatch(context3, cancel3, -1)
+		e = self.impl.Dispatch(context3, cancel3, -1)
 
 		if e != nil {
 			if e != io.EOF {
@@ -150,7 +150,7 @@ func (self *ClientChannel) Run(context_ context.Context) error {
 		}
 	}
 
-	self.impl.close()
+	self.impl.Close()
 	self.stop = nil
 	self.serverAddresses.GC()
 	return e
@@ -234,7 +234,7 @@ func (self *ServerChannel) CallMethodWithoutReturn(
 }
 
 func (self *ServerChannel) Run(context_ context.Context) error {
-	if self.impl.isClosed() {
+	if self.impl.IsClosed() {
 		return nil
 	}
 
@@ -242,17 +242,17 @@ func (self *ServerChannel) Run(context_ context.Context) error {
 	self.stop = cancel2
 
 	cleanup := func() {
-		self.impl.close()
+		self.impl.Close()
 		self.stop = nil
 		self.connection = nil
 	}
 
-	if e := self.impl.accept(context2, self.creatorID, self.connection, self.policy.Handshaker); e != nil {
+	if e := self.impl.Accept(context2, self.creatorID, self.connection, self.policy.Handshaker); e != nil {
 		cleanup()
 		return e
 	}
 
-	e := self.impl.dispatch(context2, cancel2, self.creatorID)
+	e := self.impl.Dispatch(context2, cancel2, self.creatorID)
 	cleanup()
 	return e
 }
@@ -330,11 +330,11 @@ type channelBase struct {
 }
 
 func (self *channelBase) AddListener(maxNumberOfStateChanges int) (*ChannelListener, error) {
-	return self.impl.addListener(maxNumberOfStateChanges)
+	return self.impl.AddListener(maxNumberOfStateChanges)
 }
 
 func (self *channelBase) RemoveListener(listener *ChannelListener) error {
-	return self.impl.removeListener(listener)
+	return self.impl.RemoveListener(listener)
 }
 
 func (self *channelBase) Stop() {
@@ -342,7 +342,7 @@ func (self *channelBase) Stop() {
 }
 
 func (self *channelBase) initialize(sub Channel, policy *ChannelPolicy, isClientSide bool) *channelBase {
-	self.impl.initialize(sub, policy, isClientSide)
+	self.impl.Initialize(sub, policy, isClientSide)
 	return self
 }
 
@@ -398,7 +398,7 @@ func (self *channelBase) doCallMethod(
 		error_ <- nil
 	}
 
-	if e := self.impl.callMethod(
+	if e := self.impl.CallMethod(
 		context_,
 		contextVars_,
 		request,
@@ -461,7 +461,7 @@ func (self *channelBase) doCallMethodWithoutReturn(
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) error {
-	return self.impl.callMethod(
+	return self.impl.CallMethod(
 		context_,
 		contextVars_,
 		request,

@@ -122,7 +122,7 @@ func (self *Registry) GetMethodCaller(lbType LBType, lbArgument uintptr) MethodC
 			return "", nil, e
 		}
 
-		serverAddress, ok := loadBalancer_.selectServer(serviceName, serviceProviderList_, lbArgument, excludedServerList)
+		serverAddress, ok := loadBalancer_.SelectServer(serviceName, serviceProviderList_, lbArgument, excludedServerList)
 
 		if !ok {
 			return "", nil, noServerError
@@ -167,7 +167,7 @@ func (self *Registry) GetMethodCallerOfService(serviceName string, lbType LBType
 			return "", nil, e
 		}
 
-		serverAddress, ok := loadBalancer_.selectServer(serviceName, serviceProviderList_, lbArgument, excludedServerList)
+		serverAddress, ok := loadBalancer_.SelectServer(serviceName, serviceProviderList_, lbArgument, excludedServerList)
 
 		if !ok {
 			return "", nil, noServerError
@@ -199,13 +199,13 @@ func (self *Registry) GetMethodCallerByServerID(serviceName string, serverID int
 			return "", nil, e
 		}
 
-		serverAddress, ok := serviceProviderList_.findServer(serverID)
+		serverAddress, ok := serviceProviderList_.FindServer(serverID)
 
 		if !ok {
 			return "", nil, noServerError
 		}
 
-		if excludedServerList.markItem(serverAddress) {
+		if excludedServerList.MarkItem(serverAddress) {
 			return "", nil, noServerError
 		}
 
@@ -225,7 +225,7 @@ func (self *Registry) GetMethodCallerByServerAddress(serverAddress string) Metho
 			return "", nil, RegistryClosedError
 		}
 
-		if excludedServerList.markItem(serverAddress) {
+		if excludedServerList.MarkItem(serverAddress) {
 			return "", nil, noServerError
 		}
 
@@ -516,7 +516,7 @@ func (self methodCallerProxy) CallMethod(
 
 		if e != nil {
 			if e2, ok := e.(*Error); ok && e2.code == ErrorChannelTimedOut {
-				excludedServerList.addItem(serverAddress)
+				excludedServerList.AddItem(serverAddress)
 				continue
 			}
 		}
@@ -553,7 +553,7 @@ func (self methodCallerProxy) CallMethodWithoutReturn(
 
 		if e != nil {
 			if e2, ok := e.(*Error); ok && e2.code == ErrorChannelTimedOut {
-				excludedServerList.addItem(serverAddress)
+				excludedServerList.AddItem(serverAddress)
 				continue
 			}
 		}
@@ -586,7 +586,7 @@ func convertToServiceProviderList(response *zk.GetChildren2Response) serviceProv
 	}
 
 	sort.Slice(serviceProviderList_.items, func(i, j int) bool {
-		return serviceProviderList_.items[i].serverID < serviceProviderList_.items[j].serverID
+		return serviceProviderList_.items[i].ServerID < serviceProviderList_.items[j].ServerID
 	})
 
 	serviceProviderList_.version = response.Stat.PZxid
@@ -624,9 +624,9 @@ func parseServiceProviderKey(serviceProviderKey string) (serviceProvider, bool) 
 	}
 
 	return serviceProvider{
-		serverAddress: serverAddress,
-		weight:        weight,
-		serverID:      serverID,
+		ServerAddress: serverAddress,
+		Weight:        weight,
+		ServerID:      serverID,
 	}, true
 }
 

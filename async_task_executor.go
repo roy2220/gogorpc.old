@@ -16,7 +16,7 @@ type asyncTaskExecutor struct {
 	key2DequeOfAsyncTaskItems lazy_map.LazyMap
 }
 
-func (self *asyncTaskExecutor) executeAsyncTask(context_ context.Context, key string, asyncTask func()) error {
+func (self *asyncTaskExecutor) ExecuteAsyncTask(context_ context.Context, key string, asyncTask func()) error {
 	retryDelay := time.Duration(0)
 
 	for {
@@ -26,8 +26,8 @@ func (self *asyncTaskExecutor) executeAsyncTask(context_ context.Context, key st
 		})
 
 		dequeOfAsyncTaskItems := value.(*deque.Deque)
-		asyncTaskItem_ := asyncTaskItem{data: asyncTask}
-		e := dequeOfAsyncTaskItems.AppendNode(context_, &asyncTaskItem_.listNode)
+		asyncTaskItem_ := asyncTaskItem{Data: asyncTask}
+		e := dequeOfAsyncTaskItems.AppendNode(context_, &asyncTaskItem_.ListNode)
 
 		if valueClearer == nil {
 			if e != nil {
@@ -65,8 +65,8 @@ func (self *asyncTaskExecutor) executeAsyncTask(context_ context.Context, key st
 }
 
 type asyncTaskItem struct {
-	listNode list.ListNode
-	data     func()
+	ListNode list.ListNode
+	Data     func()
 }
 
 func processAsyncTaskItems(dequeOfAsyncTaskItems *deque.Deque, valueClearer func()) {
@@ -83,8 +83,8 @@ func processAsyncTaskItems(dequeOfAsyncTaskItems *deque.Deque, valueClearer func
 		getListNode := listOfAsyncTaskItems.GetNodes()
 
 		for listNode := getListNode(); listNode != nil; listNode = getListNode() {
-			asyncTaskItem_ := (*asyncTaskItem)(listNode.GetContainer(unsafe.Offsetof(asyncTaskItem{}.listNode)))
-			asyncTaskItem_.data()
+			asyncTaskItem_ := (*asyncTaskItem)(listNode.GetContainer(unsafe.Offsetof(asyncTaskItem{}.ListNode)))
+			asyncTaskItem_.Data()
 		}
 
 		if e != nil {
