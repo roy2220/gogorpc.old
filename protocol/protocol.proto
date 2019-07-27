@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+package pbrpc.protocol;
+
 option go_package = "github.com/let-z-go/pbrpc/protocol";
 option (gogoproto.goproto_enum_prefix_all) = false;
 
@@ -25,12 +27,11 @@ message Greeting {
 
 message RequestHeader {
     int32 sequence_number = 1;
-    string service_name = 2;
-    string method_name = 3;
-    string resource_id = 4;
-    map<string, bytes> extra_data = 5;
-    bytes trace_id = 6;
-    int32 span_id = 7;
+    bytes id = 2;
+    string service_name = 3;
+    string method_name = 4;
+    string resource_id = 5;
+    map<string, bytes> extra_data = 6;
 }
 
 enum ErrorCode {
@@ -45,7 +46,6 @@ enum ErrorCode {
 
 message ResponseHeader {
     int32 sequence_number = 1;
-    int32 next_span_id = 2;
     int32 error_code = 3;
     string error_desc = 4;
 }

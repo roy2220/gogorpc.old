@@ -601,13 +601,11 @@ func (self *channelImpl) CallMethod(
 	}
 
 	methodCall_ := poolOfMethodCalls.Get().(*methodCall)
+	methodCall_.RequestID = contextVars_.RequestID
 	methodCall_.ServiceName = contextVars_.ServiceName
 	methodCall_.MethodName = contextVars_.MethodName
 	methodCall_.ResourceID = contextVars_.ResourceID
 	methodCall_.ExtraData = contextVars_.ExtraData
-	methodCall_.TraceID = contextVars_.TraceID
-	methodCall_.SpanID = contextVars_.SpanID
-	methodCall_.NextSpanID = contextVars_.nextSpanID
 	methodCall_.Request = request
 	methodCall_.ResponseType = responseType
 	methodCall_.AutoRetry = autoRetryMethodCall
@@ -953,12 +951,11 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 
 				requestHeader := protocol.RequestHeader{
 					SequenceNumber: methodCall_.SequenceNumber,
+					Id:             methodCall_.RequestID[:],
 					ServiceName:    methodCall_.ServiceName,
 					MethodName:     methodCall_.MethodName,
 					ResourceId:     methodCall_.ResourceID,
 					ExtraData:      methodCall_.ExtraData,
-					TraceId:        methodCall_.TraceID[:],
-					SpanId:         methodCall_.SpanID,
 				}
 
 				requestHeaderSize := requestHeader.Size()
@@ -1006,7 +1003,6 @@ func (self *channelImpl) sendMessages(context_ context.Context, cancel context.C
 
 				responseHeader := protocol.ResponseHeader{
 					SequenceNumber: resultReturn_.SequenceNumber,
-					NextSpanId:     resultReturn_.NextSpanID,
 					ErrorCode:      int32(resultReturn_.ErrorCode),
 					ErrorDesc:      resultReturn_.ErrorDesc,
 				}
@@ -1135,23 +1131,18 @@ func (self *channelImpl) receiveMessages(context_ context.Context, serverID int3
 
 func (self *channelImpl) receiveRequest(context_ context.Context, serverID int32, requestHeader *protocol.RequestHeader, requestPayload []byte, pendingResultReturnCount *int32) error {
 	contextVars_ := ContextVars{
-		Channel:      self.holder,
-		ServiceName:  requestHeader.ServiceName,
-		MethodName:   requestHeader.MethodName,
-		MethodIndex:  -1,
-		ResourceID:   requestHeader.ResourceId,
-		ExtraData:    requestHeader.ExtraData,
-		TraceID:      uuid.UUIDFromBytes(requestHeader.TraceId),
-		SpanParentID: requestHeader.SpanId,
-		SpanID:       requestHeader.SpanId + 1,
-		ServerID:     serverID,
+		ServerID:    serverID,
+		Channel:     self.holder,
+		RequestID:   uuid.UUIDFromBytes(requestHeader.Id),
+		ServiceName: requestHeader.ServiceName,
+		MethodName:  requestHeader.MethodName,
+		MethodIndex: -1,
+		ResourceID:  requestHeader.ResourceId,
+		ExtraData:   requestHeader.ExtraData,
 
-		logger:             &self.policy.Logger,
-		sequenceNumber:     requestHeader.SequenceNumber,
-		bufferOfNextSpanID: requestHeader.SpanId + 2,
+		logger: &self.policy.Logger,
 	}
 
-	contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
 	incomingMethodInterceptors := poolOfIncomingMethodInterceptors.Get().([]IncomingMethodInterceptor)[:0]
 	incomingMethodInterceptors = append(incomingMethodInterceptors, self.policy.incomingMethodInterceptors[""]...)
 	incomingMethodInterceptors = append(incomingMethodInterceptors, self.policy.incomingMethodInterceptors[contextVars_.ServiceName]...)
@@ -1196,7 +1187,7 @@ func (self *channelImpl) rejectRequest(
 ) error {
 	if len(incomingMethodInterceptors) == 0 {
 		poolOfIncomingMethodInterceptors.Put(incomingMethodInterceptors)
-		returnResult(sequenceNumber, *contextVars_.nextSpanID, errorCode, X_MustGetErrorDesc(errorCode), RawMessage(nil), self.dequeOfResultReturns)
+		returnResult(sequenceNumber, errorCode, X_MustGetErrorDesc(errorCode), RawMessage(nil), self.dequeOfResultReturns)
 		return nil
 	}
 
@@ -1216,7 +1207,6 @@ func (self *channelImpl) rejectRequest(
 		self *channelImpl,
 	) func() {
 		return func() {
-			contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
 			n := len(incomingMethodInterceptors)
 			i := 0
 			var incomingMethodHandler IncomingMethodHandler
@@ -1236,7 +1226,7 @@ func (self *channelImpl) rejectRequest(
 			var errorCode2 ErrorCode
 			var errorDesc2 string
 			response, errorCode2, errorDesc2 = parseError(response, e, logger_, &contextVars_, &request)
-			returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, errorDesc2, response, dequeOfResultReturns)
+			returnResult(sequenceNumber, errorCode2, errorDesc2, response, dequeOfResultReturns)
 			self.wgOfPendingResultReturns.Done()
 		}
 	}(
@@ -1299,7 +1289,6 @@ func (self *channelImpl) acceptRequest(
 		self *channelImpl,
 	) func() {
 		return func() {
-			contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
 			var response OutgoingMessage
 			var e error
 
@@ -1327,7 +1316,7 @@ func (self *channelImpl) acceptRequest(
 			var errorCode2 ErrorCode
 			var errorDesc2 string
 			response, errorCode2, errorDesc2 = parseError(response, e, logger_, &contextVars_, request)
-			returnResult(sequenceNumber, contextVars_.bufferOfNextSpanID, errorCode2, errorDesc2, response, dequeOfResultReturns)
+			returnResult(sequenceNumber, errorCode2, errorDesc2, response, dequeOfResultReturns)
 			self.wgOfPendingResultReturns.Done()
 		}
 	}(
@@ -1377,7 +1366,6 @@ func (self *channelImpl) receiveResponse(context_ context.Context, serverID int3
 
 	self.pendingMethodCalls.Delete(responseHeader.SequenceNumber)
 	methodCall_ := value.(*methodCall)
-	*methodCall_.NextSpanID = responseHeader.NextSpanId
 
 	if responseHeader.ErrorCode == 0 {
 		response := reflect.New(methodCall_.ResponseType).Interface().(IncomingMessage)
@@ -1425,13 +1413,11 @@ func (self *channelImpl) getSequenceNumber() int32 {
 type methodCall struct {
 	ListNode       list.ListNode
 	SequenceNumber int32
+	RequestID      uuid.UUID
 	ServiceName    string
 	MethodName     string
 	ResourceID     string
 	ExtraData      map[string][]byte
-	TraceID        uuid.UUID
-	SpanID         int32
-	NextSpanID     *int32
 	Request        OutgoingMessage
 	ResponseType   reflect.Type
 	AutoRetry      bool
@@ -1441,7 +1427,6 @@ type methodCall struct {
 type resultReturn struct {
 	ListNode       list.ListNode
 	SequenceNumber int32
-	NextSpanID     int32
 	ErrorCode      ErrorCode
 	ErrorDesc      string
 	Response       OutgoingMessage
@@ -1492,10 +1477,8 @@ func parseError(response OutgoingMessage, e error, logger *logger.Logger, contex
 			return RawMessage(e2.GetData()), e2.code, e2.GetDesc()
 		} else {
 			logger.Errorf(
-				"internal server error: serverID=%#v, traceID=%q, spanID=%#v, serviceName=%#v, methodName=%#v, resourceID=%#v, request=%q, e=%q",
-				contextVars_.ServerID,
-				contextVars_.TraceID,
-				contextVars_.SpanID,
+				"internal server error: requestID=%q, serviceName=%#v, methodName=%#v, resourceID=%#v, request=%q, e=%q",
+				contextVars_.RequestID,
 				contextVars_.ServiceName,
 				contextVars_.MethodName,
 				contextVars_.ResourceID,
@@ -1508,10 +1491,9 @@ func parseError(response OutgoingMessage, e error, logger *logger.Logger, contex
 	}
 }
 
-func returnResult(sequenceNumber int32, nextSpanID int32, errorCode ErrorCode, errorDesc string, response OutgoingMessage, dequeOfResultReturns *deque.Deque) error {
+func returnResult(sequenceNumber int32, errorCode ErrorCode, errorDesc string, response OutgoingMessage, dequeOfResultReturns *deque.Deque) error {
 	resultReturn_ := poolOfResultReturns.Get().(*resultReturn)
 	resultReturn_.SequenceNumber = sequenceNumber
-	resultReturn_.NextSpanID = nextSpanID
 	resultReturn_.ErrorCode = errorCode
 	resultReturn_.ErrorDesc = errorDesc
 	resultReturn_.Response = response

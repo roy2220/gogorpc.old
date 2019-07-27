@@ -42,9 +42,9 @@ func (self *serviceProviderList) FindServer(serverID int32) (string, bool) {
 }
 
 type serviceProvider struct {
+	ServerID      int32
 	ServerAddress string
 	Weight        int32
-	ServerID      int32
 }
 
 type randomizedState struct {

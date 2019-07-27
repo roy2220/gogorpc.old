@@ -82,7 +82,7 @@ func (self *ClientChannel) CallMethod(
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) (interface{}, error) {
-	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, true, context_)
+	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, context_)
 	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
 	return self.callMethod(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
 }
@@ -98,7 +98,7 @@ func (self *ClientChannel) CallMethodWithoutReturn(
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) error {
-	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, false, nil)
+	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, context_)
 	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
 	return self.callMethodWithoutReturn(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
 }
@@ -212,7 +212,7 @@ func (self *ServerChannel) CallMethod(
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) (interface{}, error) {
-	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, true, context_)
+	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, context_)
 	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
 	return self.callMethod(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
 }
@@ -228,7 +228,7 @@ func (self *ServerChannel) CallMethodWithoutReturn(
 	responseType reflect.Type,
 	autoRetryMethodCall bool,
 ) error {
-	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, false, nil)
+	contextVars_ := makeContextVars(self, serviceName, methodName, methodIndex, resourceID, extraData, context_)
 	outgoingMethodInterceptors := makeOutgoingMethodInterceptors(self.policy.ChannelPolicy, contextVars_)
 	return self.callMethodWithoutReturn(outgoingMethodInterceptors, context_, contextVars_, request, responseType, autoRetryMethodCall)
 }
@@ -282,21 +282,16 @@ func (self *ServerChannelPolicy) Validate() *ServerChannelPolicy {
 type ServerHandshaker func(*ServerChannel, context.Context, *[]byte) (bool, error)
 
 type ContextVars struct {
-	Channel      Channel
-	ServiceName  string
-	MethodName   string
-	MethodIndex  int32
-	ResourceID   string
-	ExtraData    map[string][]byte
-	TraceID      uuid.UUID
-	SpanParentID int32
-	SpanID       int32
-	ServerID     int32
+	ServerID    int32
+	Channel     Channel
+	RequestID   uuid.UUID
+	ServiceName string
+	MethodName  string
+	MethodIndex int32
+	ResourceID  string
+	ExtraData   map[string][]byte
 
-	logger             *logger.Logger
-	sequenceNumber     int32
-	bufferOfNextSpanID int32
-	nextSpanID         *int32
+	logger *logger.Logger
 }
 
 type RawMessage []byte
@@ -481,7 +476,6 @@ func makeContextVars(
 	methodIndex int32,
 	resourceID string,
 	extraData map[string][]byte,
-	tryInheritSpan bool,
 	context_ context.Context,
 ) *ContextVars {
 	contextVars_ := ContextVars{
@@ -493,29 +487,14 @@ func makeContextVars(
 		ExtraData:   extraData,
 	}
 
-	var parentContextVars *ContextVars
-	var inheritSpan bool
+	parentContextVars, ok := GetContextVars(context_)
 
-	if tryInheritSpan {
-		parentContextVars, inheritSpan = GetContextVars(context_)
-	} else {
-		inheritSpan = false
-	}
-
-	if inheritSpan {
-		contextVars_.TraceID = parentContextVars.TraceID
-		contextVars_.SpanParentID = parentContextVars.SpanID
-		contextVars_.SpanID = *parentContextVars.nextSpanID
-		*parentContextVars.nextSpanID++
-		contextVars_.nextSpanID = parentContextVars.nextSpanID
+	if ok {
 		contextVars_.ServerID = parentContextVars.ServerID
+		contextVars_.RequestID = parentContextVars.RequestID
 	} else {
-		contextVars_.TraceID = uuid.GenerateUUID4Fast()
-		contextVars_.SpanParentID = 0
-		contextVars_.SpanID = 1
-		contextVars_.bufferOfNextSpanID = 2
-		contextVars_.nextSpanID = &contextVars_.bufferOfNextSpanID
 		contextVars_.ServerID = -1
+		contextVars_.RequestID = uuid.GenerateUUID4Fast()
 	}
 
 	return &contextVars_

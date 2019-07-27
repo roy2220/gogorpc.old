@@ -569,7 +569,7 @@ var defaultClientChannelPolicy ClientChannelPolicy
 var noServerError = errors.New("pbrpc: no server")
 
 func makeServiceProviderKey(serverAddress string, weight int32, serverID int32) string {
-	return fmt.Sprintf("%s,%d,%d", serverAddress, weight, serverID)
+	return fmt.Sprintf("%d|%s,%d", serverID, serverAddress, weight)
 }
 
 func convertToServiceProviderList(response *zk.GetChildren2Response) serviceProviderList {
@@ -594,7 +594,7 @@ func convertToServiceProviderList(response *zk.GetChildren2Response) serviceProv
 }
 
 func parseServiceProviderKey(serviceProviderKey string) (serviceProvider, bool) {
-	i := strings.IndexByte(serviceProviderKey, ',')
+	i := strings.IndexByte(serviceProviderKey, '|')
 
 	if i < 0 {
 		return serviceProvider{}, false
@@ -606,27 +606,27 @@ func parseServiceProviderKey(serviceProviderKey string) (serviceProvider, bool) 
 		return serviceProvider{}, false
 	}
 
-	serverAddress := serviceProviderKey[:i]
-	var weight int32
-
-	if temp, e := strconv.ParseUint(serviceProviderKey[i+1:j], 10, 31); e == nil && temp >= 1 {
-		weight = int32(temp)
-	} else {
-		return serviceProvider{}, false
-	}
-
 	var serverID int32
 
-	if temp, e := strconv.ParseInt(serviceProviderKey[j+1:], 10, 32); e == nil {
+	if temp, e := strconv.ParseInt(serviceProviderKey[:i], 10, 32); e == nil {
 		serverID = int32(temp)
 	} else {
 		return serviceProvider{}, false
 	}
 
+	serverAddress := serviceProviderKey[i+1 : j]
+	var weight int32
+
+	if temp, e := strconv.ParseUint(serviceProviderKey[j+1:], 10, 31); e == nil && temp >= 1 {
+		weight = int32(temp)
+	} else {
+		return serviceProvider{}, false
+	}
+
 	return serviceProvider{
+		ServerID:      serverID,
 		ServerAddress: serverAddress,
 		Weight:        weight,
-		ServerID:      serverID,
 	}, true
 }
 

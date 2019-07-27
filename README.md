@@ -11,7 +11,6 @@ Lightweight RPC framework based on Protocol Buffers for Go
 - Service discovery
 - Load balancing
 - Interception
-- Tracing
 
 ## Requirements
 
