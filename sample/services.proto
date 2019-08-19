@@ -12,14 +12,14 @@ service ClientService {
     rpc GetNickname(pbrpc.Void) returns (GetNicknameResponse);
 }
 
-message SayHelloRequest {
+message GetStateReq {
     string reply_format = 1;
 }
 
-message SayHelloResponse {
+message GetStateResp {
     string reply = 1;
 }
 
-service ServerService {
-    rpc SayHello(SayHelloRequest) returns (SayHelloResponse);
+service ToubiService {
+    rpc GetState(GetStateReq) returns (GetStateResp);
 }

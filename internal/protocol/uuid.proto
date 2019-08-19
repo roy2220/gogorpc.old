@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package pbrpc.protocol;
+
+option go_package = "github.com/let-z-go/pbrpc/internal/protocol";
+
+message UUID {
+    fixed64 low = 1;
+    fixed64 high = 2;
+}

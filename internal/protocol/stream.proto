@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package pbrpc.protocol;
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+import "github.com/let-z-go/pbrpc/internal/protocol/uuid.proto";
+
+option go_package = "github.com/let-z-go/pbrpc/internal/protocol";
+option (gogoproto.goproto_enum_prefix_all) = false;
+
+enum RPCErrorCode {
+    RPC_ERROR_NONE = 0;
+
+    RPC_ERROR_BAD_REQUEST = 400;
+    RPC_ERROR_UNAUTHORIZED = 401;
+    RPC_ERROR_FORBIDDEN = 403;
+    RPC_ERROR_NOT_FOUND = 404;
+    RPC_ERROR_TOO_MANY_REQUESTS = 429;
+
+    RPC_ERROR_INTERNAL_SERVER = 500;
+    RPC_ERROR_NOT_IMPLEMENTED = 501;
+    RPC_ERROR_BAD_GATEWAY = 502;
+    RPC_ERROR_SERVICE_UNAVAILABLE = 503;
+    RPC_ERROR_GATEWAY_TIMEOUT = 504;
+}
+
+enum ErrorCode {
+    ERROR_ABORTED = 0;
+    ERROR_BAD_INCOMING_PACKET = 1;
+    ERROR_TOO_MANY_INCOMING_REQUESTS = 2;
+    ERROR_OUTGOING_PACKET_TOO_LARGE = 3;
+    ERROR_SYSTEM = 4;
+}
+
+message StreamHandshakeHeader {
+    int32 incoming_keepalive_interval = 1;
+    int32 outgoing_keepalive_interval = 2;
+    int32 local_concurrency_limit = 3;
+    int32 remote_concurrency_limit = 4;
+}
+
+message RequestHeader {
+    int32 sequence_number = 1;
+    UUID trace_id = 2 [ (gogoproto.nullable) = false ];
+    string service_name = 3;
+    string method_name = 4;
+    map<string, bytes> extra_data = 5;
+    int64 deadline = 6;
+}
+
+message ResponseHeader {
+    int32 sequence_number = 1;
+    map<string, bytes> extra_data = 2;
+    RPCErrorCode error_code = 3;
+    string reason_code = 4;
+}
+
+message Hangup {
+    ErrorCode error_code = 1;
+}

@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package pbrpc.protocol;
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+import "github.com/let-z-go/pbrpc/internal/protocol/uuid.proto";
+
+option go_package = "github.com/let-z-go/pbrpc/internal/protocol";
+option (gogoproto.goproto_enum_prefix_all) = false;
+
+enum MessageType {
+    MESSAGE_KEEPALIVE = 0;
+    MESSAGE_REQUEST = 1;
+    MESSAGE_RESPONSE = 2;
+    MESSAGE_HANGUP = 3;
+}
+
+message TransportHandshakeHeader {
+    UUID id = 1 [ (gogoproto.nullable) = false ];
+    int32 max_incoming_packet_size = 2;
+    int32 max_outgoing_packet_size = 3;
+}
+
+message PacketHeader {
+    MessageType message_type = 1;
+}
