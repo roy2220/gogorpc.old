@@ -26,10 +26,10 @@ func (self *Options) Normalize() *Options {
 		}
 
 		if self.Connector == nil {
-			self.Connector = TCPConnector
+			self.Connector = defaultConnector
 		}
 
-		normalizeDurValue(&self.HandshakeTimeout, defaultHandshakeTimeout, minInputBufferSize, maxInputBufferSize)
+		normalizeDurValue(&self.HandshakeTimeout, defaultHandshakeTimeout, minHandshakeTimeout, maxHandshakeTimeout)
 		normalizeIntValue(&self.MinInputBufferSize, defaultMinInputBufferSize, minInputBufferSize, maxInputBufferSize)
 		normalizeIntValue(&self.MaxInputBufferSize, defaultMaxInputBufferSize, minInputBufferSize, maxInputBufferSize)
 
@@ -56,19 +56,20 @@ const (
 )
 
 const (
-	defaultMaxPacketSize = 1 << 16
+	defaultMaxPacketSize = 1 << 20
 	minMaxPacketSize     = 1 << 12
-	maxMaxPacketSize     = 1 << 20
+	maxMaxPacketSize     = 1 << 30
 )
 
 const (
-	defaultMinInputBufferSize = 1 << 16
+	defaultMinInputBufferSize = 1 << 12
 	defaultMaxInputBufferSize = 1 << 24
 	minInputBufferSize        = 1 << 10
 	maxInputBufferSize        = 1 << 30
 )
 
 var defaultLogger = zerolog.Nop()
+var defaultConnector = TCPConnector
 
 func normalizeDurValue(value *time.Duration, defaultValue, minValue, maxValue time.Duration) {
 	if *value == 0 {

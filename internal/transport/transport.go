@@ -41,6 +41,13 @@ func (self *Transport) Close() error {
 }
 
 func (self *Transport) Accept(ctx context.Context, connection net.Conn, handshaker Handshaker) (bool, error) {
+	clientAddress := connection.RemoteAddr().String()
+	self.options.Logger.Info().Str("endpoint", "server-side").
+		Str("peer_address", clientAddress).
+		Dur("handshake_timeout", self.options.HandshakeTimeout).
+		Int("min_input_buffer_size", self.options.MinInputBufferSize).
+		Int("max_input_buffer_size", self.options.MaxInputBufferSize).
+		Msg("transport_accepting")
 	self.connection.Init(connection)
 	self.inputByteStream.ReserveBuffer(self.options.MinInputBufferSize)
 	ctx, cancel := context.WithTimeout(ctx, self.options.HandshakeTimeout)
@@ -51,7 +58,7 @@ func (self *Transport) Accept(ctx context.Context, connection net.Conn, handshak
 		ctx,
 		&handshakeHeader,
 		handshaker.HandleHandshake,
-		self.options.Logger.Info().Str("endpoint", "server-side"),
+		self.options.Logger.Info().Str("endpoint", "server-side").Str("peer_address", clientAddress),
 	)
 
 	if err != nil {
@@ -79,7 +86,7 @@ func (self *Transport) Accept(ctx context.Context, connection net.Conn, handshak
 		&handshakeHeader,
 		handshaker.SizeHandshake(),
 		handshaker.EmitHandshake,
-		self.options.Logger.Info().Str("endpoint", "server-side"),
+		self.options.Logger.Info().Str("endpoint", "server-side").Str("peer_address", clientAddress),
 	); err != nil {
 		self.Close()
 		return false, err
@@ -89,6 +96,12 @@ func (self *Transport) Accept(ctx context.Context, connection net.Conn, handshak
 }
 
 func (self *Transport) Connect(ctx context.Context, serverAddress string, id uuid.UUID, handshaker Handshaker) (bool, error) {
+	self.options.Logger.Info().Str("endpoint", "client-side").
+		Str("peer_address", serverAddress).
+		Dur("handshake_timeout", self.options.HandshakeTimeout).
+		Int("min_input_buffer_size", self.options.MinInputBufferSize).
+		Int("max_input_buffer_size", self.options.MaxInputBufferSize).
+		Msg("transport_connecting")
 	ctx, cancel := context.WithTimeout(ctx, self.options.HandshakeTimeout)
 	defer cancel()
 	connection, err := self.options.Connector(ctx, serverAddress)
@@ -119,7 +132,7 @@ func (self *Transport) Connect(ctx context.Context, serverAddress string, id uui
 		&handshakeHeader,
 		handshaker.SizeHandshake(),
 		handshaker.EmitHandshake,
-		self.options.Logger.Info().Str("endpoint", "client-side"),
+		self.options.Logger.Info().Str("endpoint", "client-side").Str("peer_address", serverAddress),
 	); err != nil {
 		self.Close()
 		return false, err
@@ -131,7 +144,7 @@ func (self *Transport) Connect(ctx context.Context, serverAddress string, id uui
 		ctx,
 		&handshakeHeader,
 		handshaker.HandleHandshake,
-		self.options.Logger.Info().Str("endpoint", "client-side"),
+		self.options.Logger.Info().Str("endpoint", "client-side").Str("peer_address", serverAddress),
 	)
 
 	if err != nil {
@@ -145,11 +158,11 @@ func (self *Transport) Connect(ctx context.Context, serverAddress string, id uui
 }
 
 func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *Packet) error {
-	connectionIsRead := false
+	connectionIsPreRead := false
 
 	if self.inputByteStream.GetDataSize() < 8 {
-		deadline := makeDeadline(ctx, timeout)
-		self.connection.PreRead(ctx, deadline)
+		self.connection.PreRead(ctx, makeDeadline(ctx, timeout))
+		connectionIsPreRead = true
 
 		for {
 			dataSize, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
@@ -164,8 +177,6 @@ func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *
 				break
 			}
 		}
-
-		connectionIsRead = true
 	}
 
 	packetSize := int(int32(binary.BigEndian.Uint32(self.inputByteStream.GetData())))
@@ -179,8 +190,10 @@ func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *
 	}
 
 	if bufferSize := packetSize - self.inputByteStream.GetDataSize(); bufferSize >= 1 {
-		if !connectionIsRead {
-			self.inputByteStream.ReserveBuffer(bufferSize)
+		self.inputByteStream.ReserveBuffer(bufferSize)
+
+		if !connectionIsPreRead {
+			self.connection.PreRead(ctx, makeDeadline(ctx, timeout))
 		}
 
 		for {
@@ -205,6 +218,8 @@ func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *
 	if packetHeaderSize < 0 || packetPayloadOffset > packetSize {
 		return ErrBadPacket
 	}
+
+	packet.Header.Reset()
 
 	if packet.Header.Unmarshal(rawPacket[8:packetPayloadOffset]) != nil {
 		return ErrBadPacket
@@ -247,6 +262,8 @@ func (self *Transport) PeekNext(packet *Packet) (bool, error) {
 		return false, ErrBadPacket
 	}
 
+	packet.Header.Reset()
+
 	if packet.Header.Unmarshal(rawPacket[8:packetPayloadOffset]) != nil {
 		return false, ErrBadPacket
 	}
@@ -277,9 +294,8 @@ func (self *Transport) Write(packet *Packet, callback func([]byte) error) error 
 }
 
 func (self *Transport) Flush(ctx context.Context, timeout time.Duration) error {
-	deadline := makeDeadline(ctx, timeout)
 	data := self.outputByteStream.GetData()
-	_, err := self.connection.Write(ctx, deadline, data)
+	_, err := self.connection.Write(ctx, makeDeadline(ctx, timeout), data)
 	self.outputByteStream.Skip(len(data))
 
 	if err != nil {
@@ -396,7 +412,7 @@ func (self *Transport) sendHandshake(
 		}
 	}
 
-	event.Int("size", handshakeHeaderSize).
+	event.Int("size", handshakeSize).
 		Int("header_size", handshakeHeaderSize).
 		Str("id", self.id.String()).
 		Int32("max_incoming_packet_size", handshakeHeader.MaxIncomingPacketSize).
