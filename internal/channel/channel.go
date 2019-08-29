@@ -73,7 +73,7 @@ func (self *Channel) InvokeRPC(rpc *RPC) {
 		SequenceNumber: int32(self.getNextSequenceNumber()),
 		Deadline:       deadline,
 	}).Init(func(rpc *RPC) {
-		pendingRPC_ := new(pendingRPC).Init(methodOptions.ResponseFactory)
+		pendingRPC_ := getPooledPendingRPC().Init(methodOptions.ResponseFactory)
 		self.pendingRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
 
 		if err := self.getStream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
@@ -114,6 +114,7 @@ func (self *Channel) InvokeRPC(rpc *RPC) {
 		rpc.OutputExtraData = pendingRPC_.OutputExtraData
 		rpc.Response = pendingRPC_.Response
 		rpc.Err = pendingRPC_.Err
+		putPooledPendingRPC(pendingRPC_)
 	}, methodOptions.OutgoingRPCInterceptors)
 
 	rpc.Ctx = BindRPC(rpc.Ctx, rpc)

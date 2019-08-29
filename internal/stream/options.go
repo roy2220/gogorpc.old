@@ -10,6 +10,7 @@ import (
 )
 
 type Options struct {
+	ActiveHangupTimeout       time.Duration
 	IncomingKeepaliveInterval time.Duration
 	OutgoingKeepaliveInterval time.Duration
 	LocalConcurrencyLimit     int
@@ -22,6 +23,7 @@ type Options struct {
 
 func (self *Options) Normalize() *Options {
 	self.normalizeOnce.Do(func() {
+		normalizeDurValue(&self.ActiveHangupTimeout, defaultActiveHangupTimeout, minActiveHangupTimeout, maxActiveHangupTimeout)
 		normalizeDurValue(&self.IncomingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
 		normalizeDurValue(&self.OutgoingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
 		normalizeIntValue(&self.LocalConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
@@ -40,6 +42,12 @@ func (self *Options) Normalize() *Options {
 func (self *Options) Logger() *zerolog.Logger {
 	return self.logger
 }
+
+const (
+	defaultActiveHangupTimeout = 3 * time.Second
+	minActiveHangupTimeout     = 1 * time.Second
+	maxActiveHangupTimeout     = 5 * time.Second
+)
 
 const (
 	defaultKeepaliveInterval = 5 * time.Second

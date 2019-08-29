@@ -106,7 +106,19 @@ func (self *Stream) Process(ctx context.Context, messageProcessor MessageProcess
 	ctx, cancel := context.WithCancel(ctx)
 
 	go func() {
-		errs <- self.sendPackets(ctx, messageProcessor)
+		err := self.sendPackets(ctx, messageProcessor)
+
+		if _, ok := err.(*HangupError); ok {
+			select {
+			case <-ctx.Done():
+				errs <- ctx.Err()
+				return
+			case <-time.After(self.options.ActiveHangupTimeout):
+				// wait for receivePackets returning EOF
+			}
+		}
+
+		errs <- err
 		cancel()
 	}()
 
@@ -155,12 +167,8 @@ func (self *Stream) SendResponse(responseHeader *protocol.ResponseHeader, respon
 	return nil
 }
 
-func (self *Stream) Abort() {
-	if atomic.CompareAndSwapInt32(&self.isHungUp, 0, 1) {
-		self.pendingHangup <- &protocol.Hangup{
-			ErrorCode: ErrorAborted,
-		}
-	}
+func (self *Stream) Abort(extraData ExtraData) {
+	self.hangUp(HangupErrorAborted, extraData)
 }
 
 func (self *Stream) adjust() error {
@@ -243,10 +251,7 @@ func (self *Stream) peek(ctx context.Context, timeout time.Duration, messageFact
 		return err
 	}
 
-	if err := self.parseTransportPacket(ctx, &transportPacket, messageFactory, packet); err != nil {
-		return err
-	}
-
+	self.parseTransportPacket(ctx, &transportPacket, messageFactory, packet)
 	return nil
 }
 
@@ -262,14 +267,11 @@ func (self *Stream) peekNext(ctx context.Context, messageFactory MessageFactory,
 		return false, nil
 	}
 
-	if err := self.parseTransportPacket(ctx, &transportPacket, messageFactory, packet); err != nil {
-		return false, err
-	}
-
+	self.parseTransportPacket(ctx, &transportPacket, messageFactory, packet)
 	return true, nil
 }
 
-func (self *Stream) parseTransportPacket(ctx context.Context, transportPacket *transport.Packet, messageFactory MessageFactory, packet *Packet) error {
+func (self *Stream) parseTransportPacket(ctx context.Context, transportPacket *transport.Packet, messageFactory MessageFactory, packet *Packet) {
 	packet.MessageType = transportPacket.Header.MessageType
 
 	switch packet.MessageType {
@@ -286,20 +288,23 @@ func (self *Stream) parseTransportPacket(ctx context.Context, transportPacket *t
 		packetSize := len(rawPacket)
 
 		if packetSize < 4 {
-			return self.hangUp(ctx, ErrorBadIncomingPacket)
+			packet.Err = errBadPacket
+			return
 		}
 
 		requestHeaderSize := int(int32(binary.BigEndian.Uint32(rawPacket)))
 		requestOffset := 4 + requestHeaderSize
 
 		if requestHeaderSize < 0 || requestOffset > packetSize {
-			return self.hangUp(ctx, ErrorBadIncomingPacket)
+			packet.Err = errBadPacket
+			return
 		}
 
 		packet.RequestHeader.Reset()
 
 		if packet.RequestHeader.Unmarshal(rawPacket[4:requestOffset]) != nil {
-			return self.hangUp(ctx, ErrorBadIncomingPacket)
+			packet.Err = errBadPacket
+			return
 		}
 
 		packet.Message = nil
@@ -314,20 +319,23 @@ func (self *Stream) parseTransportPacket(ctx context.Context, transportPacket *t
 		packetSize := len(rawPacket)
 
 		if packetSize < 4 {
-			return self.hangUp(ctx, ErrorBadIncomingPacket)
+			packet.Err = errBadPacket
+			return
 		}
 
 		responseHeaderSize := int(int32(binary.BigEndian.Uint32(rawPacket)))
 		responseOffset := 4 + responseHeaderSize
 
 		if responseHeaderSize < 0 || responseOffset > packetSize {
-			return self.hangUp(ctx, ErrorBadIncomingPacket)
+			packet.Err = errBadPacket
+			return
 		}
 
 		packet.ResponseHeader.Reset()
 
 		if packet.ResponseHeader.Unmarshal(rawPacket[4:responseOffset]) != nil {
-			return self.hangUp(ctx, ErrorBadIncomingPacket)
+			packet.Err = errBadPacket
+			return
 		}
 
 		packet.Message = nil
@@ -338,14 +346,10 @@ func (self *Stream) parseTransportPacket(ctx context.Context, transportPacket *t
 			packet.Err = packet.Message.Unmarshal(rawPacket[responseOffset:])
 		}
 	case protocol.MESSAGE_HANGUP:
-		if packet.hangup.Unmarshal(transportPacket.Payload) != nil {
-			return self.hangUp(ctx, ErrorBadIncomingPacket)
-		}
+		packet.Err = packet.hangup.Unmarshal(transportPacket.Payload)
 	default:
-		return self.hangUp(ctx, ErrorBadIncomingPacket)
+		packet.Err = errBadPacket
 	}
-
-	return nil
 }
 
 func (self *Stream) handlePacket(
@@ -355,6 +359,11 @@ func (self *Stream) handlePacket(
 	localConcurrency *int,
 	handledResponseCount *int,
 ) error {
+	if packet.Err == errBadPacket {
+		self.hangUp(HangupErrorBadIncomingPacket, nil)
+		return nil
+	}
+
 	switch packet.MessageType {
 	case protocol.MESSAGE_KEEPALIVE:
 		messageHandler.HandleKeepalive(ctx, packet)
@@ -364,7 +373,8 @@ func (self *Stream) handlePacket(
 		}
 
 		if *localConcurrency == self.localConcurrencyLimit {
-			return self.hangUp(ctx, ErrorTooManyIncomingRequests)
+			self.hangUp(HangupErrorTooManyIncomingRequests, nil)
+			return nil
 		}
 
 		messageHandler.HandleRequest(ctx, packet)
@@ -377,7 +387,10 @@ func (self *Stream) handlePacket(
 		messageHandler.HandleResponse(ctx, packet)
 		*handledResponseCount++
 	case protocol.MESSAGE_HANGUP:
-		return &Error{packet.hangup.ErrorCode, true}
+		self.options.Logger().Error().Err(packet.Err).
+			Str("transport_id", self.GetTransportID().String()).
+			Msg("stream_passive_hangup")
+		return &HangupError{packet.hangup.ErrorCode, true, packet.hangup.ExtraData}
 	default:
 		panic("unreachable code")
 	}
@@ -386,21 +399,19 @@ func (self *Stream) handlePacket(
 		self.options.Logger().Error().Err(packet.Err).
 			Str("transport_id", self.GetTransportID().String()).
 			Msg("stream_system_error")
-		return self.hangUp(ctx, ErrorSystem)
+		self.hangUp(HangupErrorSystem, nil)
 	}
 
 	return nil
 }
 
-func (self *Stream) hangUp(ctx context.Context, errorCode ErrorCode) error {
+func (self *Stream) hangUp(hangupErrorCode HangupErrorCode, extraData ExtraData) {
 	if atomic.CompareAndSwapInt32(&self.isHungUp, 0, 1) {
 		self.pendingHangup <- &protocol.Hangup{
-			ErrorCode: errorCode,
+			ErrorCode: hangupErrorCode,
+			ExtraData: extraData,
 		}
 	}
-
-	<-ctx.Done()
-	return ctx.Err()
 }
 
 func (self *Stream) sendPackets(ctx context.Context, messageEmitter MessageEmitter) error {
@@ -464,7 +475,12 @@ func (self *Stream) getPendingRequests(ctx context.Context, pendingRequests chan
 
 	for {
 		pendingRequestsA.List.Init()
-		pendingRequestsA.ListLength, _ = self.dequeOfPendingRequests.RemoveNodes(ctx, true, &pendingRequestsA.List)
+		var err error
+		pendingRequestsA.ListLength, err = self.dequeOfPendingRequests.RemoveNodes(ctx, true, &pendingRequestsA.List)
+
+		if err != nil {
+			return err
+		}
 
 		select {
 		case pendingRequests <- pendingRequestsA:
@@ -482,7 +498,12 @@ func (self *Stream) getPendingResponses(ctx context.Context, pendingResponses ch
 
 	for {
 		pendingResponsesA.List.Init()
-		pendingResponsesA.ListLength, _ = self.dequeOfPendingResponses.RemoveNodes(ctx, true, &pendingResponsesA.List)
+		var err error
+		pendingResponsesA.ListLength, err = self.dequeOfPendingResponses.RemoveNodes(ctx, true, &pendingResponsesA.List)
+
+		if err != nil {
+			return err
+		}
 
 		select {
 		case pendingResponses <- pendingResponsesA:
@@ -544,11 +565,11 @@ func (self *Stream) emitPackets(
 	messageEmitter MessageEmitter,
 ) error {
 	var packet Packet
+	now := time.Now().UnixNano()
+	packetErr := error(nil)
 	emittedPacketCount := 0
-	err := error(nil)
 
 	if pendingRequests != nil {
-		now := time.Now().UnixNano()
 		getListNode := pendingRequests.List.GetNodesSafely()
 		emittedRequestCount := 0
 		droppedRequestCount := 0
@@ -558,19 +579,13 @@ func (self *Stream) emitPackets(
 			packet.MessageType = protocol.MESSAGE_REQUEST
 			packet.RequestHeader = pendingRequest.Header
 			packet.Message = pendingRequest.Payload
-
-			if deadline := pendingRequest.Header.Deadline; deadline != 0 && deadline <= now {
-				packet.Err = ErrRequestExpired
-				messageEmitter.PostEmitRequest(&packet)
-			} else {
-				self.write(&packet, messageEmitter)
-			}
+			self.write(&packet, now, messageEmitter)
 
 			if packet.Err != nil && packet.Err != ErrPacketDropped {
 				self.options.Logger().Error().Err(packet.Err).
 					Str("transport_id", self.GetTransportID().String()).
 					Msg("stream_system_error")
-				err = packet.Err
+				packetErr = packet.Err
 				continue
 			}
 
@@ -600,13 +615,13 @@ func (self *Stream) emitPackets(
 			packet.MessageType = protocol.MESSAGE_RESPONSE
 			packet.ResponseHeader = pendingResponse.Header
 			packet.Message = pendingResponse.Payload
-			self.write(&packet, messageEmitter)
+			self.write(&packet, now, messageEmitter)
 
 			if packet.Err != nil && packet.Err != ErrPacketDropped {
 				self.options.Logger().Error().Err(packet.Err).
 					Str("transport_id", self.GetTransportID().String()).
 					Msg("stream_system_error")
-				err = packet.Err
+				packetErr = packet.Err
 				continue
 			}
 
@@ -628,37 +643,33 @@ func (self *Stream) emitPackets(
 	}
 
 	if pendingHangup != nil {
-		err = &Error{pendingHangup.ErrorCode, false}
-	}
-
-	if err == nil && emittedPacketCount == 0 {
-		packet.MessageType = protocol.MESSAGE_KEEPALIVE
-		self.write(&packet, nil)
-		err = packet.Err
-	}
-
-	if err != nil {
+		self.options.Logger().Error().Err(packet.Err).
+			Str("transport_id", self.GetTransportID().String()).
+			Msg("stream_active_hangup")
 		packet.MessageType = protocol.MESSAGE_HANGUP
-
-		if error_, ok := err.(*Error); ok && !error_.IsFromWire {
-			packet.hangup.ErrorCode = error_.Code
-		} else {
-			if err == transport.ErrPacketTooLarge {
-				packet.hangup.ErrorCode = ErrorOutgoingPacketTooLarge
-			} else {
-				packet.hangup.ErrorCode = ErrorSystem
-			}
-
-			err = &Error{packet.hangup.ErrorCode, false}
-		}
-
-		self.write(&packet, nil)
+		packet.hangup = *pendingHangup
+		self.write(&packet, now, nil)
+		return &HangupError{pendingHangup.ErrorCode, false, pendingHangup.ExtraData}
 	}
 
-	return err
+	if packetErr == nil && emittedPacketCount == 0 {
+		packet.MessageType = protocol.MESSAGE_KEEPALIVE
+		self.write(&packet, now, nil)
+		packetErr = packet.Err
+	}
+
+	if packetErr != nil {
+		if packetErr == transport.ErrPacketTooLarge {
+			self.hangUp(HangupErrorOutgoingPacketTooLarge, nil)
+		} else {
+			self.hangUp(HangupErrorSystem, nil)
+		}
+	}
+
+	return nil
 }
 
-func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter) {
+func (self *Stream) write(packet *Packet, now int64, messageEmitter MessageEmitter) {
 	transportPacket := transport.Packet{
 		Header: protocol.PacketHeader{
 			MessageType: packet.MessageType,
@@ -680,17 +691,22 @@ func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter) {
 			})
 		}
 	case protocol.MESSAGE_REQUEST:
-		requestHeaderSize := packet.RequestHeader.Size()
-		transportPacket.PayloadSize = 4 + requestHeaderSize + packet.Message.Size()
+		if packet.RequestHeader.Deadline != 0 && packet.RequestHeader.Deadline <= now {
+			packet.Err = ErrRequestExpired
+		} else {
+			requestHeaderSize := packet.RequestHeader.Size()
+			transportPacket.PayloadSize = 4 + requestHeaderSize + packet.Message.Size()
 
-		callback := func(buffer []byte) error {
-			binary.BigEndian.PutUint32(buffer, uint32(requestHeaderSize))
-			packet.RequestHeader.MarshalTo(buffer[4:])
-			_, err := packet.Message.MarshalTo(buffer[4+requestHeaderSize:])
-			return err
+			callback := func(buffer []byte) error {
+				binary.BigEndian.PutUint32(buffer, uint32(requestHeaderSize))
+				packet.RequestHeader.MarshalTo(buffer[4:])
+				_, err := packet.Message.MarshalTo(buffer[4+requestHeaderSize:])
+				return err
+			}
+
+			packet.Err = self.transport.Write(&transportPacket, callback)
 		}
 
-		packet.Err = self.transport.Write(&transportPacket, callback)
 		messageEmitter.PostEmitRequest(packet)
 	case protocol.MESSAGE_RESPONSE:
 		responseHeaderSize := packet.ResponseHeader.Size()
@@ -708,7 +724,7 @@ func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter) {
 	case protocol.MESSAGE_HANGUP:
 		transportPacket.PayloadSize = packet.hangup.Size()
 
-		self.transport.Write(&transportPacket, func(buffer []byte) error {
+		packet.Err = self.transport.Write(&transportPacket, func(buffer []byte) error {
 			packet.hangup.MarshalTo(buffer)
 			return nil
 		})
@@ -869,6 +885,8 @@ type pendingMessages struct {
 	List       list.List
 	ListLength int
 }
+
+var errBadPacket = errors.New("pbrpc/stream: bad packet")
 
 var pendingRequestPool = sync.Pool{New: func() interface{} { return new(PendingRequest) }}
 var pendingResponsePool = sync.Pool{New: func() interface{} { return new(PendingResponse) }}

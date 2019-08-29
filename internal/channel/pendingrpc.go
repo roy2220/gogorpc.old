@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"sync"
 
 	"github.com/let-z-go/pbrpc/internal/stream"
 )
@@ -45,4 +46,16 @@ func (self *pendingRPC) WaitFor(ctx context.Context) error {
 	case <-self.completion:
 		return nil
 	}
+}
+
+var pendingRPCPool = sync.Pool{New: func() interface{} { return new(pendingRPC) }}
+
+func getPooledPendingRPC() *pendingRPC {
+	pendingRPC_ := pendingRPCPool.Get().(*pendingRPC)
+	*pendingRPC_ = pendingRPC{}
+	return pendingRPC_
+}
+
+func putPooledPendingRPC(pendingRPC_ *pendingRPC) {
+	pendingRPCPool.Put(pendingRPC_)
 }

@@ -26,7 +26,7 @@ func (self *RPC) Handle() bool {
 	return self.internals.Handle(self)
 }
 
-type ExtraData map[string][]byte
+type ExtraData = map[string][]byte
 
 type RPCInternals struct {
 	SequenceNumber int32
