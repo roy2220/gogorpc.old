@@ -26,7 +26,7 @@ func (self *Options) Normalize() *Options {
 		}
 
 		if self.Connector == nil {
-			self.Connector = defaultConnector
+			self.Connector = TCPConnector
 		}
 
 		normalizeDurValue(&self.HandshakeTimeout, defaultHandshakeTimeout, minHandshakeTimeout, maxHandshakeTimeout)
@@ -69,7 +69,6 @@ const (
 )
 
 var defaultLogger = zerolog.Nop()
-var defaultConnector = TCPConnector
 
 func normalizeDurValue(value *time.Duration, defaultValue, minValue, maxValue time.Duration) {
 	if *value == 0 {

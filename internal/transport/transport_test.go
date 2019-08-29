@@ -20,79 +20,76 @@ import (
 
 func TestOptions(t *testing.T) {
 	type PureOptions struct {
-		Logger                *zerolog.Logger
-		Connector             Connector
 		HandshakeTimeout      time.Duration
 		MinInputBufferSize    int
 		MaxInputBufferSize    int
 		MaxIncomingPacketSize int
 		MaxOutgoingPacketSize int
 	}
-	makePureOptions := func(opt *Options) PureOptions {
+	makePureOptions := func(opts *Options) PureOptions {
 		return PureOptions{
-			HandshakeTimeout:      opt.HandshakeTimeout,
-			MinInputBufferSize:    opt.MinInputBufferSize,
-			MaxInputBufferSize:    opt.MaxInputBufferSize,
-			MaxIncomingPacketSize: opt.MaxIncomingPacketSize,
-			MaxOutgoingPacketSize: opt.MaxOutgoingPacketSize,
+			HandshakeTimeout:      opts.HandshakeTimeout,
+			MinInputBufferSize:    opts.MinInputBufferSize,
+			MaxInputBufferSize:    opts.MaxInputBufferSize,
+			MaxIncomingPacketSize: opts.MaxIncomingPacketSize,
+			MaxOutgoingPacketSize: opts.MaxOutgoingPacketSize,
 		}
 	}
 	{
-		opt1 := Options{}
-		opt1.Normalize()
-		opt2 := Options{
+		opts1 := Options{}
+		opts1.Normalize()
+		opts2 := Options{
 			HandshakeTimeout:      defaultHandshakeTimeout,
 			MinInputBufferSize:    defaultMinInputBufferSize,
 			MaxInputBufferSize:    defaultMaxInputBufferSize,
 			MaxIncomingPacketSize: defaultMaxPacketSize,
 			MaxOutgoingPacketSize: defaultMaxPacketSize,
 		}
-		assert.Equal(t, makePureOptions(&opt2), makePureOptions(&opt1))
+		assert.Equal(t, makePureOptions(&opts2), makePureOptions(&opts1))
 	}
 	{
-		opt1 := Options{
+		opts1 := Options{
 			HandshakeTimeout:      -1,
 			MinInputBufferSize:    -1,
 			MaxInputBufferSize:    -1,
 			MaxIncomingPacketSize: -1,
 			MaxOutgoingPacketSize: -1,
 		}
-		opt1.Normalize()
-		opt2 := Options{
+		opts1.Normalize()
+		opts2 := Options{
 			HandshakeTimeout:      minHandshakeTimeout,
 			MinInputBufferSize:    minInputBufferSize,
 			MaxInputBufferSize:    minInputBufferSize,
 			MaxIncomingPacketSize: minInputBufferSize,
 			MaxOutgoingPacketSize: minMaxPacketSize,
 		}
-		assert.Equal(t, makePureOptions(&opt2), makePureOptions(&opt1))
+		assert.Equal(t, makePureOptions(&opts2), makePureOptions(&opts1))
 	}
 	{
-		opt1 := Options{
+		opts1 := Options{
 			HandshakeTimeout:      math.MaxInt64,
 			MinInputBufferSize:    math.MaxInt32,
 			MaxInputBufferSize:    math.MaxInt32,
 			MaxIncomingPacketSize: math.MaxInt32,
 			MaxOutgoingPacketSize: math.MaxInt32,
 		}
-		opt1.Normalize()
-		opt2 := Options{
+		opts1.Normalize()
+		opts2 := Options{
 			HandshakeTimeout:      maxHandshakeTimeout,
 			MinInputBufferSize:    maxInputBufferSize,
 			MaxInputBufferSize:    maxInputBufferSize,
 			MaxIncomingPacketSize: maxMaxPacketSize,
 			MaxOutgoingPacketSize: maxMaxPacketSize,
 		}
-		assert.Equal(t, makePureOptions(&opt2), makePureOptions(&opt1))
+		assert.Equal(t, makePureOptions(&opts2), makePureOptions(&opts1))
 	}
 }
 
 func TestHandshake1(t *testing.T) {
-	logger := zerolog.New(os.Stdout)
 	testSetup(
 		t,
 		func(ctx context.Context, sa string) {
-			tp := new(Transport).Init(&Options{Logger: &logger, Connector: TCPConnector})
+			tp := new(Transport).Init(&Options{Logger: &logger})
 			defer tp.Close()
 			ok, err := tp.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{
 				CbSizeHandshake: func() int {
@@ -108,7 +105,7 @@ func TestHandshake1(t *testing.T) {
 					}
 					return true, nil
 				},
-			})
+			}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
@@ -131,7 +128,7 @@ func TestHandshake1(t *testing.T) {
 					copy(buf, "nick to meet you")
 					return nil
 				},
-			})
+			}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
@@ -144,19 +141,9 @@ func TestHandshake2(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, sa string) {
-			tp := new(Transport).Init(&Options{Connector: TCPConnector, HandshakeTimeout: -1})
+			tp := new(Transport).Init(&Options{HandshakeTimeout: -1})
 			defer tp.Close()
-			ok, err := tp.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{
-				CbSizeHandshake: func() int {
-					return 0
-				},
-				CbEmitHandshake: func(buf []byte) error {
-					return nil
-				},
-				CbHandleHandshake: func(ctx context.Context, rh []byte) (bool, error) {
-					return true, nil
-				},
-			})
+			ok, err := tp.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{}.Init())
 			if !assert.EqualError(t, err, "pbrpc/transport: network: context deadline exceeded") {
 				t.FailNow()
 			}
@@ -171,13 +158,7 @@ func TestHandshake2(t *testing.T) {
 					<-time.After(10 * time.Millisecond)
 					return true, ctx.Err()
 				},
-				CbSizeHandshake: func() int {
-					return 0
-				},
-				CbEmitHandshake: func(buf []byte) error {
-					return nil
-				},
-			})
+			}.Init())
 			if !assert.EqualError(t, err, "context deadline exceeded") {
 				t.FailNow()
 			}
@@ -190,21 +171,15 @@ func TestHandshake3(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, sa string) {
-			tp := new(Transport).Init(&Options{Connector: TCPConnector, HandshakeTimeout: -1})
+			tp := new(Transport).Init(&Options{HandshakeTimeout: -1})
 			defer tp.Close()
 			ok, err := tp.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{
-				CbSizeHandshake: func() int {
-					return 0
-				},
-				CbEmitHandshake: func(buf []byte) error {
-					return nil
-				},
 				CbHandleHandshake: func(ctx context.Context, rh []byte) (bool, error) {
 					<-ctx.Done()
 					<-time.After(10 * time.Millisecond)
 					return false, ctx.Err()
 				},
-			})
+			}.Init())
 			if !assert.EqualError(t, err, "context deadline exceeded") {
 				t.FailNow()
 			}
@@ -213,21 +188,87 @@ func TestHandshake3(t *testing.T) {
 		func(ctx context.Context, conn net.Conn) {
 			tp := new(Transport).Init(&Options{HandshakeTimeout: -1})
 			defer tp.Close()
-			ok, err := tp.Accept(ctx, conn, testHandshaker{
-				CbHandleHandshake: func(ctx context.Context, rh []byte) (bool, error) {
-					return false, nil
-				},
-				CbSizeHandshake: func() int {
-					return 0
-				},
-				CbEmitHandshake: func(buf []byte) error {
-					return nil
-				},
-			})
+			ok, err := tp.Accept(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
-			assert.False(t, ok)
+			assert.True(t, ok)
+		},
+	)
+}
+
+func TestHandshake4(t *testing.T) {
+	testSetup2(
+		t,
+		&Options{},
+		&Options{},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, defaultMaxPacketSize, tp.maxIncomingPacketSize)
+			assert.Equal(t, defaultMaxPacketSize, tp.maxOutgoingPacketSize)
+		},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, defaultMaxPacketSize, tp.maxIncomingPacketSize)
+			assert.Equal(t, defaultMaxPacketSize, tp.maxOutgoingPacketSize)
+		},
+	)
+	testSetup2(
+		t,
+		&Options{
+			MaxOutgoingPacketSize: minMaxPacketSize + 1,
+		},
+		&Options{
+			MaxIncomingPacketSize: minMaxPacketSize + 100,
+		},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, minMaxPacketSize+1, tp.maxOutgoingPacketSize)
+		},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, minMaxPacketSize+1, tp.maxIncomingPacketSize)
+		},
+	)
+	testSetup2(
+		t,
+		&Options{
+			MaxOutgoingPacketSize: minMaxPacketSize + 100,
+		},
+		&Options{
+			MaxIncomingPacketSize: minMaxPacketSize + 1,
+		},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, minMaxPacketSize+1, tp.maxOutgoingPacketSize)
+		},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, minMaxPacketSize+1, tp.maxIncomingPacketSize)
+		},
+	)
+	testSetup2(
+		t,
+		&Options{
+			MaxIncomingPacketSize: minMaxPacketSize + 100,
+		},
+		&Options{
+			MaxOutgoingPacketSize: minMaxPacketSize + 1,
+		},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, minMaxPacketSize+1, tp.maxIncomingPacketSize)
+		},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, minMaxPacketSize+1, tp.maxOutgoingPacketSize)
+		},
+	)
+	testSetup2(
+		t,
+		&Options{
+			MaxIncomingPacketSize: minMaxPacketSize + 1,
+		},
+		&Options{
+			MaxOutgoingPacketSize: minMaxPacketSize + 100,
+		},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, minMaxPacketSize+1, tp.maxIncomingPacketSize)
+		},
+		func(ctx context.Context, tp *Transport) {
+			assert.Equal(t, minMaxPacketSize+1, tp.maxOutgoingPacketSize)
 		},
 	)
 }
@@ -246,7 +287,7 @@ func TestSendAndReceivePackets(t *testing.T) {
 			return protocol.MESSAGE_KEEPALIVE
 		}
 	}
-	opts1 := Options{Connector: TCPConnector}
+	opts1 := Options{}
 	opts2 := Options{}
 	cb1 := func(ctx context.Context, tp *Transport) {
 		m := 1
@@ -322,7 +363,7 @@ func TestSendAndReceivePackets(t *testing.T) {
 }
 
 func TestSendBadPacket1(t *testing.T) {
-	opts1 := Options{Connector: TCPConnector, MaxOutgoingPacketSize: -1}
+	opts1 := Options{MaxOutgoingPacketSize: -1}
 	opts2 := Options{MaxOutgoingPacketSize: -1}
 	cb1 := func(ctx context.Context, tp *Transport) {
 		err := tp.Write(&Packet{
@@ -343,7 +384,7 @@ func TestSendBadPacket1(t *testing.T) {
 
 func TestSendBadPacket2(t *testing.T) {
 	errTest := errors.New("my test")
-	opts1 := Options{Connector: TCPConnector, MaxOutgoingPacketSize: -1}
+	opts1 := Options{MaxOutgoingPacketSize: -1}
 	opts2 := Options{MaxOutgoingPacketSize: -1}
 	cb1 := func(ctx context.Context, tp *Transport) {
 		err := tp.Write(&Packet{
@@ -366,6 +407,19 @@ type testHandshaker struct {
 	CbHandleHandshake func(context.Context, []byte) (bool, error)
 	CbSizeHandshake   func() int
 	CbEmitHandshake   func([]byte) error
+}
+
+func (s testHandshaker) Init() testHandshaker {
+	if s.CbHandleHandshake == nil {
+		s.CbHandleHandshake = func(context.Context, []byte) (bool, error) { return true, nil }
+	}
+	if s.CbSizeHandshake == nil {
+		s.CbSizeHandshake = func() int { return 0 }
+	}
+	if s.CbEmitHandshake == nil {
+		s.CbEmitHandshake = func([]byte) error { return nil }
+	}
+	return s
 }
 
 func (s testHandshaker) HandleHandshake(ctx context.Context, rh []byte) (bool, error) {
@@ -461,3 +515,5 @@ func testSetup2(
 		},
 	)
 }
+
+var logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()

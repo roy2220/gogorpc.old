@@ -19,6 +19,8 @@ type messageProcessor struct {
 	pendingRPCCache    *pendingRPC
 }
 
+var _ = stream.MessageProcessor((*messageProcessor)(nil))
+
 func (self *messageProcessor) NewKeepalive(packet *stream.Packet) {
 	packet.Message = self.Options.Keepaliver.NewKeepalive()
 }

@@ -151,8 +151,8 @@ var _ = transport.Handshaker(&serverHandshaker{})
 
 func (self *clientHandshaker) SizeHandshake() int {
 	self.handshakeHeader = protocol.StreamHandshakeHeader{
-		IncomingKeepaliveInterval: int32(self.options.IncomingKeepaliveInterval),
-		OutgoingKeepaliveInterval: int32(self.options.OutgoingKeepaliveInterval),
+		IncomingKeepaliveInterval: int32(self.options.IncomingKeepaliveInterval / time.Millisecond),
+		OutgoingKeepaliveInterval: int32(self.options.OutgoingKeepaliveInterval / time.Millisecond),
 		LocalConcurrencyLimit:     int32(self.options.LocalConcurrencyLimit),
 		RemoteConcurrencyLimit:    int32(self.options.RemoteConcurrencyLimit),
 	}

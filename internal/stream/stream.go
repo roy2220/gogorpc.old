@@ -346,6 +346,7 @@ func (self *Stream) parseTransportPacket(ctx context.Context, transportPacket *t
 			packet.Err = packet.Message.Unmarshal(rawPacket[responseOffset:])
 		}
 	case protocol.MESSAGE_HANGUP:
+		packet.hangup.Reset()
 		packet.Err = packet.hangup.Unmarshal(transportPacket.Payload)
 	default:
 		packet.Err = errBadPacket
@@ -417,21 +418,11 @@ func (self *Stream) hangUp(hangupErrorCode HangupErrorCode, extraData ExtraData)
 func (self *Stream) sendPackets(ctx context.Context, messageEmitter MessageEmitter) error {
 	errs := make(chan error, 2)
 	ctx, cancel := context.WithCancel(ctx)
-	pendingRequests := make(chan *pendingMessages, 1)
-	pendingResponses := make(chan *pendingMessages, 1)
-
-	go func() {
-		errs <- self.getPendingRequests(ctx, pendingRequests)
-		cancel()
-	}()
-
-	go func() {
-		errs <- self.getPendingResponses(ctx, pendingResponses)
-		cancel()
-	}()
+	pendingRequests := self.makePendingRequests(errs, ctx, cancel)
+	pendingResponses := self.makePendingResponses(errs, ctx, cancel)
 
 	for {
-		pendingRequests2, pendingResponses2, pendingHangup, err := self.checkPendingMessages(
+		pendingRequests2, pendingResponses2, pendingHangup, err := self.getPendingMessages(
 			errs,
 			pendingRequests,
 			pendingResponses,
@@ -469,7 +460,18 @@ func (self *Stream) sendPackets(ctx context.Context, messageEmitter MessageEmitt
 	}
 }
 
-func (self *Stream) getPendingRequests(ctx context.Context, pendingRequests chan *pendingMessages) error {
+func (self *Stream) makePendingRequests(errs chan error, ctx context.Context, cancel context.CancelFunc) chan *pendingMessages {
+	pendingRequests := make(chan *pendingMessages)
+
+	go func() {
+		errs <- self.putPendingRequests(ctx, pendingRequests)
+		cancel()
+	}()
+
+	return pendingRequests
+}
+
+func (self *Stream) putPendingRequests(ctx context.Context, pendingRequests chan *pendingMessages) error {
 	pendingRequestsA := new(pendingMessages)
 	pendingRequestsB := new(pendingMessages)
 
@@ -492,7 +494,18 @@ func (self *Stream) getPendingRequests(ctx context.Context, pendingRequests chan
 	}
 }
 
-func (self *Stream) getPendingResponses(ctx context.Context, pendingResponses chan *pendingMessages) error {
+func (self *Stream) makePendingResponses(errs chan error, ctx context.Context, cancel context.CancelFunc) chan *pendingMessages {
+	pendingResponses := make(chan *pendingMessages)
+
+	go func() {
+		errs <- self.putPendingResponses(ctx, pendingResponses)
+		cancel()
+	}()
+
+	return pendingResponses
+}
+
+func (self *Stream) putPendingResponses(ctx context.Context, pendingResponses chan *pendingMessages) error {
 	pendingResponsesA := new(pendingMessages)
 	pendingResponsesB := new(pendingMessages)
 
@@ -515,7 +528,7 @@ func (self *Stream) getPendingResponses(ctx context.Context, pendingResponses ch
 	}
 }
 
-func (self *Stream) checkPendingMessages(
+func (self *Stream) getPendingMessages(
 	errs chan error,
 	pendingRequests chan *pendingMessages,
 	pendingResponses chan *pendingMessages,
@@ -648,13 +661,13 @@ func (self *Stream) emitPackets(
 			Msg("stream_active_hangup")
 		packet.MessageType = protocol.MESSAGE_HANGUP
 		packet.hangup = *pendingHangup
-		self.write(&packet, now, nil)
+		self.write(&packet, now, messageEmitter)
 		return &HangupError{pendingHangup.ErrorCode, false, pendingHangup.ExtraData}
 	}
 
 	if packetErr == nil && emittedPacketCount == 0 {
 		packet.MessageType = protocol.MESSAGE_KEEPALIVE
-		self.write(&packet, now, nil)
+		self.write(&packet, now, messageEmitter)
 		packetErr = packet.Err
 	}
 
