@@ -272,6 +272,92 @@ func TestReconnection2(t *testing.T) {
 	)
 }
 
+func TestInterception(t *testing.T) {
+	opts2 := &Options{}
+	opts2.SetMethod("foo", "bar").
+		SetIncomingRPCHandler(func(rpc *RPC) {
+			rpc.Response = NullMessage
+			assert.Equal(t, "v4", string(rpc.RequestExtraData["k"]))
+		}).
+		AddIncomingRPCInterceptor(func(rpc *RPC) {
+			assert.Equal(t, "v2", string(rpc.RequestExtraData["k"]))
+			rpc.RequestExtraData["k"] = []byte("v3")
+			rpc.Handle()
+		}).
+		AddIncomingRPCInterceptor(func(rpc *RPC) {
+			assert.Equal(t, "v3", string(rpc.RequestExtraData["k"]))
+			rpc.RequestExtraData["k"] = []byte("v4")
+			rpc.Handle()
+		})
+
+	opts2.SetMethod("foo", "").
+		AddIncomingRPCInterceptor(func(rpc *RPC) {
+			assert.Equal(t, "v1", string(rpc.RequestExtraData["k"]))
+			rpc.RequestExtraData["k"] = []byte("v2")
+			rpc.Handle()
+		})
+	opts2.SetMethod("", "").
+		AddIncomingRPCInterceptor(func(rpc *RPC) {
+			assert.Nil(t, rpc.RequestExtraData)
+			rpc.RequestExtraData = ExtraData{}
+			rpc.RequestExtraData["k"] = []byte("v1")
+			rpc.Handle()
+		})
+	testSetup2(
+		t,
+		&Options{},
+		opts2,
+		func(ctx context.Context, cn *Channel) {
+			rpc := RPC{
+				Ctx:         ctx,
+				ServiceName: "foo",
+				MethodName:  "bar",
+				Request:     NullMessage,
+			}
+			cn.InvokeRPC(&rpc)
+			cn.Abort(nil)
+		},
+		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
+			return false
+		},
+		0,
+	)
+}
+
+func TestDeadline(t *testing.T) {
+	opts2 := &Options{}
+	opts2.SetMethod("foo", "bar").
+		SetIncomingRPCHandler(func(rpc *RPC) {
+			tm := time.Now()
+			<-rpc.Ctx.Done()
+			assert.True(t, time.Since(tm) >= time.Duration(900*time.Millisecond))
+			rpc.Response = NullMessage
+		})
+	testSetup2(
+		t,
+		&Options{},
+		opts2,
+		func(ctx context.Context, cn *Channel) {
+			ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+			defer cancel()
+			rpc := RPC{
+				Ctx:         ctx,
+				ServiceName: "foo",
+				MethodName:  "bar",
+				Request:     NullMessage,
+			}
+			cn.InvokeRPC(&rpc)
+			assert.EqualError(t, rpc.Err, "context deadline exceeded")
+			cn.Abort(nil)
+		},
+		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
+			time.Sleep(time.Second / 2 * 3)
+			return false
+		},
+		0,
+	)
+}
+
 func testSetup2(
 	t *testing.T,
 	opts1 *Options,
