@@ -13,7 +13,7 @@ const (
 	EventConnecting
 	EventConnected
 	EventConnectFailed
-	EventProcessFailed
+	EventServeFailed
 )
 
 const (
@@ -73,8 +73,8 @@ func (self EventType) GoString() string {
 		return "<EventConnected>"
 	case EventConnectFailed:
 		return "<EventConnectFailed>"
-	case EventProcessFailed:
-		return "<EventProcessFailed>"
+	case EventServeFailed:
+		return "<EventServeFailed>"
 	default:
 		return fmt.Sprintf("<State:%d>", self)
 	}

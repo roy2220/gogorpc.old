@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -419,18 +420,33 @@ func TestPingAndPong2(t *testing.T) {
 	const N = 1000
 	opts1 := Options{LocalConcurrencyLimit: 10}
 	opts2 := Options{}
-	cnt := map[int]struct{}{}
+	sns1 := map[int32]struct{}{}
+	sns2 := map[int32]struct{}{}
+	cnt1 := int32(N)
+	cnt2 := int32(N)
 	var mp1 testMessageProcessor
 	mp1 = testMessageProcessor{
+		CbHandleRequest: func(ctx context.Context, pk *Packet) {
+			select {
+			case <-ctx.Done():
+				pk.Err = ctx.Err()
+				return
+			case <-time.After(time.Duration(pk.RequestHeader.SequenceNumber%3) * time.Millisecond):
+			}
+			resp := RawMessage(fmt.Sprintf("pong%d", pk.RequestHeader.SequenceNumber))
+			pk.Err = mp1.Stream.SendResponse(&protocol.ResponseHeader{
+				SequenceNumber: pk.RequestHeader.SequenceNumber,
+			}, &resp)
+		},
 		CbNewResponse: func(pk *Packet) {
 			pk.Message = new(RawMessage)
 		},
 		CbHandleResponse: func(ctx context.Context, pk *Packet) {
 			if assert.Equal(t, fmt.Sprintf("pong%d", pk.ResponseHeader.SequenceNumber), string(*pk.Message.(*RawMessage))) {
-				_, ok := cnt[int(pk.ResponseHeader.SequenceNumber)]
+				_, ok := sns1[pk.ResponseHeader.SequenceNumber]
 				if assert.False(t, ok) {
-					cnt[int(pk.ResponseHeader.SequenceNumber)] = struct{}{}
-					if len(cnt) == N {
+					sns1[pk.ResponseHeader.SequenceNumber] = struct{}{}
+					if atomic.AddInt32(&cnt1, -1) == 0 && atomic.LoadInt32(&cnt2) == 0 {
 						mp1.Stream.Abort(nil)
 					}
 				}
@@ -466,13 +482,35 @@ func TestPingAndPong2(t *testing.T) {
 				SequenceNumber: pk.RequestHeader.SequenceNumber,
 			}, &resp)
 		},
+		CbNewResponse: func(pk *Packet) {
+			pk.Message = new(RawMessage)
+		},
+		CbHandleResponse: func(ctx context.Context, pk *Packet) {
+			if assert.Equal(t, fmt.Sprintf("pong%d", pk.ResponseHeader.SequenceNumber), string(*pk.Message.(*RawMessage))) {
+				_, ok := sns2[pk.ResponseHeader.SequenceNumber]
+				if assert.False(t, ok) {
+					sns2[pk.ResponseHeader.SequenceNumber] = struct{}{}
+					if atomic.AddInt32(&cnt2, -1) == 0 && atomic.LoadInt32(&cnt1) == 0 {
+						mp1.Stream.Abort(nil)
+					}
+				}
+			}
+		},
 	}.Init()
 	cb2 := func(ctx context.Context, st *Stream) {
-		req := RawMessage("ping")
-		err := st.SendRequest(ctx, &protocol.RequestHeader{}, &req)
-		if !assert.NoError(t, err) {
-			t.FailNow()
+		wg := sync.WaitGroup{}
+		for i := 0; i < N; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				req := RawMessage(fmt.Sprintf("ping%d", i))
+				err := st.SendRequest(ctx, &protocol.RequestHeader{SequenceNumber: int32(i)}, &req)
+				if !assert.NoError(t, err) {
+					t.FailNow()
+				}
+			}(i)
 		}
+		wg.Wait()
 	}
 	testSetup2(t, &opts1, &opts2, &mp1, &mp2, cb1, cb2)
 }
@@ -574,7 +612,7 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Process(ctx, mp1)
+				err := st.Serve(ctx, mp1)
 				t.Log(err)
 			}()
 			defer wg.Wait()
@@ -595,7 +633,7 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Process(ctx, mp2)
+				err := st.Serve(ctx, mp2)
 				t.Log(err)
 			}()
 			defer wg.Wait()

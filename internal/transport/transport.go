@@ -313,7 +313,7 @@ func (self *Transport) receiveHandshake(
 	ctx context.Context,
 	handshakeHeader *protocol.TransportHandshakeHeader,
 	handshakeHandler func(context.Context, []byte) (bool, error),
-	event *zerolog.Event,
+	logEvent *zerolog.Event,
 ) (bool, error) {
 	self.connection.PreRead(ctx, time.Time{})
 
@@ -379,7 +379,7 @@ func (self *Transport) receiveHandshake(
 		}
 	}
 
-	event.Int("size", len(rawHandshake)).
+	logEvent.Int("size", len(rawHandshake)).
 		Int("header_size", handshakeHeaderSize).
 		Str("id", self.id.String()).
 		Int32("max_incoming_packet_size", handshakeHeader.MaxIncomingPacketSize).
@@ -395,7 +395,7 @@ func (self *Transport) sendHandshake(
 	handshakeHeader *protocol.TransportHandshakeHeader,
 	handshakePayloadSize int,
 	handshakeEmitter func([]byte) error,
-	event *zerolog.Event,
+	logEvent *zerolog.Event,
 ) error {
 	handshakeHeaderSize := handshakeHeader.Size()
 	handshakeSize := 8 + handshakeHeaderSize + handshakePayloadSize
@@ -412,7 +412,7 @@ func (self *Transport) sendHandshake(
 		}
 	}
 
-	event.Int("size", handshakeSize).
+	logEvent.Int("size", handshakeSize).
 		Int("header_size", handshakeHeaderSize).
 		Str("id", self.id.String()).
 		Int32("max_incoming_packet_size", handshakeHeader.MaxIncomingPacketSize).

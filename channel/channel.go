@@ -28,6 +28,7 @@ type Channel struct {
 	stream                 unsafe.Pointer
 	nextSequenceNumber     uint32
 	pendingRPCs            sync.Map
+	pendingAbort           atomic.Value
 }
 
 func (self *Channel) Init(options *Options) *Channel {
@@ -55,39 +56,47 @@ func (self *Channel) RemoveListener(listener *Listener) error {
 }
 
 func (self *Channel) InvokeRPC(rpc *RPC) {
-	if rpc.TraceID.IsZero() {
-		rpc.TraceID = uuid.GenerateUUID4Fast()
-	}
-
-	var deadline int64
-
-	if deadline2, ok := rpc.Ctx.Deadline(); ok {
-		deadline = deadline2.UnixNano()
+	if parentRPC, ok := GetRPC(rpc.Ctx); ok {
+		rpc.internals.TraceID = parentRPC.internals.TraceID
 	} else {
-		deadline = 0
+		rpc.internals.TraceID = uuid.GenerateUUID4Fast()
 	}
 
 	methodOptions := self.options.GetMethod(rpc.ServiceName, rpc.MethodName)
 
-	rpc.internals = *(&RPCInternals{
-		SequenceNumber: int32(self.getNextSequenceNumber()),
-		Deadline:       deadline,
-	}).Init(func(rpc *RPC) {
+	if self.isClosed() {
+		rpc.internals.Init(func(rpc *RPC) {
+			rpc.Err = ErrClosed
+		}, methodOptions.OutgoingRPCInterceptors)
+
+		rpc.Ctx = BindRPC(rpc.Ctx, rpc)
+		rpc.Handle()
+		return
+	}
+
+	rpc.internals.SequenceNumber = int32(self.getNextSequenceNumber())
+
+	if deadline, ok := rpc.Ctx.Deadline(); ok {
+		rpc.internals.Deadline = deadline.UnixNano()
+	} else {
+		rpc.internals.Deadline = 0
+	}
+
+	rpc.internals.Init(func(rpc *RPC) {
 		pendingRPC_ := getPooledPendingRPC().Init(methodOptions.ResponseFactory)
 		self.pendingRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
 
 		if err := self.getStream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
 			SequenceNumber: rpc.internals.SequenceNumber,
+			ServiceName:    rpc.ServiceName,
+			MethodName:     rpc.MethodName,
+			ExtraData:      rpc.RequestExtraData,
+			Deadline:       rpc.internals.Deadline,
 
 			TraceId: protocol.UUID{
-				Low:  rpc.TraceID[0],
-				High: rpc.TraceID[1],
+				Low:  rpc.internals.TraceID[0],
+				High: rpc.internals.TraceID[1],
 			},
-
-			ServiceName: rpc.ServiceName,
-			MethodName:  rpc.MethodName,
-			ExtraData:   rpc.InputExtraData,
-			Deadline:    rpc.internals.Deadline,
 		}, rpc.Request); err != nil {
 			self.pendingRPCs.Delete(rpc.internals.SequenceNumber)
 
@@ -111,7 +120,7 @@ func (self *Channel) InvokeRPC(rpc *RPC) {
 			pendingRPC_.Err = rpc.Ctx.Err()
 		}
 
-		rpc.OutputExtraData = pendingRPC_.OutputExtraData
+		rpc.ResponseExtraData = pendingRPC_.ResponseExtraData
 		rpc.Response = pendingRPC_.Response
 		rpc.Err = pendingRPC_.Err
 		putPooledPendingRPC(pendingRPC_)
@@ -121,21 +130,35 @@ func (self *Channel) InvokeRPC(rpc *RPC) {
 	rpc.Handle()
 }
 
-func (self *Channel) RunAsServerSide(ctx context.Context, connection net.Conn) error {
-	ok, err := self.accept(ctx, connection)
-
-	if err != nil {
-		return err
-	}
-
-	if !ok {
-		return ErrHandshakeRefused
-	}
-
-	return self.process(ctx)
+func (self *Channel) Abort(extraData ExtraData) {
+	self.pendingAbort.Store(extraData)
+	self.getStream().Abort(extraData)
 }
 
-func (self *Channel) RunAsClientSide(ctx context.Context, serverAddressProvider ServerAddressProvider) error {
+func (self *Channel) AcceptAndServe(ctx context.Context, connection net.Conn) error {
+	err := func() error {
+		if err := self.accept(ctx, connection); err != nil {
+			self.options.Logger().Error().Err(err).
+				Str("transport_id", self.getTransportID().String()).
+				Msg("channel_accept_failed")
+			return err
+		}
+
+		if err := self.serve(ctx); err != nil {
+			self.options.Logger().Error().Err(err).
+				Str("transport_id", self.getTransportID().String()).
+				Msg("channel_serve_failed")
+			return err
+		}
+
+		return nil
+	}()
+
+	self.Close()
+	return err
+}
+
+func (self *Channel) ConnectAndServe(ctx context.Context, serverAddressProvider ServerAddressProvider) error {
 	connectRetryCount := -1
 	err := error(nil)
 
@@ -149,18 +172,23 @@ func (self *Channel) RunAsClientSide(ctx context.Context, serverAddressProvider 
 		}
 
 		err = func() error {
-			ok, err := self.connect(ctx, serverAddress)
-
-			if err != nil {
+			if err := self.connect(ctx, serverAddress); err != nil {
+				self.options.Logger().Error().Err(err).
+					Str("transport_id", self.getTransportID().String()).
+					Msg("channel_connect_failed")
 				return err
 			}
 
-			if !ok {
-				return ErrHandshakeRefused
+			connectRetryCount = -1
+
+			if err := self.serve(ctx); err != nil {
+				self.options.Logger().Error().Err(err).
+					Str("transport_id", self.getTransportID().String()).
+					Msg("channel_serve_failed")
+				return err
 			}
 
-			connectRetryCount = -1
-			return self.process(ctx)
+			return nil
 		}()
 
 		if err2 := ctx.Err(); err2 != nil {
@@ -173,56 +201,57 @@ func (self *Channel) RunAsClientSide(ctx context.Context, serverAddressProvider 
 		}
 	}
 
+	self.Close()
 	return err
 }
 
-func (self *Channel) accept(ctx context.Context, connection net.Conn) (bool, error) {
+func (self *Channel) accept(ctx context.Context, connection net.Conn) error {
 	self.setState(Establishing, EventAccepting)
 	ok, err := self.getStream().Accept(ctx, connection, self.options.Handshaker)
 
 	if err != nil {
 		self.failedEventType = EventAcceptFailed
-		return false, err
+		return err
 	}
 
 	if !ok {
 		self.failedEventType = EventAcceptFailed
-		return false, nil
+		return ErrHandshakeRefused
 	}
 
 	self.setState(Established, EventAccepted)
-	return true, nil
+	return nil
 }
 
-func (self *Channel) connect(ctx context.Context, serverAddress string) (bool, error) {
+func (self *Channel) connect(ctx context.Context, serverAddress string) error {
 	transportID := self.getStream().GetTransportID()
 	self.setState(Establishing, EventConnecting)
 	ok, err := self.getStream().Connect(ctx, serverAddress, transportID, self.options.Handshaker)
 
 	if err != nil {
 		self.failedEventType = EventConnectFailed
-		return false, err
+		return err
 	}
 
 	if !ok {
 		self.failedEventType = EventConnectFailed
-		return false, nil
+		return ErrHandshakeRefused
 	}
 
 	self.setState(Established, EventConnected)
-	return true, nil
+	return nil
 }
 
-func (self *Channel) process(ctx context.Context) error {
+func (self *Channel) serve(ctx context.Context) error {
 	stream_ := self.getStream()
 
-	err := stream_.Process(ctx, &messageProcessor{
+	err := stream_.Serve(ctx, &messageProcessor{
 		Options:     self.options,
 		Stream:      stream_,
 		PendingRPCs: &self.pendingRPCs,
 	})
 
-	self.failedEventType = EventProcessFailed
+	self.failedEventType = EventServeFailed
 	return err
 }
 
@@ -268,9 +297,13 @@ func (self *Channel) setState(newState State, eventType EventType) {
 
 	if newState != oldState {
 		atomic.StoreInt32(&self.state, int32(newState))
-		self.options.Logger().Info().
-			Str("transport_id", self.getTransportID().String()).
-			Str("old_state", oldState.GoString()).
+		logEvent := self.options.Logger().Info()
+
+		if transportID := self.getTransportID(); !transportID.IsZero() {
+			logEvent.Str("transport_id", transportID.String())
+		}
+
+		logEvent.Str("old_state", oldState.GoString()).
 			Str("new_state", newState.GoString()).
 			Str("event_type", eventType.GoString()).
 			Msg("channel_state_transition")
@@ -281,6 +314,11 @@ func (self *Channel) setState(newState State, eventType EventType) {
 		if err == ErrBroken {
 			oldStream := self.getStream()
 			newStream := new(stream.Stream).Init(self.options.Stream, &self.dequeOfPendingRequests, nil)
+
+			if value := self.pendingAbort.Load(); value != nil {
+				newStream.Abort(value.(ExtraData))
+			}
+
 			atomic.StorePointer(&self.stream, unsafe.Pointer(newStream))
 			oldStream.Close()
 

@@ -40,21 +40,22 @@ func (self *messageProcessor) NewRequest(packet *stream.Packet) {
 }
 
 func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.Packet) {
-	traceID := uuid.UUID{packet.RequestHeader.TraceId.Low, packet.RequestHeader.TraceId.High}
+	requestHeader := &packet.RequestHeader
+	traceID := uuid.UUID{requestHeader.TraceId.Low, requestHeader.TraceId.High}
 
 	if packet.Err != nil {
 		self.Options.Logger().Info().Err(packet.Err).
 			Str("transport_id", self.Stream.GetTransportID().String()).
 			Str("trace_id", traceID.String()).
-			Str("service_name", packet.RequestHeader.ServiceName).
-			Str("method_name", packet.RequestHeader.MethodName).
+			Str("service_name", requestHeader.ServiceName).
+			Str("method_name", requestHeader.MethodName).
 			Msg("rpc_bad_request")
 		packet.Err = nil
 
 		self.Stream.SendResponse(&protocol.ResponseHeader{
-			SequenceNumber: packet.RequestHeader.SequenceNumber,
+			SequenceNumber: requestHeader.SequenceNumber,
 			ErrorCode:      RPCErrorBadRequest,
-		}, stream.NullMessage)
+		}, NullMessage)
 
 		return
 	}
@@ -63,31 +64,33 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 		self.Options.Logger().Info().
 			Str("transport_id", self.Stream.GetTransportID().String()).
 			Str("trace_id", traceID.String()).
-			Str("service_name", packet.RequestHeader.ServiceName).
-			Str("method_name", packet.RequestHeader.MethodName).
+			Str("service_name", requestHeader.ServiceName).
+			Str("method_name", requestHeader.MethodName).
 			Msg("rpc_not_found")
 
 		self.Stream.SendResponse(&protocol.ResponseHeader{
-			SequenceNumber: packet.RequestHeader.SequenceNumber,
+			SequenceNumber: requestHeader.SequenceNumber,
 			ErrorCode:      RPCErrorNotFound,
-		}, stream.NullMessage)
+		}, NullMessage)
 
 		return
 	}
 
 	rpc := RPC{
-		Ctx:            ctx,
-		TraceID:        traceID,
-		ServiceName:    packet.RequestHeader.ServiceName,
-		MethodName:     packet.RequestHeader.MethodName,
-		InputExtraData: packet.RequestHeader.ExtraData,
-		Request:        packet.Message,
+		Ctx:              ctx,
+		ServiceName:      requestHeader.ServiceName,
+		MethodName:       requestHeader.MethodName,
+		RequestExtraData: requestHeader.ExtraData,
+		Request:          packet.Message,
 
-		internals: *(&RPCInternals{
-			SequenceNumber: packet.RequestHeader.SequenceNumber,
-			Deadline:       packet.RequestHeader.Deadline,
-		}).Init(self.methodOptionsCache.IncomingRPCHandler, self.methodOptionsCache.IncomingRPCInterceptors),
+		internals: rpcInternals{
+			SequenceNumber: requestHeader.SequenceNumber,
+			Deadline:       requestHeader.Deadline,
+			TraceID:        traceID,
+		},
 	}
+
+	rpc.internals.Init(self.methodOptionsCache.IncomingRPCHandler, self.methodOptionsCache.IncomingRPCInterceptors)
 
 	go func() {
 		var cancel context.CancelFunc
@@ -104,10 +107,10 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 
 		responseHeader := protocol.ResponseHeader{
 			SequenceNumber: rpc.internals.SequenceNumber,
-			ExtraData:      rpc.OutputExtraData,
+			ExtraData:      rpc.ResponseExtraData,
 		}
 
-		var response stream.Message
+		var response Message
 
 		if rpc.Err == nil {
 			response = rpc.Response
@@ -118,14 +121,14 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 			} else {
 				self.Options.Logger().Error().Err(rpc.Err).
 					Str("transport_id", self.Stream.GetTransportID().String()).
-					Str("trace_id", rpc.TraceID.String()).
+					Str("trace_id", rpc.internals.TraceID.String()).
 					Str("service_name", rpc.ServiceName).
 					Str("method_name", rpc.MethodName).
 					Msg("rpc_internal_server_error")
 				responseHeader.ErrorCode = RPCErrorInternalServer
 			}
 
-			response = stream.NullMessage
+			response = NullMessage
 		}
 
 		self.Stream.SendResponse(&responseHeader, response)
@@ -133,20 +136,22 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 }
 
 func (self *messageProcessor) PostEmitRequest(packet *stream.Packet) {
-	value, _ := self.PendingRPCs.Load(packet.RequestHeader.SequenceNumber)
+	requestHeader := &packet.RequestHeader
+	value, _ := self.PendingRPCs.Load(requestHeader.SequenceNumber)
 	pendingRPC_ := value.(*pendingRPC)
 
 	if packet.Err == nil {
 		pendingRPC_.IsEmitted = true
 	} else {
-		self.PendingRPCs.Delete(packet.RequestHeader.SequenceNumber)
+		self.PendingRPCs.Delete(requestHeader.SequenceNumber)
 		pendingRPC_.Fail(nil, packet.Err)
 		packet.Err = stream.ErrPacketDropped
 	}
 }
 
 func (self *messageProcessor) NewResponse(packet *stream.Packet) {
-	value, ok := self.PendingRPCs.Load(packet.ResponseHeader.SequenceNumber)
+	responseHeader := &packet.ResponseHeader
+	value, ok := self.PendingRPCs.Load(responseHeader.SequenceNumber)
 
 	if !ok {
 		packet.Err = stream.ErrPacketDropped
@@ -160,23 +165,25 @@ func (self *messageProcessor) NewResponse(packet *stream.Packet) {
 		return
 	}
 
-	self.PendingRPCs.Delete(packet.RequestHeader.SequenceNumber)
+	self.PendingRPCs.Delete(responseHeader.SequenceNumber)
 	packet.Message = pendingRPC_.NewResponse()
 	self.pendingRPCCache = pendingRPC_
 }
 
 func (self *messageProcessor) HandleResponse(ctx context.Context, packet *stream.Packet) {
+	responseHeader := &packet.ResponseHeader
+
 	if packet.Err == nil {
-		if packet.ResponseHeader.ErrorCode == 0 {
-			self.pendingRPCCache.Fail(packet.ResponseHeader.ExtraData, &RPCError{
-				Code:       packet.ResponseHeader.ErrorCode,
-				ReasonCode: packet.ResponseHeader.ReasonCode,
-			})
+		if responseHeader.ErrorCode == 0 {
+			self.pendingRPCCache.Succeed(responseHeader.ExtraData, packet.Message)
 		} else {
-			self.pendingRPCCache.Succeed(packet.ResponseHeader.ExtraData, packet.Message)
+			self.pendingRPCCache.Fail(responseHeader.ExtraData, &RPCError{
+				Code:       responseHeader.ErrorCode,
+				ReasonCode: responseHeader.ReasonCode,
+			})
 		}
 	} else {
-		self.pendingRPCCache.Fail(packet.ResponseHeader.ExtraData, packet.Err)
+		self.pendingRPCCache.Fail(responseHeader.ExtraData, packet.Err)
 		packet.Err = nil
 	}
 }

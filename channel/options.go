@@ -4,15 +4,14 @@ import (
 	"context"
 	"sync"
 
-	"github.com/let-z-go/pbrpc/internal/stream"
 	"github.com/let-z-go/toolkit/utils"
 	"github.com/rs/zerolog"
 )
 
 type Options struct {
-	Handshaker stream.Handshaker
+	Handshaker Handshaker
 	Keepaliver Keepaliver
-	Stream     *stream.Options
+	Stream     *StreamOptions
 
 	serviceOptionsManager
 
@@ -40,39 +39,45 @@ func (self *Options) Normalize() *Options {
 	return self
 }
 
-func (self *Options) SetRequestFactory(serviceName string, methodName string, requestFactory MessageFactory) *Options {
-	self.serviceOptionsManager.SetRequestFactory(serviceName, methodName, requestFactory)
-	return self
-}
-
-func (self *Options) SetResponseFactory(serviceName string, methodName string, responseFactory MessageFactory) *Options {
-	self.serviceOptionsManager.SetResponseFactory(serviceName, methodName, responseFactory)
-	return self
-}
-
-func (self *Options) SetIncomingRPCHandler(serviceName string, methodName string, rpcHandler RPCHandler) *Options {
-	self.serviceOptionsManager.SetIncomingRPCHandler(serviceName, methodName, rpcHandler)
-	return self
-}
-
-func (self *Options) AddIncomingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) *Options {
-	self.serviceOptionsManager.AddIncomingRPCInterceptor(serviceName, methodName, rpcInterceptor)
-	return self
-}
-
-func (self *Options) AddOutgoingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) *Options {
-	self.serviceOptionsManager.AddOutgoingRPCInterceptor(serviceName, methodName, rpcInterceptor)
-	return self
-}
-
 func (self *Options) Logger() *zerolog.Logger {
 	return self.logger
 }
 
 type Keepaliver interface {
-	NewKeepalive() (keepalive stream.Message)
-	HandleKeepalive(ctx context.Context, keepalive stream.Message) (err error)
-	EmitKeepalive() (keepalive stream.Message, err error)
+	NewKeepalive() (keepalive Message)
+	HandleKeepalive(ctx context.Context, keepalive Message) (err error)
+	EmitKeepalive() (keepalive Message, err error)
+}
+
+type MethodOptionsBuilder struct {
+	serviceOptionsManager *serviceOptionsManager
+	serviceName           string
+	methodName            string
+}
+
+func (self MethodOptionsBuilder) SetRequestFactory(requestFactory MessageFactory) MethodOptionsBuilder {
+	self.serviceOptionsManager.setRequestFactory(self.serviceName, self.methodName, requestFactory)
+	return self
+}
+
+func (self MethodOptionsBuilder) SetResponseFactory(responseFactory MessageFactory) MethodOptionsBuilder {
+	self.serviceOptionsManager.setResponseFactory(self.serviceName, self.methodName, responseFactory)
+	return self
+}
+
+func (self MethodOptionsBuilder) SetIncomingRPCHandler(rpcHandler RPCHandler) MethodOptionsBuilder {
+	self.serviceOptionsManager.setIncomingRPCHandler(self.serviceName, self.methodName, rpcHandler)
+	return self
+}
+
+func (self MethodOptionsBuilder) AddIncomingRPCInterceptor(rpcInterceptor RPCHandler) MethodOptionsBuilder {
+	self.serviceOptionsManager.addIncomingRPCInterceptor(self.serviceName, self.methodName, rpcInterceptor)
+	return self
+}
+
+func (self MethodOptionsBuilder) AddOutgoingRPCInterceptor(rpcInterceptor RPCHandler) MethodOptionsBuilder {
+	self.serviceOptionsManager.addOutgoingRPCInterceptor(self.serviceName, self.methodName, rpcInterceptor)
+	return self
 }
 
 type ServiceOptions struct {
@@ -90,34 +95,34 @@ type MethodOptions struct {
 	OutgoingRPCInterceptors []RPCHandler
 }
 
-type MessageFactory func() (message stream.Message)
+type MessageFactory func() (message Message)
 
 type defaultHandshaker struct{}
 
-func (defaultHandshaker) NewHandshake() stream.Message {
-	return stream.NullMessage
+func (defaultHandshaker) NewHandshake() Message {
+	return NullMessage
 }
 
-func (defaultHandshaker) HandleHandshake(context.Context, stream.Message) (bool, error) {
+func (defaultHandshaker) HandleHandshake(context.Context, Message) (bool, error) {
 	return true, nil
 }
 
-func (defaultHandshaker) EmitHandshake() (stream.Message, error) {
-	return stream.NullMessage, nil
+func (defaultHandshaker) EmitHandshake() (Message, error) {
+	return NullMessage, nil
 }
 
 type defaultKeepaliver struct{}
 
-func (defaultKeepaliver) NewKeepalive() stream.Message {
-	return stream.NullMessage
+func (defaultKeepaliver) NewKeepalive() Message {
+	return NullMessage
 }
 
-func (defaultKeepaliver) HandleKeepalive(context.Context, stream.Message) error {
+func (defaultKeepaliver) HandleKeepalive(context.Context, Message) error {
 	return nil
 }
 
-func (defaultKeepaliver) EmitKeepalive() (stream.Message, error) {
-	return stream.NullMessage, nil
+func (defaultKeepaliver) EmitKeepalive() (Message, error) {
+	return NullMessage, nil
 }
 
 type serviceOptionsManager struct {
@@ -127,22 +132,42 @@ type serviceOptionsManager struct {
 	outgoingRPCInterceptors []RPCHandler
 }
 
-func (self *serviceOptionsManager) SetRequestFactory(serviceName string, methodName string, messageFactory MessageFactory) {
+func (self *serviceOptionsManager) SetMethod(serviceName string, methodName string) MethodOptionsBuilder {
+	return MethodOptionsBuilder{self, serviceName, methodName}
+}
+
+func (self *serviceOptionsManager) GetMethod(serviceName string, methodName string) *MethodOptions {
+	service, ok := self.Services[serviceName]
+
+	if !ok {
+		return &defaultMethodOptions
+	}
+
+	method, ok := service.Methods[methodName]
+
+	if !ok {
+		return &defaultMethodOptions
+	}
+
+	return method
+}
+
+func (self *serviceOptionsManager) setRequestFactory(serviceName string, methodName string, messageFactory MessageFactory) {
 	method := self.getOrSetService(serviceName).getOrSetMethod(methodName)
 	method.RequestFactory = messageFactory
 }
 
-func (self *serviceOptionsManager) SetResponseFactory(serviceName string, methodName string, messageFactory MessageFactory) {
+func (self *serviceOptionsManager) setResponseFactory(serviceName string, methodName string, messageFactory MessageFactory) {
 	method := self.getOrSetService(serviceName).getOrSetMethod(methodName)
 	method.ResponseFactory = messageFactory
 }
 
-func (self *serviceOptionsManager) SetIncomingRPCHandler(serviceName string, methodName string, rpcHandler RPCHandler) {
+func (self *serviceOptionsManager) setIncomingRPCHandler(serviceName string, methodName string, rpcHandler RPCHandler) {
 	method := self.getOrSetService(serviceName).getOrSetMethod(methodName)
 	method.IncomingRPCHandler = rpcHandler
 }
 
-func (self *serviceOptionsManager) AddIncomingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) {
+func (self *serviceOptionsManager) addIncomingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) {
 	i := len(self.incomingRPCInterceptors)
 
 	if serviceName == "" {
@@ -184,7 +209,7 @@ func (self *serviceOptionsManager) AddIncomingRPCInterceptor(serviceName string,
 	}
 }
 
-func (self *serviceOptionsManager) AddOutgoingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) {
+func (self *serviceOptionsManager) addOutgoingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) {
 	i := len(self.outgoingRPCInterceptors)
 
 	if serviceName == "" {
@@ -226,22 +251,6 @@ func (self *serviceOptionsManager) AddOutgoingRPCInterceptor(serviceName string,
 	}
 }
 
-func (self *serviceOptionsManager) GetMethod(serviceName string, methodName string) *MethodOptions {
-	service, ok := self.Services[serviceName]
-
-	if !ok {
-		return &defaultMethodOptions
-	}
-
-	method, ok := service.Methods[methodName]
-
-	if !ok {
-		return &defaultMethodOptions
-	}
-
-	return method
-}
-
 func (self *serviceOptionsManager) getOrSetService(serviceName string) *ServiceOptions {
 	utils.Assert(serviceName != "", func() string { return "pbrpc/channel: empty service name" })
 	services := self.Services
@@ -281,12 +290,12 @@ func (self *ServiceOptions) getOrSetMethod(methodName string) *MethodOptions {
 	return method
 }
 
-var defaultStreamOptions stream.Options
+var defaultStreamOptions StreamOptions
 
 var defaultMethodOptions = MethodOptions{
 	RequestFactory:  defaultRequestFactory,
 	ResponseFactory: defaultResponseFactory,
 }
 
-func defaultRequestFactory() stream.Message  { return stream.NullMessage }
-func defaultResponseFactory() stream.Message { return stream.NullMessage }
+func defaultRequestFactory() Message  { return NullMessage }
+func defaultResponseFactory() Message { return NullMessage }

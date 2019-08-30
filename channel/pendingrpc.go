@@ -3,15 +3,13 @@ package channel
 import (
 	"context"
 	"sync"
-
-	"github.com/let-z-go/pbrpc/internal/stream"
 )
 
 type pendingRPC struct {
-	IsEmitted       bool
-	OutputExtraData ExtraData
-	Response        stream.Message
-	Err             error
+	IsEmitted         bool
+	ResponseExtraData ExtraData
+	Response          Message
+	Err               error
 
 	responseFactory MessageFactory
 	completion      chan struct{}
@@ -23,18 +21,18 @@ func (self *pendingRPC) Init(responseFactory MessageFactory) *pendingRPC {
 	return self
 }
 
-func (self *pendingRPC) NewResponse() stream.Message {
+func (self *pendingRPC) NewResponse() Message {
 	return self.responseFactory()
 }
 
-func (self *pendingRPC) Succeed(outputExtraData ExtraData, response stream.Message) {
-	self.OutputExtraData = outputExtraData
+func (self *pendingRPC) Succeed(responseExtraData ExtraData, response Message) {
+	self.ResponseExtraData = responseExtraData
 	self.Response = response
 	close(self.completion)
 }
 
-func (self *pendingRPC) Fail(outputExtraData ExtraData, err error) {
-	self.OutputExtraData = outputExtraData
+func (self *pendingRPC) Fail(responseExtraData ExtraData, err error) {
+	self.ResponseExtraData = responseExtraData
 	self.Err = err
 	close(self.completion)
 }

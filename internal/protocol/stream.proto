@@ -41,11 +41,11 @@ message StreamHandshakeHeader {
 
 message RequestHeader {
     int32 sequence_number = 1;
-    UUID trace_id = 2 [ (gogoproto.nullable) = false ];
-    string service_name = 3;
-    string method_name = 4;
-    map<string, bytes> extra_data = 5;
-    int64 deadline = 6;
+    string service_name = 2;
+    string method_name = 3;
+    map<string, bytes> extra_data = 4;
+    int64 deadline = 5;
+    UUID trace_id = 6 [ (gogoproto.nullable) = false ];
 }
 
 message ResponseHeader {

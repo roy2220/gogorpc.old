@@ -18,7 +18,7 @@ type Handshaker interface {
 
 var ErrBadHandshake = errors.New("pbrpc/stream: bad handshake")
 
-type serverHandshaker struct {
+type passiveHandshaker struct {
 	Inner Handshaker
 
 	*stream
@@ -29,9 +29,9 @@ type serverHandshaker struct {
 	err                 error
 }
 
-var _ = transport.Handshaker(&serverHandshaker{})
+var _ = transport.Handshaker(&passiveHandshaker{})
 
-func (self *serverHandshaker) HandleHandshake(ctx context.Context, rawHandshake []byte) (bool, error) {
+func (self *passiveHandshaker) HandleHandshake(ctx context.Context, rawHandshake []byte) (bool, error) {
 	handshakeSize := len(rawHandshake)
 
 	if handshakeSize < 4 {
@@ -104,7 +104,7 @@ func (self *serverHandshaker) HandleHandshake(ctx context.Context, rawHandshake 
 	return ok, nil
 }
 
-func (self *serverHandshaker) SizeHandshake() int {
+func (self *passiveHandshaker) SizeHandshake() int {
 	self.handshakeHeaderSize = self.handshakeHeader.Size()
 	self.handshakePayload, self.err = self.Inner.EmitHandshake()
 
@@ -115,7 +115,7 @@ func (self *serverHandshaker) SizeHandshake() int {
 	return 4 + self.handshakeHeaderSize + self.handshakePayload.Size()
 }
 
-func (self *serverHandshaker) EmitHandshake(buffer []byte) error {
+func (self *passiveHandshaker) EmitHandshake(buffer []byte) error {
 	if self.err != nil {
 		return self.err
 	}
@@ -136,7 +136,7 @@ func (self *serverHandshaker) EmitHandshake(buffer []byte) error {
 	return err
 }
 
-type clientHandshaker struct {
+type activeHandshaker struct {
 	Inner Handshaker
 
 	*stream
@@ -147,9 +147,9 @@ type clientHandshaker struct {
 	err                 error
 }
 
-var _ = transport.Handshaker(&serverHandshaker{})
+var _ = transport.Handshaker(&passiveHandshaker{})
 
-func (self *clientHandshaker) SizeHandshake() int {
+func (self *activeHandshaker) SizeHandshake() int {
 	self.handshakeHeader = protocol.StreamHandshakeHeader{
 		IncomingKeepaliveInterval: int32(self.options.IncomingKeepaliveInterval / time.Millisecond),
 		OutgoingKeepaliveInterval: int32(self.options.OutgoingKeepaliveInterval / time.Millisecond),
@@ -167,7 +167,7 @@ func (self *clientHandshaker) SizeHandshake() int {
 	return 4 + self.handshakeHeaderSize + self.handshakePayload.Size()
 }
 
-func (self *clientHandshaker) EmitHandshake(buffer []byte) error {
+func (self *activeHandshaker) EmitHandshake(buffer []byte) error {
 	if self.err != nil {
 		return self.err
 	}
@@ -188,7 +188,7 @@ func (self *clientHandshaker) EmitHandshake(buffer []byte) error {
 	return err
 }
 
-func (self *clientHandshaker) HandleHandshake(ctx context.Context, rawHandshake []byte) (bool, error) {
+func (self *activeHandshaker) HandleHandshake(ctx context.Context, rawHandshake []byte) (bool, error) {
 	handshakeSize := len(rawHandshake)
 
 	if handshakeSize < 4 {
