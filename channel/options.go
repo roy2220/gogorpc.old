@@ -9,18 +9,29 @@ import (
 )
 
 type Options struct {
-	Handshaker Handshaker
-	Keepaliver Keepaliver
-	Stream     *StreamOptions
+	Stream       *StreamOptions
+	Logger       *zerolog.Logger
+	Handshaker   Handshaker
+	Keepaliver   Keepaliver
+	AbortHandler AbortHandler
 
 	serviceOptionsManager
 
 	normalizeOnce sync.Once
-	logger        *zerolog.Logger
 }
 
 func (self *Options) Normalize() *Options {
 	self.normalizeOnce.Do(func() {
+		if self.Stream == nil {
+			self.Stream = &defaultStreamOptions
+		}
+
+		self.Stream.Normalize()
+
+		if self.Logger == nil {
+			self.Logger = self.Stream.Logger
+		}
+
 		if self.Handshaker == nil {
 			self.Handshaker = defaultHandshaker{}
 		}
@@ -29,18 +40,12 @@ func (self *Options) Normalize() *Options {
 			self.Keepaliver = defaultKeepaliver{}
 		}
 
-		if self.Stream == nil {
-			self.Stream = &defaultStreamOptions
+		if self.AbortHandler == nil {
+			self.AbortHandler = defaultAbortHandler
 		}
-
-		self.logger = self.Stream.Normalize().Logger()
 	})
 
 	return self
-}
-
-func (self *Options) Logger() *zerolog.Logger {
-	return self.logger
 }
 
 type Keepaliver interface {
@@ -49,19 +54,17 @@ type Keepaliver interface {
 	EmitKeepalive() (keepalive Message, err error)
 }
 
+type AbortHandler func(ctx context.Context, extraData ExtraData)
+
 type MethodOptionsBuilder struct {
-	serviceOptionsManager *serviceOptionsManager
-	serviceName           string
-	methodName            string
+	*serviceOptionsManager
+
+	serviceName string
+	methodName  string
 }
 
 func (self MethodOptionsBuilder) SetRequestFactory(requestFactory MessageFactory) MethodOptionsBuilder {
 	self.serviceOptionsManager.setRequestFactory(self.serviceName, self.methodName, requestFactory)
-	return self
-}
-
-func (self MethodOptionsBuilder) SetResponseFactory(responseFactory MessageFactory) MethodOptionsBuilder {
-	self.serviceOptionsManager.setResponseFactory(self.serviceName, self.methodName, responseFactory)
 	return self
 }
 
@@ -89,13 +92,24 @@ type ServiceOptions struct {
 
 type MethodOptions struct {
 	RequestFactory          MessageFactory
-	ResponseFactory         MessageFactory
 	IncomingRPCHandler      RPCHandler
 	IncomingRPCInterceptors []RPCHandler
 	OutgoingRPCInterceptors []RPCHandler
 }
 
 type MessageFactory func() (message Message)
+
+func NewNullMessage() Message {
+	return NullMessage
+}
+
+var _ = MessageFactory(NewNullMessage)
+
+func NewRawMessage() Message {
+	return new(RawMessage)
+}
+
+var _ = MessageFactory(NewRawMessage)
 
 type defaultHandshaker struct{}
 
@@ -155,11 +169,6 @@ func (self *serviceOptionsManager) GetMethod(serviceName string, methodName stri
 func (self *serviceOptionsManager) setRequestFactory(serviceName string, methodName string, messageFactory MessageFactory) {
 	method := self.getOrSetService(serviceName).getOrSetMethod(methodName)
 	method.RequestFactory = messageFactory
-}
-
-func (self *serviceOptionsManager) setResponseFactory(serviceName string, methodName string, messageFactory MessageFactory) {
-	method := self.getOrSetService(serviceName).getOrSetMethod(methodName)
-	method.ResponseFactory = messageFactory
 }
 
 func (self *serviceOptionsManager) setIncomingRPCHandler(serviceName string, methodName string, rpcHandler RPCHandler) {
@@ -293,9 +302,7 @@ func (self *ServiceOptions) getOrSetMethod(methodName string) *MethodOptions {
 var defaultStreamOptions StreamOptions
 
 var defaultMethodOptions = MethodOptions{
-	RequestFactory:  defaultRequestFactory,
-	ResponseFactory: defaultResponseFactory,
+	RequestFactory: NewNullMessage,
 }
 
-func defaultRequestFactory() Message  { return NullMessage }
-func defaultResponseFactory() Message { return NullMessage }
+func defaultAbortHandler(context.Context, ExtraData) {}

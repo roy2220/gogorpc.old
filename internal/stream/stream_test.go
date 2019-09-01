@@ -77,10 +77,10 @@ func TestOptions(t *testing.T) {
 func TestHandshake1(t *testing.T) {
 	testSetup(
 		t,
-		func(ctx context.Context, sa string) {
+		func(ctx context.Context, conn net.Conn) {
 			st := new(Stream).Init(&Options{Transport: &transport.Options{Logger: &logger}}, nil, nil)
 			defer st.Close()
-			ok, err := st.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{
+			ok, err := st.Connect(ctx, conn, uuid.UUID{}, testHandshaker{
 				CbEmitHandshake: func() (Message, error) {
 					msg := RawMessage("welcome")
 					return &msg, nil
@@ -131,11 +131,11 @@ func TestHandshake1(t *testing.T) {
 func TestHandshake2(t *testing.T) {
 	testSetup(
 		t,
-		func(ctx context.Context, sa string) {
+		func(ctx context.Context, conn net.Conn) {
 			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, nil)
 			defer st.Close()
-			ok, err := st.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{}.Init())
-			if !assert.EqualError(t, err, "pbrpc/transport: network: context deadline exceeded") {
+			ok, err := st.Connect(ctx, conn, uuid.UUID{}, testHandshaker{}.Init())
+			if !assert.Regexp(t, "i/o timeout", err) {
 				t.FailNow()
 			}
 			assert.False(t, ok)
@@ -161,10 +161,10 @@ func TestHandshake2(t *testing.T) {
 func TestHandshake3(t *testing.T) {
 	testSetup(
 		t,
-		func(ctx context.Context, sa string) {
+		func(ctx context.Context, conn net.Conn) {
 			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, nil)
 			defer st.Close()
-			ok, err := st.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{
+			ok, err := st.Connect(ctx, conn, uuid.UUID{}, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, h Message) (bool, error) {
 					<-ctx.Done()
 					<-time.After(10 * time.Millisecond)
@@ -562,7 +562,7 @@ func TestKeepalive(t *testing.T) {
 
 func testSetup(
 	t *testing.T,
-	cb1 func(ctx context.Context, sa string),
+	cb1 func(ctx context.Context, conn net.Conn),
 	cb2 func(ctx context.Context, conn net.Conn),
 ) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -576,14 +576,18 @@ func testSetup(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cb1(ctx, l.Addr().String())
+		conn, err := net.Dial("tcp", l.Addr().String())
+		if !assert.NoError(t, err) {
+			t.FailNow()
+		}
+		cb1(ctx, conn)
 	}()
 	defer wg.Wait()
-	c, err := l.Accept()
+	conn, err := l.Accept()
 	if !assert.NoError(t, err) {
 		t.FailNow()
 	}
-	cb2(ctx, c)
+	cb2(ctx, conn)
 }
 
 func testSetup2(
@@ -597,10 +601,10 @@ func testSetup2(
 ) {
 	testSetup(
 		t,
-		func(ctx context.Context, sa string) {
+		func(ctx context.Context, conn net.Conn) {
 			st := new(Stream).Init(opts1, nil, nil)
 			defer st.Close()
-			ok, err := st.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{}.Init())
+			ok, err := st.Connect(ctx, conn, uuid.UUID{}, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
@@ -612,7 +616,7 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Serve(ctx, mp1)
+				err := st.Process(ctx, mp1)
 				t.Log(err)
 			}()
 			defer wg.Wait()
@@ -633,7 +637,7 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Serve(ctx, mp2)
+				err := st.Process(ctx, mp2)
 				t.Log(err)
 			}()
 			defer wg.Wait()

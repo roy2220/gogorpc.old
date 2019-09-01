@@ -44,7 +44,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 	traceID := uuid.UUID{requestHeader.TraceId.Low, requestHeader.TraceId.High}
 
 	if packet.Err != nil {
-		self.Options.Logger().Info().Err(packet.Err).
+		self.Options.Logger.Info().Err(packet.Err).
 			Str("transport_id", self.Stream.GetTransportID().String()).
 			Str("trace_id", traceID.String()).
 			Str("service_name", requestHeader.ServiceName).
@@ -61,7 +61,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 	}
 
 	if self.methodOptionsCache.IncomingRPCHandler == nil {
-		self.Options.Logger().Info().
+		self.Options.Logger.Info().
 			Str("transport_id", self.Stream.GetTransportID().String()).
 			Str("trace_id", traceID.String()).
 			Str("service_name", requestHeader.ServiceName).
@@ -119,7 +119,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 				responseHeader.ErrorCode = error_.Code
 				responseHeader.ReasonCode = error_.ReasonCode
 			} else {
-				self.Options.Logger().Error().Err(rpc.Err).
+				self.Options.Logger.Error().Err(rpc.Err).
 					Str("transport_id", self.Stream.GetTransportID().String()).
 					Str("trace_id", rpc.internals.TraceID.String()).
 					Str("service_name", rpc.ServiceName).

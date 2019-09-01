@@ -10,37 +10,37 @@ import (
 )
 
 type Options struct {
+	Transport                 *transport.Options
+	Logger                    *zerolog.Logger
 	ActiveHangupTimeout       time.Duration
 	IncomingKeepaliveInterval time.Duration
 	OutgoingKeepaliveInterval time.Duration
 	LocalConcurrencyLimit     int
 	RemoteConcurrencyLimit    int
-	Transport                 *transport.Options
 
 	normalizeOnce sync.Once
-	logger        *zerolog.Logger
 }
 
 func (self *Options) Normalize() *Options {
 	self.normalizeOnce.Do(func() {
+		if self.Transport == nil {
+			self.Transport = &defaultTransportOptions
+		}
+
+		self.Transport.Normalize()
+
+		if self.Logger == nil {
+			self.Logger = self.Transport.Logger
+		}
+
 		normalizeDurValue(&self.ActiveHangupTimeout, defaultActiveHangupTimeout, minActiveHangupTimeout, maxActiveHangupTimeout)
 		normalizeDurValue(&self.IncomingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
 		normalizeDurValue(&self.OutgoingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
 		normalizeIntValue(&self.LocalConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
 		normalizeIntValue(&self.RemoteConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
-
-		if self.Transport == nil {
-			self.Transport = &defaultTransportOptions
-		}
-
-		self.logger = self.Transport.Normalize().Logger
 	})
 
 	return self
-}
-
-func (self *Options) Logger() *zerolog.Logger {
-	return self.logger
 }
 
 const (

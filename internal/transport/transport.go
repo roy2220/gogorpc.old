@@ -40,29 +40,29 @@ func (self *Transport) Close() error {
 	return self.connection.Close()
 }
 
-func (self *Transport) Accept(ctx context.Context, connection net.Conn, handshaker Handshaker) (bool, error) {
-	clientAddress := connection.RemoteAddr().String()
-	self.options.Logger.Info().Str("endpoint", "server-side").
-		Str("peer_address", clientAddress).
+func (self *Transport) Accept(ctx context.Context, rawConnection net.Conn, handshaker Handshaker) (bool, error) {
+	clientAddress := rawConnection.RemoteAddr().String()
+	self.options.Logger.Info().
+		Str("client_address", clientAddress).
 		Dur("handshake_timeout", self.options.HandshakeTimeout).
 		Int("min_input_buffer_size", self.options.MinInputBufferSize).
 		Int("max_input_buffer_size", self.options.MaxInputBufferSize).
 		Msg("transport_accepting")
-	self.connection.Init(connection)
+	self.connection.Init(rawConnection)
 	self.inputByteStream.ReserveBuffer(self.options.MinInputBufferSize)
-	ctx, cancel := context.WithTimeout(ctx, self.options.HandshakeTimeout)
-	defer cancel()
+	deadline := time.Now().Add(self.options.HandshakeTimeout)
 	var handshakeHeader protocol.TransportHandshakeHeader
 
 	ok, err := self.receiveHandshake(
 		ctx,
+		deadline,
 		&handshakeHeader,
 		handshaker.HandleHandshake,
-		self.options.Logger.Info().Str("endpoint", "server-side").Str("peer_address", clientAddress),
+		self.options.Logger.Info().Str("side", "server-side").Str("peer_address", clientAddress),
 	)
 
 	if err != nil {
-		self.Close()
+		self.connection.Close()
 		return false, err
 	}
 
@@ -83,39 +83,30 @@ func (self *Transport) Accept(ctx context.Context, connection net.Conn, handshak
 
 	if err := self.sendHandshake(
 		ctx,
+		deadline,
 		&handshakeHeader,
 		handshaker.SizeHandshake(),
 		handshaker.EmitHandshake,
-		self.options.Logger.Info().Str("endpoint", "server-side").Str("peer_address", clientAddress),
+		self.options.Logger.Info().Str("side", "server-side").Str("peer_address", clientAddress),
 	); err != nil {
-		self.Close()
+		self.connection.Close()
 		return false, err
 	}
 
 	return ok, nil
 }
 
-func (self *Transport) Connect(ctx context.Context, serverAddress string, id uuid.UUID, handshaker Handshaker) (bool, error) {
-	self.options.Logger.Info().Str("endpoint", "client-side").
-		Str("peer_address", serverAddress).
+func (self *Transport) Connect(ctx context.Context, rawConnection net.Conn, id uuid.UUID, handshaker Handshaker) (bool, error) {
+	serverAddress := rawConnection.RemoteAddr().String()
+	self.options.Logger.Info().
+		Str("server_address", serverAddress).
 		Dur("handshake_timeout", self.options.HandshakeTimeout).
 		Int("min_input_buffer_size", self.options.MinInputBufferSize).
 		Int("max_input_buffer_size", self.options.MaxInputBufferSize).
 		Msg("transport_connecting")
-	ctx, cancel := context.WithTimeout(ctx, self.options.HandshakeTimeout)
-	defer cancel()
-	connection, err := self.options.Connector(ctx, serverAddress)
-
-	if err != nil {
-		if err2 := ctx.Err(); err2 != nil {
-			err = err2
-		}
-
-		return false, &NetworkError{err}
-	}
-
-	self.connection.Init(connection)
+	self.connection.Init(rawConnection)
 	self.inputByteStream.ReserveBuffer(self.options.MinInputBufferSize)
+	deadline := time.Now().Add(self.options.HandshakeTimeout)
 
 	handshakeHeader := protocol.TransportHandshakeHeader{
 		Id: protocol.UUID{
@@ -129,12 +120,13 @@ func (self *Transport) Connect(ctx context.Context, serverAddress string, id uui
 
 	if err := self.sendHandshake(
 		ctx,
+		deadline,
 		&handshakeHeader,
 		handshaker.SizeHandshake(),
 		handshaker.EmitHandshake,
-		self.options.Logger.Info().Str("endpoint", "client-side").Str("peer_address", serverAddress),
+		self.options.Logger.Info().Str("side", "client-side").Str("peer_address", serverAddress),
 	); err != nil {
-		self.Close()
+		self.connection.Close()
 		return false, err
 	}
 
@@ -142,13 +134,14 @@ func (self *Transport) Connect(ctx context.Context, serverAddress string, id uui
 
 	ok, err := self.receiveHandshake(
 		ctx,
+		deadline,
 		&handshakeHeader,
 		handshaker.HandleHandshake,
-		self.options.Logger.Info().Str("endpoint", "client-side").Str("peer_address", serverAddress),
+		self.options.Logger.Info().Str("side", "client-side").Str("peer_address", serverAddress),
 	)
 
 	if err != nil {
-		self.Close()
+		self.connection.Close()
 		return false, err
 	}
 
@@ -311,11 +304,12 @@ func (self *Transport) GetID() uuid.UUID {
 
 func (self *Transport) receiveHandshake(
 	ctx context.Context,
+	deadline time.Time,
 	handshakeHeader *protocol.TransportHandshakeHeader,
 	handshakeHandler func(context.Context, []byte) (bool, error),
 	logEvent *zerolog.Event,
 ) (bool, error) {
-	self.connection.PreRead(ctx, time.Time{})
+	self.connection.PreRead(ctx, deadline)
 
 	for {
 		dataSize, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
@@ -385,13 +379,16 @@ func (self *Transport) receiveHandshake(
 		Int32("max_incoming_packet_size", handshakeHeader.MaxIncomingPacketSize).
 		Int32("max_outgoing_packet_size", handshakeHeader.MaxOutgoingPacketSize).
 		Msg("transport_incoming_handshake")
+	ctx, cancel := context.WithDeadline(ctx, deadline)
 	ok, err := handshakeHandler(ctx, rawHandshake[handshakePayloadOffset:])
+	cancel()
 	self.inputByteStream.Skip(handshakeSize)
 	return ok, err
 }
 
 func (self *Transport) sendHandshake(
 	ctx context.Context,
+	deadline time.Time,
 	handshakeHeader *protocol.TransportHandshakeHeader,
 	handshakePayloadSize int,
 	handshakeEmitter func([]byte) error,
@@ -428,7 +425,7 @@ func (self *Transport) sendHandshake(
 		return err
 	}
 
-	_, err := self.connection.Write(ctx, time.Time{}, self.outputByteStream.GetData())
+	_, err := self.connection.Write(ctx, deadline, self.outputByteStream.GetData())
 	self.outputByteStream.Skip(handshakeSize)
 
 	if err != nil {
@@ -471,10 +468,12 @@ func (self *NetworkError) Error() string {
 	return fmt.Sprintf("pbrpc/transport: network: %s", self.Inner.Error())
 }
 
-var ErrHandshakeTooLarge = errors.New("pbrpc/transport: handshake too large")
-var ErrBadHandshake = errors.New("pbrpc/transport: bad handshake")
-var ErrPacketTooLarge = errors.New("pbrpc/transport: packet too large")
-var ErrBadPacket = errors.New("pbrpc/transport: bad packet")
+var (
+	ErrHandshakeTooLarge = errors.New("pbrpc/transport: handshake too large")
+	ErrBadHandshake      = errors.New("pbrpc/transport: bad handshake")
+	ErrPacketTooLarge    = errors.New("pbrpc/transport: packet too large")
+	ErrBadPacket         = errors.New("pbrpc/transport: bad packet")
+)
 
 func makeDeadline(ctx context.Context, timeout time.Duration) time.Time {
 	deadline1, ok := ctx.Deadline()

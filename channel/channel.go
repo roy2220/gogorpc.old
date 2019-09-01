@@ -16,14 +16,11 @@ import (
 
 	"github.com/let-z-go/pbrpc/internal/protocol"
 	"github.com/let-z-go/pbrpc/internal/stream"
-	"github.com/let-z-go/pbrpc/internal/transport"
 )
 
 type Channel struct {
 	options                *Options
 	state                  int32
-	failedEventType        EventType
-	listenerManager        listenerManager
 	dequeOfPendingRequests deque.Deque
 	stream                 unsafe.Pointer
 	nextSequenceNumber     uint32
@@ -33,29 +30,65 @@ type Channel struct {
 
 func (self *Channel) Init(options *Options) *Channel {
 	self.options = options.Normalize()
-	self.state = int32(Initial)
+	self.state = int32(initial)
 	self.dequeOfPendingRequests.Init(0)
 	self.stream = unsafe.Pointer(new(stream.Stream).Init(self.options.Stream, &self.dequeOfPendingRequests, nil))
 	return self
 }
 
 func (self *Channel) Close() {
-	self.setState(Closed, self.failedEventType)
+	self.setState(closed)
 }
 
-func (self *Channel) AddListener(normalNumberOfEvents int) (*Listener, error) {
-	return self.listenerManager.AddListener(func() error {
-		return self.getClosedError()
-	}, normalNumberOfEvents)
+func (self *Channel) Accept(ctx context.Context, connection net.Conn) error {
+	self.setState(establishing)
+	ok, err := self.getStream().Accept(ctx, connection, self.options.Handshaker)
+
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		return ErrHandshakeRefused
+	}
+
+	return nil
 }
 
-func (self *Channel) RemoveListener(listener *Listener) error {
-	return self.listenerManager.RemoveListener(func() error {
-		return self.getClosedError()
-	}, listener)
+func (self *Channel) Connect(ctx context.Context, connection net.Conn) error {
+	transportID := self.getStream().GetTransportID()
+	self.setState(establishing)
+	ok, err := self.getStream().Connect(ctx, connection, transportID, self.options.Handshaker)
+
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		return ErrHandshakeRefused
+	}
+
+	return nil
 }
 
-func (self *Channel) InvokeRPC(rpc *RPC) {
+func (self *Channel) Process(ctx context.Context) error {
+	self.setState(established)
+	stream_ := self.getStream()
+
+	err := stream_.Process(ctx, &messageProcessor{
+		Options:     self.options,
+		Stream:      stream_,
+		PendingRPCs: &self.pendingRPCs,
+	})
+
+	if hangupError, ok := err.(*stream.HangupError); ok && hangupError.IsPassive {
+		self.options.AbortHandler(ctx, hangupError.ExtraData)
+	}
+
+	return err
+}
+
+func (self *Channel) InvokeRPC(rpc *RPC, responseFactory MessageFactory) {
 	if parentRPC, ok := GetRPC(rpc.Ctx); ok {
 		rpc.internals.TraceID = parentRPC.internals.TraceID
 	} else {
@@ -83,7 +116,7 @@ func (self *Channel) InvokeRPC(rpc *RPC) {
 	}
 
 	rpc.internals.Init(func(rpc *RPC) {
-		pendingRPC_ := getPooledPendingRPC().Init(methodOptions.ResponseFactory)
+		pendingRPC_ := getPooledPendingRPC().Init(responseFactory)
 		self.pendingRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
 
 		if err := self.getStream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
@@ -135,179 +168,57 @@ func (self *Channel) Abort(extraData ExtraData) {
 	self.getStream().Abort(extraData)
 }
 
-func (self *Channel) AcceptAndServe(ctx context.Context, connection net.Conn) error {
-	err := func() error {
-		if err := self.accept(ctx, connection); err != nil {
-			self.options.Logger().Error().Err(err).
-				Str("transport_id", self.getTransportID().String()).
-				Msg("channel_accept_failed")
-			return err
-		}
-
-		if err := self.serve(ctx); err != nil {
-			self.options.Logger().Error().Err(err).
-				Str("transport_id", self.getTransportID().String()).
-				Msg("channel_serve_failed")
-			return err
-		}
-
-		return nil
-	}()
-
-	self.Close()
-	return err
-}
-
-func (self *Channel) ConnectAndServe(ctx context.Context, serverAddressProvider ServerAddressProvider) error {
-	connectRetryCount := -1
-	err := error(nil)
-
-	for {
-		connectRetryCount++
-		var serverAddress string
-		serverAddress, err = serverAddressProvider(ctx, connectRetryCount)
-
-		if err != nil {
-			break
-		}
-
-		err = func() error {
-			if err := self.connect(ctx, serverAddress); err != nil {
-				self.options.Logger().Error().Err(err).
-					Str("transport_id", self.getTransportID().String()).
-					Msg("channel_connect_failed")
-				return err
-			}
-
-			connectRetryCount = -1
-
-			if err := self.serve(ctx); err != nil {
-				self.options.Logger().Error().Err(err).
-					Str("transport_id", self.getTransportID().String()).
-					Msg("channel_serve_failed")
-				return err
-			}
-
-			return nil
-		}()
-
-		if err2 := ctx.Err(); err2 != nil {
-			err = err2
-			break
-		}
-
-		if _, ok := err.(*transport.NetworkError); !ok {
-			break
-		}
-	}
-
-	self.Close()
-	return err
-}
-
-func (self *Channel) accept(ctx context.Context, connection net.Conn) error {
-	self.setState(Establishing, EventAccepting)
-	ok, err := self.getStream().Accept(ctx, connection, self.options.Handshaker)
-
-	if err != nil {
-		self.failedEventType = EventAcceptFailed
-		return err
-	}
-
-	if !ok {
-		self.failedEventType = EventAcceptFailed
-		return ErrHandshakeRefused
-	}
-
-	self.setState(Established, EventAccepted)
-	return nil
-}
-
-func (self *Channel) connect(ctx context.Context, serverAddress string) error {
-	transportID := self.getStream().GetTransportID()
-	self.setState(Establishing, EventConnecting)
-	ok, err := self.getStream().Connect(ctx, serverAddress, transportID, self.options.Handshaker)
-
-	if err != nil {
-		self.failedEventType = EventConnectFailed
-		return err
-	}
-
-	if !ok {
-		self.failedEventType = EventConnectFailed
-		return ErrHandshakeRefused
-	}
-
-	self.setState(Established, EventConnected)
-	return nil
-}
-
-func (self *Channel) serve(ctx context.Context) error {
-	stream_ := self.getStream()
-
-	err := stream_.Serve(ctx, &messageProcessor{
-		Options:     self.options,
-		Stream:      stream_,
-		PendingRPCs: &self.pendingRPCs,
-	})
-
-	self.failedEventType = EventServeFailed
-	return err
-}
-
-func (self *Channel) setState(newState State, eventType EventType) {
+func (self *Channel) setState(newState state) {
 	oldState := self.getState()
 	stateTransitionIsValid := false
 	err := error(nil)
 
 	switch oldState {
-	case Initial:
+	case initial:
 		switch newState {
-		case Establishing:
+		case establishing:
 			stateTransitionIsValid = true
-		case Closed:
+		case closed:
 			stateTransitionIsValid = true
 			err = ErrClosed
 		}
-	case Establishing:
+	case establishing:
 		switch newState {
-		case Establishing:
+		case establishing:
 			stateTransitionIsValid = true
 			err = ErrBroken
-		case Established:
+		case established:
 			stateTransitionIsValid = true
-		case Closed:
+		case closed:
 			stateTransitionIsValid = true
 			err = ErrClosed
 		}
-	case Established:
+	case established:
 		switch newState {
-		case Establishing:
+		case establishing:
 			stateTransitionIsValid = true
 			err = ErrBroken
-		case Closed:
+		case closed:
 			stateTransitionIsValid = true
 			err = ErrClosed
 		}
 	}
 
 	utils.Assert(stateTransitionIsValid, func() string {
-		return fmt.Sprintf("pbrpc/channel: invalid state transition: oldState=%#v, newState=%#v, eventType=%#v", oldState, newState, eventType)
+		return fmt.Sprintf("pbrpc/channel: invalid state transition: oldState=%#v, newState=%#v", oldState, newState)
 	})
 
 	if newState != oldState {
 		atomic.StoreInt32(&self.state, int32(newState))
-		logEvent := self.options.Logger().Info()
+		logEvent := self.options.Logger.Info()
 
-		if transportID := self.getTransportID(); !transportID.IsZero() {
+		if transportID := self.getStream().GetTransportID(); !transportID.IsZero() {
 			logEvent.Str("transport_id", transportID.String())
 		}
 
 		logEvent.Str("old_state", oldState.GoString()).
 			Str("new_state", newState.GoString()).
-			Str("event_type", eventType.GoString()).
 			Msg("channel_state_transition")
-		self.listenerManager.FireEvent(eventType, oldState, newState)
 	}
 
 	if err != nil {
@@ -333,7 +244,6 @@ func (self *Channel) setState(newState State, eventType EventType) {
 				return true
 			})
 		} else { // err == ErrClosed
-			self.listenerManager.Close()
 			self.getStream().Close()
 			listOfPendingRequests := new(list.List).Init()
 			self.dequeOfPendingRequests.Close(listOfPendingRequests)
@@ -355,41 +265,49 @@ func (self *Channel) setState(newState State, eventType EventType) {
 	}
 }
 
-func (self *Channel) getState() State {
-	return State(atomic.LoadInt32(&self.state))
-}
-
-func (self *Channel) getClosedError() error {
-	state := self.getState()
-	return state2ClosedError[state]
-}
-
-func (self *Channel) isClosed() bool {
-	return self.getClosedError() != nil
+func (self *Channel) getState() state {
+	return state(atomic.LoadInt32(&self.state))
 }
 
 func (self *Channel) getStream() *stream.Stream {
 	return (*stream.Stream)(atomic.LoadPointer(&self.stream))
 }
 
-func (self *Channel) getTransportID() uuid.UUID {
-	return self.getStream().GetTransportID()
-}
-
 func (self *Channel) getNextSequenceNumber() int {
 	return int((atomic.AddUint32(&self.nextSequenceNumber, 1) - 1) & 0x7FFFFFFF)
 }
 
-type ServerAddressProvider func(ctx context.Context, connectRetryCount int) (string, error)
+func (self *Channel) isClosed() bool {
+	state_ := self.getState()
+	return !(state_ >= initial && state_ < closed)
+}
 
-var ErrHandshakeRefused = errors.New("pbrpc/channel: handshake refused")
-var ErrBroken = errors.New("pbrpc/channel: broken")
-var ErrClosed = errors.New("pbrpc/channel: closed")
+var (
+	ErrHandshakeRefused = errors.New("pbrpc/channel: handshake refused")
+	ErrBroken           = errors.New("pbrpc/channel: broken")
+	ErrClosed           = errors.New("pbrpc/channel: closed")
+)
 
-var state2ClosedError = [...]error{
-	None:         ErrClosed,
-	Initial:      nil,
-	Establishing: nil,
-	Established:  nil,
-	Closed:       ErrClosed,
+const (
+	initial = 1 + iota
+	establishing
+	established
+	closed
+)
+
+type state int
+
+func (self state) GoString() string {
+	switch self {
+	case initial:
+		return "<initial>"
+	case establishing:
+		return "<establishing>"
+	case established:
+		return "<established>"
+	case closed:
+		return "<closed>"
+	default:
+		return fmt.Sprintf("<state:%d>", self)
+	}
 }

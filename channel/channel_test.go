@@ -23,15 +23,13 @@ func TestPingAndPong(t *testing.T) {
 		Transport:              &transport.Options{Logger: &logger},
 	}}
 	opts.SetMethod("service1", "method1").
-		SetRequestFactory(func() Message { return new(RawMessage) }).
-		SetResponseFactory(func() Message { return new(RawMessage) }).
+		SetRequestFactory(NewRawMessage).
 		SetIncomingRPCHandler(func(rpc *RPC) {
 			msg := RawMessage(fmt.Sprintf("return service1.method1(%s)", *rpc.Request.(*RawMessage)))
 			rpc.Response = &msg
 		})
 	opts.SetMethod("service2", "method2").
-		SetRequestFactory(func() Message { return new(RawMessage) }).
-		SetResponseFactory(func() Message { return new(RawMessage) }).
+		SetRequestFactory(NewRawMessage).
 		SetIncomingRPCHandler(func(rpc *RPC) {
 			msg := RawMessage(fmt.Sprintf("return service2.method2(%s)", *rpc.Request.(*RawMessage)))
 			rpc.Response = &msg
@@ -40,7 +38,7 @@ func TestPingAndPong(t *testing.T) {
 		t,
 		&opts,
 		&opts,
-		func(ctx context.Context, cn *Channel) {
+		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			wg := sync.WaitGroup{}
 			for i := 0; i < N; i++ {
 				wg.Add(1)
@@ -53,7 +51,7 @@ func TestPingAndPong(t *testing.T) {
 						MethodName:  "method2",
 						Request:     &msg,
 					}
-					cn.InvokeRPC(&rpc)
+					cn.InvokeRPC(&rpc, NewRawMessage)
 					if !assert.NoError(t, rpc.Err) {
 						t.FailNow()
 					}
@@ -63,6 +61,7 @@ func TestPingAndPong(t *testing.T) {
 			wg.Wait()
 			time.Sleep(1 * time.Second)
 			cn.Abort(nil)
+			return false
 		},
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			wg := sync.WaitGroup{}
@@ -77,7 +76,7 @@ func TestPingAndPong(t *testing.T) {
 						MethodName:  "method1",
 						Request:     &msg,
 					}
-					cn.InvokeRPC(&rpc)
+					cn.InvokeRPC(&rpc, NewRawMessage)
 					if !assert.NoError(t, rpc.Err) {
 						t.FailNow()
 					}
@@ -113,7 +112,7 @@ func TestBadHandshake(t *testing.T) {
 				return &msg, nil
 			},
 		}.Init()},
-		func(ctx context.Context, cn *Channel) {
+		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			for i := 0; i < 10; i++ {
 				rpc := RPC{
 					Ctx:         ctx,
@@ -121,10 +120,11 @@ func TestBadHandshake(t *testing.T) {
 					MethodName:  "method2",
 					Request:     NullMessage,
 				}
-				cn.InvokeRPC(&rpc)
+				cn.InvokeRPC(&rpc, NewNullMessage)
 				assert.EqualError(t, rpc.Err, "pbrpc/channel: closed")
 			}
 			cn.Abort(nil)
+			return false
 		},
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			return false
@@ -143,12 +143,11 @@ func TestBroken(t *testing.T) {
 			rpc.Response = NullMessage
 		}
 	})
-	f := false
 	testSetup2(
 		t,
 		&Options{},
 		opts2,
-		func(ctx context.Context, cn *Channel) {
+		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			wg := sync.WaitGroup{}
 			for i := 0; i < 10; i++ {
 				wg.Add(1)
@@ -161,22 +160,18 @@ func TestBroken(t *testing.T) {
 						Request:          NullMessage,
 						RequestExtraData: ExtraData{"I": []byte{byte(i)}},
 					}
-					cn.InvokeRPC(&rpc)
+					cn.InvokeRPC(&rpc, NewRawMessage)
 					if i%2 == 0 {
 						assert.EqualError(t, rpc.Err, "pbrpc/channel: broken")
 					}
 				}(i)
 			}
 			wg.Wait()
-			cn.Abort(nil)
+			return false
 		},
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
-			if !f {
-				f = true
-				time.Sleep(time.Second)
-				conn.Close()
-				return true
-			}
+			time.Sleep(500 * time.Millisecond)
+			cn.Abort(nil)
 			return false
 		},
 		0,
@@ -189,7 +184,7 @@ func TestReconnection1(t *testing.T) {
 		t,
 		&Options{},
 		&Options{},
-		func(ctx context.Context, cn *Channel) {
+		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			wg := sync.WaitGroup{}
 			for i := 0; i < 10; i++ {
 				wg.Add(1)
@@ -201,21 +196,20 @@ func TestReconnection1(t *testing.T) {
 						MethodName:  "2",
 						Request:     NullMessage,
 					}
-					if i < 5 {
-						if i == 0 {
-							rpc.Request = testBlockMessage{time.Second / 2 * 3}
-						}
-						cn.InvokeRPC(&rpc)
+					if i == 0 {
+						rpc.Request = testBlockMessage{time.Second / 2 * 3}
+						cn.InvokeRPC(&rpc, NewNullMessage)
 						assert.EqualError(t, rpc.Err, "pbrpc/channel: broken")
 					} else {
 						time.Sleep(time.Second / 2)
-						cn.InvokeRPC(&rpc)
+						cn.InvokeRPC(&rpc, NewNullMessage)
 						assert.EqualError(t, rpc.Err, "pbrpc/channel: rpc: not found")
 					}
 				}(i)
 			}
 			wg.Wait()
 			cn.Abort(nil)
+			return false
 		},
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			if !f {
@@ -226,7 +220,7 @@ func TestReconnection1(t *testing.T) {
 			}
 			return false
 		},
-		0,
+		1,
 	)
 }
 
@@ -235,7 +229,7 @@ func TestReconnection2(t *testing.T) {
 		t,
 		&Options{},
 		&Options{},
-		func(ctx context.Context, cn *Channel) {
+		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			wg := sync.WaitGroup{}
 			for i := 0; i < 10; i++ {
 				wg.Add(1)
@@ -247,21 +241,20 @@ func TestReconnection2(t *testing.T) {
 						MethodName:  "2",
 						Request:     NullMessage,
 					}
-					if i < 5 {
-						if i == 0 {
-							rpc.Request = testBlockMessage{time.Second / 2 * 3}
-						}
-						cn.InvokeRPC(&rpc)
+					if i == 0 {
+						rpc.Request = testBlockMessage{time.Second / 2 * 3}
+						cn.InvokeRPC(&rpc, NewNullMessage)
 						assert.EqualError(t, rpc.Err, "pbrpc/channel: broken")
 					} else {
 						time.Sleep(time.Second / 2)
-						cn.InvokeRPC(&rpc)
+						cn.InvokeRPC(&rpc, NewNullMessage)
 						assert.EqualError(t, rpc.Err, "pbrpc/channel: closed")
 					}
 				}(i)
 			}
 			wg.Wait()
 			cn.Abort(nil)
+			return false
 		},
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			time.Sleep(time.Second)
@@ -307,15 +300,16 @@ func TestInterception(t *testing.T) {
 		t,
 		&Options{},
 		opts2,
-		func(ctx context.Context, cn *Channel) {
+		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			rpc := RPC{
 				Ctx:         ctx,
 				ServiceName: "foo",
 				MethodName:  "bar",
 				Request:     NullMessage,
 			}
-			cn.InvokeRPC(&rpc)
+			cn.InvokeRPC(&rpc, NewNullMessage)
 			cn.Abort(nil)
+			return false
 		},
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			return false
@@ -331,13 +325,14 @@ func TestDeadline(t *testing.T) {
 			tm := time.Now()
 			<-rpc.Ctx.Done()
 			assert.True(t, time.Since(tm) >= time.Duration(900*time.Millisecond))
+			time.Sleep(100 * time.Millisecond)
 			rpc.Response = NullMessage
 		})
 	testSetup2(
 		t,
 		&Options{},
 		opts2,
-		func(ctx context.Context, cn *Channel) {
+		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 			defer cancel()
 			rpc := RPC{
@@ -346,9 +341,10 @@ func TestDeadline(t *testing.T) {
 				MethodName:  "bar",
 				Request:     NullMessage,
 			}
-			cn.InvokeRPC(&rpc)
+			cn.InvokeRPC(&rpc, NewNullMessage)
 			assert.EqualError(t, rpc.Err, "context deadline exceeded")
 			cn.Abort(nil)
+			return false
 		},
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			time.Sleep(time.Second / 2 * 3)
@@ -362,23 +358,37 @@ func testSetup2(
 	t *testing.T,
 	opts1 *Options,
 	opts2 *Options,
-	cb1 func(ctx context.Context, cn *Channel),
+	cb1 func(ctx context.Context, cn *Channel, conn net.Conn) bool,
 	cb2 func(ctx context.Context, cn *Channel, conn net.Conn) bool,
-	nMaxReconnect int,
+	nMaxReconnects int,
 ) {
 	testSetup(
 		t,
-		func(ctx context.Context, sa string) {
+		func(ctx context.Context, makeConn func() net.Conn) bool {
+			conn := makeConn()
 			cn := new(Channel).Init(opts1)
 			wg := sync.WaitGroup{}
 			wg.Add(1)
-			go func() {
+			go func(conn net.Conn) {
 				defer wg.Done()
-				err := cn.ConnectAndServe(ctx, MakeSimpleServerAddressProvider([]string{sa}, nMaxReconnect, 200*time.Millisecond))
-				t.Log(err)
-			}()
+				defer cn.Close()
+				for i := -1; i < nMaxReconnects; i++ {
+					if i >= 0 {
+						conn = makeConn()
+					}
+					if err := cn.Connect(ctx, conn); err != nil {
+						t.Log(err)
+						continue
+					}
+
+					if err := cn.Process(ctx); err != nil {
+						t.Log(err)
+						continue
+					}
+				}
+			}(conn)
 			defer wg.Wait()
-			cb1(ctx, cn)
+			return cb1(ctx, cn, conn)
 		},
 		func(ctx context.Context, conn net.Conn) bool {
 			cn := new(Channel).Init(opts2)
@@ -386,8 +396,15 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := cn.AcceptAndServe(ctx, conn)
-				t.Log(err)
+				defer cn.Close()
+				if err := cn.Accept(ctx, conn); err != nil {
+					t.Log(err)
+					return
+				}
+				if err := cn.Process(ctx); err != nil {
+					t.Log(err)
+					return
+				}
 			}()
 			defer wg.Wait()
 			return cb2(ctx, cn, conn)
@@ -397,7 +414,7 @@ func testSetup2(
 
 func testSetup(
 	t *testing.T,
-	cb1 func(ctx context.Context, sa string),
+	cb1 func(ctx context.Context, makeConn func() net.Conn) bool,
 	cb2 func(ctx context.Context, conn net.Conn) bool,
 ) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -411,15 +428,26 @@ func testSetup(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cb1(ctx, l.Addr().String())
+		for {
+			makeConn := func() net.Conn {
+				conn, err := net.Dial("tcp", l.Addr().String())
+				if !assert.NoError(t, err) {
+					t.FailNow()
+				}
+				return conn
+			}
+			if !cb1(ctx, makeConn) {
+				break
+			}
+		}
 	}()
 	defer wg.Wait()
 	for {
-		c, err := l.Accept()
+		conn, err := l.Accept()
 		if !assert.NoError(t, err) {
 			t.FailNow()
 		}
-		if !cb2(ctx, c) {
+		if !cb2(ctx, conn) {
 			break
 		}
 	}

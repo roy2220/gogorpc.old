@@ -7,8 +7,3 @@ import (
 type (
 	TransportOptions = transport.Options
 )
-
-var (
-	TCPConnector       = transport.TCPConnector
-	WebSocketConnector = transport.WebSocketConnector
-)

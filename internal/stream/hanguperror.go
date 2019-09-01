@@ -21,7 +21,13 @@ type HangupError struct {
 }
 
 func (self *HangupError) Error() string {
-	message := "pbrpc/stream: hangup: "
+	message := "pbrpc/stream: hangup"
+
+	if self.IsPassive {
+		message += " (passive): "
+	} else {
+		message += " (active): "
+	}
 
 	switch self.Code {
 	case HangupErrorAborted:
@@ -36,12 +42,6 @@ func (self *HangupError) Error() string {
 		message += "system"
 	default:
 		message += fmt.Sprintf("error %d", self.Code)
-	}
-
-	if self.IsPassive {
-		message += " (passive)"
-	} else {
-		message += " (active)"
 	}
 
 	return message

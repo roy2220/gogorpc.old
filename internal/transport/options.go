@@ -9,7 +9,6 @@ import (
 
 type Options struct {
 	Logger                *zerolog.Logger
-	Connector             Connector
 	HandshakeTimeout      time.Duration
 	MinInputBufferSize    int
 	MaxInputBufferSize    int
@@ -23,10 +22,6 @@ func (self *Options) Normalize() *Options {
 	self.normalizeOnce.Do(func() {
 		if self.Logger == nil {
 			self.Logger = &defaultLogger
-		}
-
-		if self.Connector == nil {
-			self.Connector = TCPConnector
 		}
 
 		normalizeDurValue(&self.HandshakeTimeout, defaultHandshakeTimeout, minHandshakeTimeout, maxHandshakeTimeout)

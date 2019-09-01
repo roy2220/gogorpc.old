@@ -88,10 +88,10 @@ func TestOptions(t *testing.T) {
 func TestHandshake1(t *testing.T) {
 	testSetup(
 		t,
-		func(ctx context.Context, sa string) {
+		func(ctx context.Context, conn net.Conn) {
 			tp := new(Transport).Init(&Options{Logger: &logger})
 			defer tp.Close()
-			ok, err := tp.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{
+			ok, err := tp.Connect(ctx, conn, uuid.UUID{}, testHandshaker{
 				CbSizeHandshake: func() int {
 					return len("hello")
 				},
@@ -140,11 +140,11 @@ func TestHandshake1(t *testing.T) {
 func TestHandshake2(t *testing.T) {
 	testSetup(
 		t,
-		func(ctx context.Context, sa string) {
+		func(ctx context.Context, conn net.Conn) {
 			tp := new(Transport).Init(&Options{HandshakeTimeout: -1})
 			defer tp.Close()
-			ok, err := tp.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{}.Init())
-			if !assert.EqualError(t, err, "pbrpc/transport: network: context deadline exceeded") {
+			ok, err := tp.Connect(ctx, conn, uuid.UUID{}, testHandshaker{}.Init())
+			if !assert.Regexp(t, "i/o timeout", err) {
 				t.FailNow()
 			}
 			assert.False(t, ok)
@@ -170,10 +170,10 @@ func TestHandshake2(t *testing.T) {
 func TestHandshake3(t *testing.T) {
 	testSetup(
 		t,
-		func(ctx context.Context, sa string) {
+		func(ctx context.Context, conn net.Conn) {
 			tp := new(Transport).Init(&Options{HandshakeTimeout: -1})
 			defer tp.Close()
-			ok, err := tp.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{
+			ok, err := tp.Connect(ctx, conn, uuid.UUID{}, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, rh []byte) (bool, error) {
 					<-ctx.Done()
 					<-time.After(10 * time.Millisecond)
@@ -436,7 +436,7 @@ func (s testHandshaker) EmitHandshake(buf []byte) error {
 
 func testSetup(
 	t *testing.T,
-	cb1 func(ctx context.Context, sa string),
+	cb1 func(ctx context.Context, conn net.Conn),
 	cb2 func(ctx context.Context, conn net.Conn),
 ) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -450,14 +450,18 @@ func testSetup(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cb1(ctx, l.Addr().String())
+		conn, err := net.Dial("tcp", l.Addr().String())
+		if !assert.NoError(t, err) {
+			t.FailNow()
+		}
+		cb1(ctx, conn)
 	}()
 	defer wg.Wait()
-	c, err := l.Accept()
+	conn, err := l.Accept()
 	if !assert.NoError(t, err) {
 		t.FailNow()
 	}
-	cb2(ctx, c)
+	cb2(ctx, conn)
 }
 
 func testSetup2(
@@ -469,10 +473,10 @@ func testSetup2(
 ) {
 	testSetup(
 		t,
-		func(ctx context.Context, sa string) {
+		func(ctx context.Context, conn net.Conn) {
 			tp := new(Transport).Init(opts1)
 			defer tp.Close()
-			ok, err := tp.Connect(ctx, sa, uuid.GenerateUUID4Fast(), testHandshaker{
+			ok, err := tp.Connect(ctx, conn, uuid.GenerateUUID4Fast(), testHandshaker{
 				CbSizeHandshake: func() int {
 					return 0
 				},

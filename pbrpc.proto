@@ -1,8 +1,0 @@
-syntax = "proto3";
-
-package pbrpc;
-
-option go_package = "github.com/let-z-go/pbrpc";
-
-message Void {}
-message NoReturn {}

@@ -49,8 +49,8 @@ func (self *passiveHandshaker) HandleHandshake(ctx context.Context, rawHandshake
 		return false, ErrBadHandshake
 	}
 
-	self.options.Logger().Info().
-		Str("endpoint", "server-side").
+	self.options.Logger.Info().
+		Str("side", "server-side").
 		Int("size", handshakeSize).
 		Int("header_size", handshakeHeaderSize).
 		Str("transport_id", self.GetTransportID().String()).
@@ -120,8 +120,8 @@ func (self *passiveHandshaker) EmitHandshake(buffer []byte) error {
 		return self.err
 	}
 
-	self.options.Logger().Info().
-		Str("endpoint", "server-side").
+	self.options.Logger.Info().
+		Str("side", "server-side").
 		Int("size", len(buffer)).
 		Int("header_size", self.handshakeHeaderSize).
 		Str("transport_id", self.GetTransportID().String()).
@@ -172,8 +172,8 @@ func (self *activeHandshaker) EmitHandshake(buffer []byte) error {
 		return self.err
 	}
 
-	self.options.Logger().Info().
-		Str("endpoint", "client-side").
+	self.options.Logger.Info().
+		Str("side", "client-side").
 		Int("size", len(buffer)).
 		Int("header_size", self.handshakeHeaderSize).
 		Str("transport_id", self.GetTransportID().String()).
@@ -208,8 +208,8 @@ func (self *activeHandshaker) HandleHandshake(ctx context.Context, rawHandshake 
 		return false, ErrBadHandshake
 	}
 
-	self.options.Logger().Info().
-		Str("endpoint", "client-side").
+	self.options.Logger.Info().
+		Str("side", "client-side").
 		Int("size", handshakeSize).
 		Int("header_size", handshakeHeaderSize).
 		Str("transport_id", self.GetTransportID().String()).
