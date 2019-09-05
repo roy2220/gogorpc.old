@@ -20,9 +20,9 @@ import (
 
 type Channel struct {
 	options                *Options
-	state                  int32
 	dequeOfPendingRequests deque.Deque
 	stream                 unsafe.Pointer
+	state                  int32
 	nextSequenceNumber     uint32
 	pendingRPCs            sync.Map
 	pendingAbort           atomic.Value
@@ -30,9 +30,9 @@ type Channel struct {
 
 func (self *Channel) Init(options *Options) *Channel {
 	self.options = options.Normalize()
-	self.state = int32(initial)
 	self.dequeOfPendingRequests.Init(0)
 	self.stream = unsafe.Pointer(new(stream.Stream).Init(self.options.Stream, &self.dequeOfPendingRequests, nil))
+	self.state = int32(initial)
 	return self
 }
 
@@ -116,7 +116,8 @@ func (self *Channel) InvokeRPC(rpc *RPC, responseFactory MessageFactory) {
 	}
 
 	rpc.internals.Init(func(rpc *RPC) {
-		pendingRPC_ := getPooledPendingRPC().Init(responseFactory)
+		pendingRPC_ := getPooledPendingRPC()
+		pendingRPC_.Init(responseFactory)
 		self.pendingRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
 
 		if err := self.getStream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
@@ -168,6 +169,10 @@ func (self *Channel) Abort(extraData ExtraData) {
 	self.getStream().Abort(extraData)
 }
 
+func (self *Channel) GetTransportID() uuid.UUID {
+	return self.getStream().GetTransportID()
+}
+
 func (self *Channel) setState(newState state) {
 	oldState := self.getState()
 	stateTransitionIsValid := false
@@ -212,8 +217,8 @@ func (self *Channel) setState(newState state) {
 		atomic.StoreInt32(&self.state, int32(newState))
 		logEvent := self.options.Logger.Info()
 
-		if transportID := self.getStream().GetTransportID(); !transportID.IsZero() {
-			logEvent.Str("transport_id", transportID.String())
+		if oldState != initial {
+			logEvent.Str("transport_id", self.GetTransportID().String())
 		}
 
 		logEvent.Str("old_state", oldState.GoString()).
@@ -265,12 +270,12 @@ func (self *Channel) setState(newState state) {
 	}
 }
 
-func (self *Channel) getState() state {
-	return state(atomic.LoadInt32(&self.state))
-}
-
 func (self *Channel) getStream() *stream.Stream {
 	return (*stream.Stream)(atomic.LoadPointer(&self.stream))
+}
+
+func (self *Channel) getState() state {
+	return state(atomic.LoadInt32(&self.state))
 }
 
 func (self *Channel) getNextSequenceNumber() int {

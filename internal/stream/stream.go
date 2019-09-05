@@ -31,7 +31,7 @@ type Stream struct {
 
 func (self *Stream) Init(options *Options, dequeOfPendingRequests *deque.Deque, dequeOfPendingResponses *deque.Deque) *Stream {
 	self.options = options.Normalize()
-	self.transport.Init(options.Transport)
+	self.transport.Init(self.options.Transport)
 
 	if dequeOfPendingRequests == nil {
 		dequeOfPendingRequests = self.deques[0].Init(0)
@@ -494,11 +494,11 @@ func (self *Stream) putPendingRequests(ctx context.Context, pendingRequests chan
 		}
 
 		select {
-		case pendingRequests <- pendingRequestsA:
-			pendingRequestsA, pendingRequestsB = pendingRequestsB, pendingRequestsA
 		case <-ctx.Done():
 			self.dequeOfPendingRequests.DiscardNodesRemoval(&pendingRequestsA.List, pendingRequestsA.ListLength, false)
 			return ctx.Err()
+		case pendingRequests <- pendingRequestsA:
+			pendingRequestsA, pendingRequestsB = pendingRequestsB, pendingRequestsA
 		}
 	}
 }
@@ -528,11 +528,11 @@ func (self *Stream) putPendingResponses(ctx context.Context, pendingResponses ch
 		}
 
 		select {
-		case pendingResponses <- pendingResponsesA:
-			pendingResponsesA, pendingResponsesB = pendingResponsesB, pendingResponsesA
 		case <-ctx.Done():
 			self.dequeOfPendingResponses.DiscardNodesRemoval(&pendingResponsesA.List, pendingResponsesA.ListLength, false)
 			return ctx.Err()
+		case pendingResponses <- pendingResponsesA:
+			pendingResponsesA, pendingResponsesB = pendingResponsesB, pendingResponsesA
 		}
 	}
 }

@@ -15,10 +15,9 @@ type pendingRPC struct {
 	completion      chan struct{}
 }
 
-func (self *pendingRPC) Init(responseFactory MessageFactory) *pendingRPC {
+func (self *pendingRPC) Init(responseFactory MessageFactory) {
 	self.responseFactory = responseFactory
 	self.completion = make(chan struct{})
-	return self
 }
 
 func (self *pendingRPC) NewResponse() Message {

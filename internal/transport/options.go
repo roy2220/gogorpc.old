@@ -47,12 +47,12 @@ func (self *Options) Normalize() *Options {
 const (
 	defaultHandshakeTimeout = 3 * time.Second
 	minHandshakeTimeout     = 1 * time.Second
-	maxHandshakeTimeout     = 30 * time.Second
+	maxHandshakeTimeout     = 5 * time.Second
 )
 
 const (
 	defaultMaxPacketSize = 1 << 20
-	minMaxPacketSize     = 1 << 12
+	minMaxPacketSize     = 1 << 10
 	maxMaxPacketSize     = 1 << 30
 )
 

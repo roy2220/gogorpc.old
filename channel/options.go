@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/let-z-go/toolkit/utils"
 	"github.com/rs/zerolog"
 )
 
@@ -42,6 +41,10 @@ func (self *Options) Normalize() *Options {
 
 		if self.AbortHandler == nil {
 			self.AbortHandler = defaultAbortHandler
+		}
+
+		if !self.GeneralMethod.requestFactoryIsSet {
+			self.setRequestFactory("", "", NewNullMessage)
 		}
 	})
 
@@ -84,10 +87,8 @@ func (self MethodOptionsBuilder) AddOutgoingRPCInterceptor(rpcInterceptor RPCHan
 }
 
 type ServiceOptions struct {
-	Methods map[string]*MethodOptions
-
-	incomingRPCInterceptors []RPCHandler
-	outgoingRPCInterceptors []RPCHandler
+	GeneralMethod MethodOptions
+	Methods       map[string]*MethodOptions
 }
 
 type MethodOptions struct {
@@ -95,6 +96,9 @@ type MethodOptions struct {
 	IncomingRPCHandler      RPCHandler
 	IncomingRPCInterceptors []RPCHandler
 	OutgoingRPCInterceptors []RPCHandler
+
+	requestFactoryIsSet     bool
+	incomingRPCHandlerIsSet bool
 }
 
 type MessageFactory func() (message Message)
@@ -140,10 +144,8 @@ func (defaultKeepaliver) EmitKeepalive() (Message, error) {
 }
 
 type serviceOptionsManager struct {
-	Services map[string]*ServiceOptions
-
-	incomingRPCInterceptors []RPCHandler
-	outgoingRPCInterceptors []RPCHandler
+	GeneralMethod MethodOptions
+	Services      map[string]*ServiceOptions
 }
 
 func (self *serviceOptionsManager) SetMethod(serviceName string, methodName string) MethodOptionsBuilder {
@@ -154,114 +156,161 @@ func (self *serviceOptionsManager) GetMethod(serviceName string, methodName stri
 	service, ok := self.Services[serviceName]
 
 	if !ok {
-		return &defaultMethodOptions
+		return &self.GeneralMethod
 	}
 
 	method, ok := service.Methods[methodName]
 
 	if !ok {
-		return &defaultMethodOptions
+		return &service.GeneralMethod
 	}
 
 	return method
 }
 
 func (self *serviceOptionsManager) setRequestFactory(serviceName string, methodName string, messageFactory MessageFactory) {
-	method := self.getOrSetService(serviceName).getOrSetMethod(methodName)
-	method.RequestFactory = messageFactory
-}
-
-func (self *serviceOptionsManager) setIncomingRPCHandler(serviceName string, methodName string, rpcHandler RPCHandler) {
-	method := self.getOrSetService(serviceName).getOrSetMethod(methodName)
-	method.IncomingRPCHandler = rpcHandler
-}
-
-func (self *serviceOptionsManager) addIncomingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) {
-	i := len(self.incomingRPCInterceptors)
-
 	if serviceName == "" {
-		self.incomingRPCInterceptors = append(self.incomingRPCInterceptors, rpcInterceptor)
+		self.GeneralMethod.RequestFactory = messageFactory
+		self.GeneralMethod.requestFactoryIsSet = true
 
 		for _, service := range self.Services {
+			if service.GeneralMethod.requestFactoryIsSet {
+				continue
+			}
+
+			service.GeneralMethod.RequestFactory = messageFactory
+
 			for _, method := range service.Methods {
-				rpcInterceptors := make([]RPCHandler, len(method.IncomingRPCInterceptors)+1)
-				copy(rpcInterceptors[:i], method.IncomingRPCInterceptors[:i])
-				rpcInterceptors[i] = rpcInterceptor
-				copy(rpcInterceptors[i+1:], method.IncomingRPCInterceptors[i:])
-				method.IncomingRPCInterceptors = rpcInterceptors
+				if method.requestFactoryIsSet {
+					continue
+				}
+
+				method.RequestFactory = messageFactory
 			}
 		}
 	} else {
 		service := self.getOrSetService(serviceName)
-		j := i + len(service.incomingRPCInterceptors)
 
 		if methodName == "" {
-			service.incomingRPCInterceptors = append(service.incomingRPCInterceptors, rpcInterceptor)
+			service.GeneralMethod.RequestFactory = messageFactory
+			service.GeneralMethod.requestFactoryIsSet = true
 
 			for _, method := range service.Methods {
-				rpcInterceptors := make([]RPCHandler, len(method.IncomingRPCInterceptors)+1)
-				copy(rpcInterceptors[:j], method.IncomingRPCInterceptors[:j])
-				rpcInterceptors[j] = rpcInterceptor
-				copy(rpcInterceptors[j+1:], method.IncomingRPCInterceptors[j:])
-				method.IncomingRPCInterceptors = rpcInterceptors
+				if method.requestFactoryIsSet {
+					continue
+				}
+
+				method.RequestFactory = messageFactory
 			}
 		} else {
 			method := service.getOrSetMethod(methodName)
-			k := j + len(method.IncomingRPCInterceptors)
-			rpcInterceptors := make([]RPCHandler, k+1)
-			copy(rpcInterceptors, self.incomingRPCInterceptors)
-			copy(rpcInterceptors[i:], service.incomingRPCInterceptors)
-			copy(rpcInterceptors[j:], method.IncomingRPCInterceptors)
-			rpcInterceptors[k] = rpcInterceptor
-			method.IncomingRPCInterceptors = rpcInterceptors
+			method.RequestFactory = messageFactory
+			method.requestFactoryIsSet = true
+		}
+	}
+}
+
+func (self *serviceOptionsManager) setIncomingRPCHandler(serviceName string, methodName string, rpcHandler RPCHandler) {
+	if serviceName == "" {
+		self.GeneralMethod.IncomingRPCHandler = rpcHandler
+		self.GeneralMethod.incomingRPCHandlerIsSet = true
+
+		for _, service := range self.Services {
+			if service.GeneralMethod.incomingRPCHandlerIsSet {
+				continue
+			}
+
+			service.GeneralMethod.IncomingRPCHandler = rpcHandler
+
+			for _, method := range service.Methods {
+				if method.incomingRPCHandlerIsSet {
+					continue
+				}
+
+				method.IncomingRPCHandler = rpcHandler
+			}
+		}
+	} else {
+		service := self.getOrSetService(serviceName)
+
+		if methodName == "" {
+			service.GeneralMethod.IncomingRPCHandler = rpcHandler
+			service.GeneralMethod.incomingRPCHandlerIsSet = true
+
+			for _, method := range service.Methods {
+				if method.incomingRPCHandlerIsSet {
+					continue
+				}
+
+				method.IncomingRPCHandler = rpcHandler
+			}
+		} else {
+			method := service.getOrSetMethod(methodName)
+			method.IncomingRPCHandler = rpcHandler
+			method.incomingRPCHandlerIsSet = true
+		}
+	}
+}
+
+func (self *serviceOptionsManager) addIncomingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) {
+	if serviceName == "" {
+		i := len(self.GeneralMethod.IncomingRPCInterceptors)
+		insertRPCInterceptor(rpcInterceptor, &self.GeneralMethod.IncomingRPCInterceptors, i)
+
+		for _, service := range self.Services {
+			insertRPCInterceptor(rpcInterceptor, &service.GeneralMethod.IncomingRPCInterceptors, i)
+
+			for _, method := range service.Methods {
+				insertRPCInterceptor(rpcInterceptor, &method.IncomingRPCInterceptors, i)
+			}
+		}
+	} else {
+		service := self.getOrSetService(serviceName)
+
+		if methodName == "" {
+			i := len(service.GeneralMethod.IncomingRPCInterceptors)
+			insertRPCInterceptor(rpcInterceptor, &service.GeneralMethod.IncomingRPCInterceptors, i)
+
+			for _, method := range service.Methods {
+				insertRPCInterceptor(rpcInterceptor, &method.IncomingRPCInterceptors, i)
+			}
+		} else {
+			method := service.getOrSetMethod(methodName)
+			insertRPCInterceptor(rpcInterceptor, &method.IncomingRPCInterceptors, len(method.IncomingRPCInterceptors))
 		}
 	}
 }
 
 func (self *serviceOptionsManager) addOutgoingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) {
-	i := len(self.outgoingRPCInterceptors)
-
 	if serviceName == "" {
-		self.outgoingRPCInterceptors = append(self.outgoingRPCInterceptors, rpcInterceptor)
+		i := len(self.GeneralMethod.OutgoingRPCInterceptors)
+		insertRPCInterceptor(rpcInterceptor, &self.GeneralMethod.OutgoingRPCInterceptors, i)
 
 		for _, service := range self.Services {
+			insertRPCInterceptor(rpcInterceptor, &service.GeneralMethod.OutgoingRPCInterceptors, i)
+
 			for _, method := range service.Methods {
-				rpcInterceptors := make([]RPCHandler, len(method.OutgoingRPCInterceptors)+1)
-				copy(rpcInterceptors[:i], method.OutgoingRPCInterceptors[:i])
-				rpcInterceptors[i] = rpcInterceptor
-				copy(rpcInterceptors[i+1:], method.OutgoingRPCInterceptors[i:])
-				method.OutgoingRPCInterceptors = rpcInterceptors
+				insertRPCInterceptor(rpcInterceptor, &method.OutgoingRPCInterceptors, i)
 			}
 		}
 	} else {
 		service := self.getOrSetService(serviceName)
-		j := i + len(service.outgoingRPCInterceptors)
 
 		if methodName == "" {
-			service.outgoingRPCInterceptors = append(service.outgoingRPCInterceptors, rpcInterceptor)
+			i := len(service.GeneralMethod.OutgoingRPCInterceptors)
+			insertRPCInterceptor(rpcInterceptor, &service.GeneralMethod.OutgoingRPCInterceptors, i)
 
 			for _, method := range service.Methods {
-				rpcInterceptors := make([]RPCHandler, len(method.OutgoingRPCInterceptors)+1)
-				copy(rpcInterceptors[:j], method.OutgoingRPCInterceptors[:j])
-				rpcInterceptors[j] = rpcInterceptor
-				copy(rpcInterceptors[j+1:], method.OutgoingRPCInterceptors[j:])
-				method.OutgoingRPCInterceptors = rpcInterceptors
+				insertRPCInterceptor(rpcInterceptor, &method.OutgoingRPCInterceptors, i)
 			}
 		} else {
 			method := service.getOrSetMethod(methodName)
-			k := j + len(method.OutgoingRPCInterceptors)
-			rpcInterceptors := make([]RPCHandler, k+1)
-			copy(rpcInterceptors, self.outgoingRPCInterceptors)
-			copy(rpcInterceptors[i:], service.outgoingRPCInterceptors)
-			copy(rpcInterceptors[j:], method.OutgoingRPCInterceptors)
-			rpcInterceptors[k] = rpcInterceptor
-			method.OutgoingRPCInterceptors = rpcInterceptors
+			insertRPCInterceptor(rpcInterceptor, &method.OutgoingRPCInterceptors, len(method.OutgoingRPCInterceptors))
 		}
 	}
 }
 
 func (self *serviceOptionsManager) getOrSetService(serviceName string) *ServiceOptions {
-	utils.Assert(serviceName != "", func() string { return "pbrpc/channel: empty service name" })
 	services := self.Services
 
 	if services == nil {
@@ -273,6 +322,10 @@ func (self *serviceOptionsManager) getOrSetService(serviceName string) *ServiceO
 
 	if service == nil {
 		service = new(ServiceOptions)
+		service.GeneralMethod.RequestFactory = self.GeneralMethod.RequestFactory
+		service.GeneralMethod.IncomingRPCHandler = self.GeneralMethod.IncomingRPCHandler
+		service.GeneralMethod.IncomingRPCInterceptors = copyRPCInterceptors(self.GeneralMethod.IncomingRPCInterceptors)
+		service.GeneralMethod.OutgoingRPCInterceptors = copyRPCInterceptors(self.GeneralMethod.OutgoingRPCInterceptors)
 		services[serviceName] = service
 	}
 
@@ -280,7 +333,6 @@ func (self *serviceOptionsManager) getOrSetService(serviceName string) *ServiceO
 }
 
 func (self *ServiceOptions) getOrSetMethod(methodName string) *MethodOptions {
-	utils.Assert(methodName != "", func() string { return "pbrpc/channel: empty method name" })
 	methods := self.Methods
 
 	if methods == nil {
@@ -292,7 +344,10 @@ func (self *ServiceOptions) getOrSetMethod(methodName string) *MethodOptions {
 
 	if method == nil {
 		method = new(MethodOptions)
-		*method = defaultMethodOptions
+		method.RequestFactory = self.GeneralMethod.RequestFactory
+		method.IncomingRPCHandler = self.GeneralMethod.IncomingRPCHandler
+		method.IncomingRPCInterceptors = copyRPCInterceptors(self.GeneralMethod.IncomingRPCInterceptors)
+		method.OutgoingRPCInterceptors = copyRPCInterceptors(self.GeneralMethod.OutgoingRPCInterceptors)
 		methods[methodName] = method
 	}
 
@@ -301,8 +356,18 @@ func (self *ServiceOptions) getOrSetMethod(methodName string) *MethodOptions {
 
 var defaultStreamOptions StreamOptions
 
-var defaultMethodOptions = MethodOptions{
-	RequestFactory: NewNullMessage,
+func defaultAbortHandler(context.Context, ExtraData) {}
+
+func copyRPCInterceptors(rpcInterceptors []RPCHandler) []RPCHandler {
+	rpcInterceptorsCopy := make([]RPCHandler, len(rpcInterceptors))
+	copy(rpcInterceptorsCopy, rpcInterceptors)
+	return rpcInterceptorsCopy
 }
 
-func defaultAbortHandler(context.Context, ExtraData) {}
+func insertRPCInterceptor(rpcInterceptor RPCHandler, rpcInterceptors *[]RPCHandler, i int) {
+	newRPCInterceptors := make([]RPCHandler, len(*rpcInterceptors)+1)
+	copy(newRPCInterceptors[:i], (*rpcInterceptors)[:i])
+	newRPCInterceptors[i] = rpcInterceptor
+	copy(newRPCInterceptors[i+1:], (*rpcInterceptors)[i:])
+	*rpcInterceptors = newRPCInterceptors
+}

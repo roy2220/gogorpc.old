@@ -50,7 +50,7 @@ func (self *Transport) Accept(ctx context.Context, rawConnection net.Conn, hands
 		Msg("transport_accepting")
 	self.connection.Init(rawConnection)
 	self.inputByteStream.ReserveBuffer(self.options.MinInputBufferSize)
-	deadline := time.Now().Add(self.options.HandshakeTimeout)
+	deadline := makeDeadline(self.options.HandshakeTimeout)
 	var handshakeHeader protocol.TransportHandshakeHeader
 
 	ok, err := self.receiveHandshake(
@@ -106,7 +106,11 @@ func (self *Transport) Connect(ctx context.Context, rawConnection net.Conn, id u
 		Msg("transport_connecting")
 	self.connection.Init(rawConnection)
 	self.inputByteStream.ReserveBuffer(self.options.MinInputBufferSize)
-	deadline := time.Now().Add(self.options.HandshakeTimeout)
+	deadline := makeDeadline(self.options.HandshakeTimeout)
+
+	if id.IsZero() {
+		id = uuid.GenerateUUID4Fast()
+	}
 
 	handshakeHeader := protocol.TransportHandshakeHeader{
 		Id: protocol.UUID{
@@ -154,7 +158,7 @@ func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *
 	connectionIsPreRead := false
 
 	if self.inputByteStream.GetDataSize() < 8 {
-		self.connection.PreRead(ctx, makeDeadline(ctx, timeout))
+		self.connection.PreRead(ctx, makeDeadline(timeout))
 		connectionIsPreRead = true
 
 		for {
@@ -186,7 +190,7 @@ func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *
 		self.inputByteStream.ReserveBuffer(bufferSize)
 
 		if !connectionIsPreRead {
-			self.connection.PreRead(ctx, makeDeadline(ctx, timeout))
+			self.connection.PreRead(ctx, makeDeadline(timeout))
 		}
 
 		for {
@@ -288,7 +292,7 @@ func (self *Transport) Write(packet *Packet, callback func([]byte) error) error 
 
 func (self *Transport) Flush(ctx context.Context, timeout time.Duration) error {
 	data := self.outputByteStream.GetData()
-	_, err := self.connection.Write(ctx, makeDeadline(ctx, timeout), data)
+	_, err := self.connection.Write(ctx, makeDeadline(timeout), data)
 	self.outputByteStream.Skip(len(data))
 
 	if err != nil {
@@ -365,14 +369,7 @@ func (self *Transport) receiveHandshake(
 		return false, ErrBadHandshake
 	}
 
-	if self.id.IsZero() {
-		self.id = uuid.UUID{handshakeHeader.Id.Low, handshakeHeader.Id.High}
-
-		if self.id.IsZero() {
-			self.id = uuid.GenerateUUID4Fast()
-		}
-	}
-
+	self.id = uuid.UUID{handshakeHeader.Id.Low, handshakeHeader.Id.High}
 	logEvent.Int("size", len(rawHandshake)).
 		Int("header_size", handshakeHeaderSize).
 		Str("id", self.id.String()).
@@ -401,14 +398,7 @@ func (self *Transport) sendHandshake(
 		return ErrHandshakeTooLarge
 	}
 
-	if self.id.IsZero() {
-		self.id = uuid.UUID{handshakeHeader.Id.Low, handshakeHeader.Id.High}
-
-		if self.id.IsZero() {
-			self.id = uuid.GenerateUUID4Fast()
-		}
-	}
-
+	self.id = uuid.UUID{handshakeHeader.Id.Low, handshakeHeader.Id.High}
 	logEvent.Int("size", handshakeSize).
 		Int("header_size", handshakeHeaderSize).
 		Str("id", self.id.String()).
@@ -475,22 +465,10 @@ var (
 	ErrBadPacket         = errors.New("pbrpc/transport: bad packet")
 )
 
-func makeDeadline(ctx context.Context, timeout time.Duration) time.Time {
-	deadline1, ok := ctx.Deadline()
-
+func makeDeadline(timeout time.Duration) time.Time {
 	if timeout < 1 {
-		if ok {
-			return deadline1
-		} else {
-			return time.Time{}
-		}
+		return time.Time{}
 	} else {
-		deadline2 := time.Now().Add(timeout)
-
-		if ok && deadline1.Before(deadline2) {
-			return deadline1
-		} else {
-			return deadline2
-		}
+		return time.Now().Add(timeout)
 	}
 }

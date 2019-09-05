@@ -6,4 +6,5 @@ import (
 
 type (
 	TransportOptions = transport.Options
+	NetworkError     = transport.NetworkError
 )

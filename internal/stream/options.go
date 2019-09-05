@@ -50,8 +50,8 @@ const (
 )
 
 const (
-	defaultKeepaliveInterval = 5 * time.Second
-	minKeepaliveInterval     = 3 * time.Second
+	defaultKeepaliveInterval = 15 * time.Second
+	minKeepaliveInterval     = 5 * time.Second
 	maxKeepaliveInterval     = 60 * time.Second
 )
 
