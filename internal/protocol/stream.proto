@@ -43,19 +43,19 @@ message RequestHeader {
     int32 sequence_number = 1;
     string service_name = 2;
     string method_name = 3;
-    map<string, bytes> extra_data = 4;
+    map<string, bytes> metadata = 4;
     int64 deadline = 5;
     UUID trace_id = 6 [ (gogoproto.nullable) = false ];
 }
 
 message ResponseHeader {
     int32 sequence_number = 1;
-    map<string, bytes> extra_data = 2;
+    map<string, bytes> metadata = 2;
     RPCErrorCode error_code = 3;
     string reason_code = 4;
 }
 
 message Hangup {
     HangupErrorCode error_code = 1;
-    map<string, bytes> extra_data = 2;
+    map<string, bytes> metadata = 2;
 }

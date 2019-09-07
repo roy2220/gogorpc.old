@@ -21,7 +21,7 @@ var _ = math.Inf
 // is compatible with the proto package it is being compiled against.
 // A compilation error at this line likely means your copy of the
 // proto package needs to be updated.
-const _ = proto.GoGoProtoPackageIsVersion2 // please upgrade the proto package
+const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 type MessageType int32
 
@@ -74,7 +74,7 @@ func (m *TransportHandshakeHeader) XXX_Marshal(b []byte, deterministic bool) ([]
 		return xxx_messageInfo_TransportHandshakeHeader.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
-		n, err := m.MarshalTo(b)
+		n, err := m.MarshalToSizedBuffer(b)
 		if err != nil {
 			return nil, err
 		}
@@ -132,7 +132,7 @@ func (m *PacketHeader) XXX_Marshal(b []byte, deterministic bool) ([]byte, error)
 		return xxx_messageInfo_PacketHeader.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
-		n, err := m.MarshalTo(b)
+		n, err := m.MarshalToSizedBuffer(b)
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +198,7 @@ var fileDescriptor_32f8dabe690e614a = []byte{
 func (m *TransportHandshakeHeader) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
-	n, err := m.MarshalTo(dAtA)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
 	if err != nil {
 		return nil, err
 	}
@@ -206,35 +206,42 @@ func (m *TransportHandshakeHeader) Marshal() (dAtA []byte, err error) {
 }
 
 func (m *TransportHandshakeHeader) MarshalTo(dAtA []byte) (int, error) {
-	var i int
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *TransportHandshakeHeader) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	dAtA[i] = 0xa
-	i++
-	i = encodeVarintTransport(dAtA, i, uint64(m.Id.Size()))
-	n1, err1 := m.Id.MarshalTo(dAtA[i:])
-	if err1 != nil {
-		return 0, err1
-	}
-	i += n1
-	if m.MaxIncomingPacketSize != 0 {
-		dAtA[i] = 0x10
-		i++
-		i = encodeVarintTransport(dAtA, i, uint64(m.MaxIncomingPacketSize))
-	}
 	if m.MaxOutgoingPacketSize != 0 {
-		dAtA[i] = 0x18
-		i++
 		i = encodeVarintTransport(dAtA, i, uint64(m.MaxOutgoingPacketSize))
+		i--
+		dAtA[i] = 0x18
 	}
-	return i, nil
+	if m.MaxIncomingPacketSize != 0 {
+		i = encodeVarintTransport(dAtA, i, uint64(m.MaxIncomingPacketSize))
+		i--
+		dAtA[i] = 0x10
+	}
+	{
+		size, err := m.Id.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTransport(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
 }
 
 func (m *PacketHeader) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
-	n, err := m.MarshalTo(dAtA)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
 	if err != nil {
 		return nil, err
 	}
@@ -242,26 +249,33 @@ func (m *PacketHeader) Marshal() (dAtA []byte, err error) {
 }
 
 func (m *PacketHeader) MarshalTo(dAtA []byte) (int, error) {
-	var i int
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *PacketHeader) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
 	if m.MessageType != 0 {
-		dAtA[i] = 0x8
-		i++
 		i = encodeVarintTransport(dAtA, i, uint64(m.MessageType))
+		i--
+		dAtA[i] = 0x8
 	}
-	return i, nil
+	return len(dAtA) - i, nil
 }
 
 func encodeVarintTransport(dAtA []byte, offset int, v uint64) int {
+	offset -= sovTransport(v)
+	base := offset
 	for v >= 1<<7 {
 		dAtA[offset] = uint8(v&0x7f | 0x80)
 		v >>= 7
 		offset++
 	}
 	dAtA[offset] = uint8(v)
-	return offset + 1
+	return base
 }
 func (m *TransportHandshakeHeader) Size() (n int) {
 	if m == nil {

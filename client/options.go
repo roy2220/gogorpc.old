@@ -9,11 +9,12 @@ import (
 )
 
 type Options struct {
-	Channel             *channel.Options
-	Logger              *zerolog.Logger
-	ConnectTimeout      time.Duration
-	WithoutConnectRetry bool
-	ConnectRetry        ConnectRetryOptions
+	Channel               *channel.Options
+	Logger                *zerolog.Logger
+	ConnectTimeout        time.Duration
+	CloseOnChannelFailure bool
+	WithoutConnectRetry   bool
+	ConnectRetry          ConnectRetryOptions
 
 	normalizeOnce sync.Once
 }
@@ -51,10 +52,6 @@ type ConnectRetryOptions struct {
 }
 
 func (self *ConnectRetryOptions) normalize() {
-	if self.MaxCount == 0 {
-		self.MaxCount = defaultMaxConnectRetryCount
-	}
-
 	if self.WithoutBackoff {
 		return
 	}
@@ -68,8 +65,6 @@ func (self *ConnectRetryOptions) normalize() {
 }
 
 const defaultConnectTimeout = 3 * time.Second
-
-const defaultMaxConnectRetryCount = 2
 
 const (
 	defaultMinConnectRetryBackoff = 100 * time.Millisecond

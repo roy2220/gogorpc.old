@@ -17,7 +17,7 @@ const (
 type HangupError struct {
 	Code      HangupErrorCode
 	IsPassive bool
-	ExtraData ExtraData
+	Metadata  Metadata
 }
 
 func (self *HangupError) Error() string {
@@ -48,4 +48,4 @@ func (self *HangupError) Error() string {
 }
 
 type HangupErrorCode = protocol.HangupErrorCode
-type ExtraData = map[string][]byte
+type Metadata = map[string][]byte

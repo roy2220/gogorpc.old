@@ -51,39 +51,52 @@ func (self *Options) Normalize() *Options {
 	return self
 }
 
+func (self *Options) BuildMethod(serviceName string, methodName string) MethodOptionsBuilder {
+	return MethodOptionsBuilder{self, serviceName, methodName}
+}
+
+func (self *Options) Do(doer func(*Options)) *Options {
+	doer(self)
+	return self
+}
+
 type Keepaliver interface {
 	NewKeepalive() (keepalive Message)
 	HandleKeepalive(ctx context.Context, keepalive Message) (err error)
 	EmitKeepalive() (keepalive Message, err error)
 }
 
-type AbortHandler func(ctx context.Context, extraData ExtraData)
+type AbortHandler func(ctx context.Context, metadata Metadata)
 
 type MethodOptionsBuilder struct {
-	*serviceOptionsManager
+	options *Options
 
 	serviceName string
 	methodName  string
 }
 
 func (self MethodOptionsBuilder) SetRequestFactory(requestFactory MessageFactory) MethodOptionsBuilder {
-	self.serviceOptionsManager.setRequestFactory(self.serviceName, self.methodName, requestFactory)
+	self.options.setRequestFactory(self.serviceName, self.methodName, requestFactory)
 	return self
 }
 
 func (self MethodOptionsBuilder) SetIncomingRPCHandler(rpcHandler RPCHandler) MethodOptionsBuilder {
-	self.serviceOptionsManager.setIncomingRPCHandler(self.serviceName, self.methodName, rpcHandler)
+	self.options.setIncomingRPCHandler(self.serviceName, self.methodName, rpcHandler)
 	return self
 }
 
 func (self MethodOptionsBuilder) AddIncomingRPCInterceptor(rpcInterceptor RPCHandler) MethodOptionsBuilder {
-	self.serviceOptionsManager.addIncomingRPCInterceptor(self.serviceName, self.methodName, rpcInterceptor)
+	self.options.addIncomingRPCInterceptor(self.serviceName, self.methodName, rpcInterceptor)
 	return self
 }
 
 func (self MethodOptionsBuilder) AddOutgoingRPCInterceptor(rpcInterceptor RPCHandler) MethodOptionsBuilder {
-	self.serviceOptionsManager.addOutgoingRPCInterceptor(self.serviceName, self.methodName, rpcInterceptor)
+	self.options.addOutgoingRPCInterceptor(self.serviceName, self.methodName, rpcInterceptor)
 	return self
+}
+
+func (self MethodOptionsBuilder) End() *Options {
+	return self.options
 }
 
 type ServiceOptions struct {
@@ -146,10 +159,6 @@ func (defaultKeepaliver) EmitKeepalive() (Message, error) {
 type serviceOptionsManager struct {
 	GeneralMethod MethodOptions
 	Services      map[string]*ServiceOptions
-}
-
-func (self *serviceOptionsManager) SetMethod(serviceName string, methodName string) MethodOptionsBuilder {
-	return MethodOptionsBuilder{self, serviceName, methodName}
 }
 
 func (self *serviceOptionsManager) GetMethod(serviceName string, methodName string) *MethodOptions {
@@ -356,7 +365,7 @@ func (self *ServiceOptions) getOrSetMethod(methodName string) *MethodOptions {
 
 var defaultStreamOptions StreamOptions
 
-func defaultAbortHandler(context.Context, ExtraData) {}
+func defaultAbortHandler(context.Context, Metadata) {}
 
 func copyRPCInterceptors(rpcInterceptors []RPCHandler) []RPCHandler {
 	rpcInterceptorsCopy := make([]RPCHandler, len(rpcInterceptors))

@@ -6,10 +6,10 @@ import (
 )
 
 type pendingRPC struct {
-	IsEmitted         bool
-	ResponseExtraData ExtraData
-	Response          Message
-	Err               error
+	IsEmitted        bool
+	ResponseMetadata Metadata
+	Response         Message
+	Err              error
 
 	responseFactory MessageFactory
 	completion      chan struct{}
@@ -24,14 +24,15 @@ func (self *pendingRPC) NewResponse() Message {
 	return self.responseFactory()
 }
 
-func (self *pendingRPC) Succeed(responseExtraData ExtraData, response Message) {
-	self.ResponseExtraData = responseExtraData
+func (self *pendingRPC) Succeed(metadata Metadata, response Message) {
+	self.ResponseMetadata = metadata
 	self.Response = response
 	close(self.completion)
 }
 
-func (self *pendingRPC) Fail(responseExtraData ExtraData, err error) {
-	self.ResponseExtraData = responseExtraData
+func (self *pendingRPC) Fail(metadata Metadata, err error) {
+	self.ResponseMetadata = metadata
+	self.Response = NullMessage
 	self.Err = err
 	close(self.completion)
 }

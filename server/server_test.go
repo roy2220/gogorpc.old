@@ -22,7 +22,7 @@ func TestServerShutdown(t *testing.T) {
 			},
 		},
 	}
-	opts.Channel.SetMethod("", "").SetIncomingRPCHandler(func(rpc *channel.RPC) {
+	opts.Channel.BuildMethod("", "").SetIncomingRPCHandler(func(rpc *channel.RPC) {
 		rpc.Response = channel.NullMessage
 	})
 	s := new(Server).Init(&opts, "tcp://127.0.0.1:8000")
@@ -38,7 +38,7 @@ func TestServerShutdown(t *testing.T) {
 		s.Close()
 	}()
 	go func() {
-		s.Run()
+		t.Log(s.Run())
 	}()
 	s.WaitForShutdown()
 }

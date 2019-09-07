@@ -167,8 +167,8 @@ func (self *Stream) SendResponse(responseHeader *protocol.ResponseHeader, respon
 	return nil
 }
 
-func (self *Stream) Abort(extraData ExtraData) {
-	self.hangUp(HangupErrorAborted, extraData)
+func (self *Stream) Abort(metadata Metadata) {
+	self.hangUp(HangupErrorAborted, metadata)
 }
 
 func (self *Stream) adjust() error {
@@ -400,7 +400,7 @@ func (self *Stream) handlePacket(
 			Str("transport_id", self.GetTransportID().String()).
 			Msg("stream_passive_hangup")
 		hangup := &packet.hangup
-		return &HangupError{hangup.ErrorCode, true, hangup.ExtraData}
+		return &HangupError{hangup.ErrorCode, true, hangup.Metadata}
 	default:
 		panic("unreachable code")
 	}
@@ -415,11 +415,11 @@ func (self *Stream) handlePacket(
 	return nil
 }
 
-func (self *Stream) hangUp(hangupErrorCode HangupErrorCode, extraData ExtraData) {
+func (self *Stream) hangUp(hangupErrorCode HangupErrorCode, metadata Metadata) {
 	if atomic.CompareAndSwapInt32(&self.isHungUp_, 0, 1) {
 		self.pendingHangup <- &protocol.Hangup{
 			ErrorCode: hangupErrorCode,
-			ExtraData: extraData,
+			Metadata:  metadata,
 		}
 	}
 }
@@ -677,7 +677,7 @@ func (self *Stream) emitPackets(
 		packet.messageType = protocol.MESSAGE_HANGUP
 		packet.hangup = *pendingHangup
 		self.write(&packet, messageEmitter)
-		return &HangupError{pendingHangup.ErrorCode, false, pendingHangup.ExtraData}
+		return &HangupError{pendingHangup.ErrorCode, false, pendingHangup.Metadata}
 	}
 
 	if packetErr == nil && emittedPacketCount == 0 {

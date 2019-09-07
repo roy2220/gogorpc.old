@@ -12,7 +12,7 @@ func ExampleServer() {
 	// run server
 	chOpts := channel.Options{}
 
-	chOpts.SetMethod("foo", "bar").
+	chOpts.BuildMethod("foo", "bar").
 		SetRequestFactory(func() channel.Message {
 			return new(channel.RawMessage)
 		}).

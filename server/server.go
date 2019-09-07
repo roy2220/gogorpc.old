@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/url"
 	"sync/atomic"
@@ -28,29 +29,36 @@ func (self *Server) Init(options *Options, rawURL string) *Server {
 
 func (self *Server) Close() {
 	self.cancel()
+	self.shutdown.Close()
 }
 
-func (self *Server) WaitForShutdown() bool {
-	return self.shutdown.WaitFor()
-}
-
-func (self *Server) Run() error {
-	defer atomic.AddInt32(&self.shutdown.Counter, -1)
-
-	if err := self.ctx.Err(); err != nil {
+func (self *Server) Run() (err error) {
+	if self.shutdown.IsClosed() {
 		self.options.Logger.Error().
-			Err(err).
 			Str("server_url", self.rawURL).
 			Msg("server_already_closed")
-		return err
+		return ErrClosed
 	}
+
+	atomic.AddInt32(&self.shutdown.Counter, 1)
 
 	defer func() {
 		self.options.Logger.Info().
 			Str("server_url", self.rawURL).
 			Msg("server_closed")
-		self.cancel()
+
+		if self.shutdown.IsClosed() {
+			err = ErrClosed
+		} else {
+			self.cancel()
+		}
+
+		atomic.AddInt32(&self.shutdown.Counter, -1)
 	}()
+
+	if self.shutdown.IsClosed() {
+		return
+	}
 
 	url_, err := url.Parse(self.rawURL)
 
@@ -84,7 +92,7 @@ func (self *Server) Run() error {
 			return
 		}
 
-		err = channel_.Process(self.shutdown.Ctx)
+		err := channel_.Process(self.shutdown.Ctx)
 		self.options.Logger.Warn().Err(err).
 			Str("server_url", self.rawURL).
 			Str("transport_id", channel_.GetTransportID().String()).
@@ -97,16 +105,22 @@ func (self *Server) Run() error {
 	return err
 }
 
+func (self *Server) WaitForShutdown() bool {
+	return self.shutdown.WaitFor()
+}
+
+var ErrClosed = errors.New("pbrpc/server: closed")
+
 type shutdown struct {
 	Ctx     context.Context
 	Counter int32
+
+	isClosed int32
 }
 
 func (self *shutdown) Init(timeout time.Duration, ctx context.Context) {
 	if timeout < 0 {
 		self.Ctx = context.Background()
-	} else if timeout == 0 {
-		self.Ctx = ctx
 	} else {
 		var cancel context.CancelFunc
 		self.Ctx, cancel = context.WithCancel(context.Background())
@@ -119,8 +133,10 @@ func (self *shutdown) Init(timeout time.Duration, ctx context.Context) {
 			}
 		}()
 	}
+}
 
-	self.Counter = 1
+func (self *shutdown) Close() {
+	atomic.StoreInt32(&self.isClosed, 1)
 }
 
 func (self *shutdown) WaitFor() bool {
@@ -132,7 +148,7 @@ func (self *shutdown) WaitFor() bool {
 	defer ticker.Stop()
 
 	for {
-		if atomic.LoadInt32(&self.Counter) == 0 {
+		if atomic.LoadInt32(&self.Counter) == 0 && self.IsClosed() {
 			return true
 		}
 
@@ -142,6 +158,10 @@ func (self *shutdown) WaitFor() bool {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (self *shutdown) IsClosed() bool {
+	return atomic.LoadInt32(&self.isClosed) == 1
 }
 
 const shutdownPollInterval = 500 * time.Millisecond

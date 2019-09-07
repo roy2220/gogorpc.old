@@ -34,8 +34,12 @@ func (self *Client) InvokeRPC(rpc *channel.RPC, responseFactory channel.MessageF
 	self.channel.InvokeRPC(rpc, responseFactory)
 }
 
-func (self *Client) Abort(extraData channel.ExtraData) {
-	self.channel.Abort(extraData)
+func (self *Client) PrepareRPC(rpc *channel.RPC, responseFactory channel.MessageFactory) {
+	self.channel.PrepareRPC(rpc, responseFactory)
+}
+
+func (self *Client) Abort(metadata channel.Metadata) {
+	self.channel.Abort(metadata)
 }
 
 func (self *Client) run() {
@@ -85,11 +89,15 @@ func (self *Client) run() {
 				Str("transport_id", self.channel.GetTransportID().String()).
 				Msg("client_channel_connect_failed")
 
+			if !self.options.CloseOnChannelFailure {
+				continue
+			}
+
 			if _, ok := err.(*channel.NetworkError); ok {
 				continue
-			} else {
-				return
 			}
+
+			return
 		}
 
 		connectRetryCount = -1
@@ -99,9 +107,15 @@ func (self *Client) run() {
 			Str("transport_id", self.channel.GetTransportID().String()).
 			Msg("client_channel_process_failed")
 
-		if _, ok = err.(*channel.NetworkError); !ok {
-			return
+		if !self.options.CloseOnChannelFailure {
+			continue
 		}
+
+		if _, ok = err.(*channel.NetworkError); ok {
+			continue
+		}
+
+		return
 	}
 }
 

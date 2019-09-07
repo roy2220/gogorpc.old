@@ -22,13 +22,13 @@ func TestPingAndPong(t *testing.T) {
 		RemoteConcurrencyLimit: 100,
 		Transport:              &transport.Options{Logger: &logger},
 	}}
-	opts.SetMethod("service1", "method1").
+	opts.BuildMethod("service1", "method1").
 		SetRequestFactory(NewRawMessage).
 		SetIncomingRPCHandler(func(rpc *RPC) {
 			msg := RawMessage(fmt.Sprintf("return service1.method1(%s)", *rpc.Request.(*RawMessage)))
 			rpc.Response = &msg
 		})
-	opts.SetMethod("service2", "method2").
+	opts.BuildMethod("service2", "method2").
 		SetRequestFactory(NewRawMessage).
 		SetIncomingRPCHandler(func(rpc *RPC) {
 			msg := RawMessage(fmt.Sprintf("return service2.method2(%s)", *rpc.Request.(*RawMessage)))
@@ -135,8 +135,8 @@ func TestBadHandshake(t *testing.T) {
 
 func TestBroken(t *testing.T) {
 	opts2 := &Options{}
-	opts2.SetMethod("1", "2").SetIncomingRPCHandler(func(rpc *RPC) {
-		if rpc.RequestExtraData["I"][0]%2 == 0 {
+	opts2.BuildMethod("1", "2").SetIncomingRPCHandler(func(rpc *RPC) {
+		if rpc.RequestMetadata["I"][0]%2 == 0 {
 			<-rpc.Ctx.Done()
 			rpc.Response = NullMessage
 		} else {
@@ -154,11 +154,11 @@ func TestBroken(t *testing.T) {
 				go func(i int) {
 					defer wg.Done()
 					rpc := RPC{
-						Ctx:              ctx,
-						ServiceName:      "1",
-						MethodName:       "2",
-						Request:          NullMessage,
-						RequestExtraData: ExtraData{"I": []byte{byte(i)}},
+						Ctx:             ctx,
+						ServiceName:     "1",
+						MethodName:      "2",
+						Request:         NullMessage,
+						RequestMetadata: Metadata{"I": []byte{byte(i)}},
 					}
 					cn.InvokeRPC(&rpc, NewRawMessage)
 					if i%2 == 0 {
@@ -267,33 +267,33 @@ func TestReconnection2(t *testing.T) {
 
 func TestInterception(t *testing.T) {
 	opts2 := &Options{}
-	opts2.SetMethod("foo", "bar").
+	opts2.BuildMethod("foo", "bar").
 		SetIncomingRPCHandler(func(rpc *RPC) {
 			rpc.Response = NullMessage
-			assert.Equal(t, "v4", string(rpc.RequestExtraData["k"]))
+			assert.Equal(t, "v4", string(rpc.RequestMetadata["k"]))
 		}).
 		AddIncomingRPCInterceptor(func(rpc *RPC) {
-			assert.Equal(t, "v2", string(rpc.RequestExtraData["k"]))
-			rpc.RequestExtraData["k"] = []byte("v3")
+			assert.Equal(t, "v2", string(rpc.RequestMetadata["k"]))
+			rpc.RequestMetadata["k"] = []byte("v3")
 			rpc.Handle()
 		}).
 		AddIncomingRPCInterceptor(func(rpc *RPC) {
-			assert.Equal(t, "v3", string(rpc.RequestExtraData["k"]))
-			rpc.RequestExtraData["k"] = []byte("v4")
+			assert.Equal(t, "v3", string(rpc.RequestMetadata["k"]))
+			rpc.RequestMetadata["k"] = []byte("v4")
 			rpc.Handle()
 		})
 
-	opts2.SetMethod("foo", "").
+	opts2.BuildMethod("foo", "").
 		AddIncomingRPCInterceptor(func(rpc *RPC) {
-			assert.Equal(t, "v1", string(rpc.RequestExtraData["k"]))
-			rpc.RequestExtraData["k"] = []byte("v2")
+			assert.Equal(t, "v1", string(rpc.RequestMetadata["k"]))
+			rpc.RequestMetadata["k"] = []byte("v2")
 			rpc.Handle()
 		})
-	opts2.SetMethod("", "").
+	opts2.BuildMethod("", "").
 		AddIncomingRPCInterceptor(func(rpc *RPC) {
-			assert.Nil(t, rpc.RequestExtraData)
-			rpc.RequestExtraData = ExtraData{}
-			rpc.RequestExtraData["k"] = []byte("v1")
+			assert.Nil(t, rpc.RequestMetadata)
+			rpc.RequestMetadata = Metadata{}
+			rpc.RequestMetadata["k"] = []byte("v1")
 			rpc.Handle()
 		})
 	testSetup2(
@@ -320,7 +320,7 @@ func TestInterception(t *testing.T) {
 
 func TestDeadline(t *testing.T) {
 	opts2 := &Options{}
-	opts2.SetMethod("foo", "bar").
+	opts2.BuildMethod("foo", "bar").
 		SetIncomingRPCHandler(func(rpc *RPC) {
 			tm := time.Now()
 			<-rpc.Ctx.Done()

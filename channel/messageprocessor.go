@@ -77,11 +77,11 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 	}
 
 	rpc := RPC{
-		Ctx:              ctx,
-		ServiceName:      requestHeader.ServiceName,
-		MethodName:       requestHeader.MethodName,
-		RequestExtraData: requestHeader.ExtraData,
-		Request:          packet.Message,
+		Ctx:             ctx,
+		ServiceName:     requestHeader.ServiceName,
+		MethodName:      requestHeader.MethodName,
+		RequestMetadata: requestHeader.Metadata,
+		Request:         packet.Message,
 
 		internals: rpcInternals{
 			SequenceNumber: requestHeader.SequenceNumber,
@@ -107,7 +107,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 
 		responseHeader := protocol.ResponseHeader{
 			SequenceNumber: rpc.internals.SequenceNumber,
-			ExtraData:      rpc.ResponseExtraData,
+			Metadata:       rpc.ResponseMetadata,
 		}
 
 		var response Message
@@ -166,7 +166,16 @@ func (self *messageProcessor) NewResponse(packet *stream.Packet) {
 	}
 
 	self.PendingRPCs.Delete(responseHeader.SequenceNumber)
-	packet.Message = pendingRPC_.NewResponse()
+
+	if responseHeader.ErrorCode == 0 {
+		packet.Message = pendingRPC_.NewResponse()
+	} else {
+		packet.Err = &RPCError{
+			Code:       responseHeader.ErrorCode,
+			ReasonCode: responseHeader.ReasonCode,
+		}
+	}
+
 	self.pendingRPCCache = pendingRPC_
 }
 
@@ -174,16 +183,9 @@ func (self *messageProcessor) HandleResponse(ctx context.Context, packet *stream
 	responseHeader := &packet.ResponseHeader
 
 	if packet.Err == nil {
-		if responseHeader.ErrorCode == 0 {
-			self.pendingRPCCache.Succeed(responseHeader.ExtraData, packet.Message)
-		} else {
-			self.pendingRPCCache.Fail(responseHeader.ExtraData, &RPCError{
-				Code:       responseHeader.ErrorCode,
-				ReasonCode: responseHeader.ReasonCode,
-			})
-		}
+		self.pendingRPCCache.Succeed(responseHeader.Metadata, packet.Message)
 	} else {
-		self.pendingRPCCache.Fail(responseHeader.ExtraData, packet.Err)
+		self.pendingRPCCache.Fail(responseHeader.Metadata, packet.Err)
 		packet.Err = nil
 	}
 }

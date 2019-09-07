@@ -82,91 +82,93 @@ func (self *Channel) Process(ctx context.Context) error {
 	})
 
 	if hangupError, ok := err.(*stream.HangupError); ok && hangupError.IsPassive {
-		self.options.AbortHandler(ctx, hangupError.ExtraData)
+		self.options.AbortHandler(ctx, hangupError.Metadata)
 	}
 
 	return err
 }
 
 func (self *Channel) InvokeRPC(rpc *RPC, responseFactory MessageFactory) {
+	self.PrepareRPC(rpc, responseFactory)
+	rpc.Handle()
+}
+
+func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 	if parentRPC, ok := GetRPC(rpc.Ctx); ok {
 		rpc.internals.TraceID = parentRPC.internals.TraceID
 	} else {
 		rpc.internals.TraceID = uuid.GenerateUUID4Fast()
 	}
 
-	methodOptions := self.options.GetMethod(rpc.ServiceName, rpc.MethodName)
+	var rpcHandler RPCHandler
 
 	if self.isClosed() {
-		rpc.internals.Init(func(rpc *RPC) {
+		rpcHandler = func(rpc *RPC) {
 			rpc.Err = ErrClosed
-		}, methodOptions.OutgoingRPCInterceptors)
-
-		rpc.Ctx = BindRPC(rpc.Ctx, rpc)
-		rpc.Handle()
-		return
-	}
-
-	rpc.internals.SequenceNumber = int32(self.getNextSequenceNumber())
-
-	if deadline, ok := rpc.Ctx.Deadline(); ok {
-		rpc.internals.Deadline = deadline.UnixNano()
+		}
 	} else {
-		rpc.internals.Deadline = 0
-	}
+		rpc.internals.SequenceNumber = int32(self.getNextSequenceNumber())
 
-	rpc.internals.Init(func(rpc *RPC) {
-		pendingRPC_ := getPooledPendingRPC()
-		pendingRPC_.Init(responseFactory)
-		self.pendingRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
+		if deadline, ok := rpc.Ctx.Deadline(); ok {
+			rpc.internals.Deadline = deadline.UnixNano()
+		} else {
+			rpc.internals.Deadline = 0
+		}
 
-		if err := self.getStream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
-			SequenceNumber: rpc.internals.SequenceNumber,
-			ServiceName:    rpc.ServiceName,
-			MethodName:     rpc.MethodName,
-			ExtraData:      rpc.RequestExtraData,
-			Deadline:       rpc.internals.Deadline,
+		rpcHandler = func(rpc *RPC) {
+			pendingRPC_ := getPooledPendingRPC()
+			pendingRPC_.Init(responseFactory)
+			self.pendingRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
 
-			TraceId: protocol.UUID{
-				Low:  rpc.internals.TraceID[0],
-				High: rpc.internals.TraceID[1],
-			},
-		}, rpc.Request); err != nil {
-			self.pendingRPCs.Delete(rpc.internals.SequenceNumber)
+			if err := self.getStream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
+				SequenceNumber: rpc.internals.SequenceNumber,
+				ServiceName:    rpc.ServiceName,
+				MethodName:     rpc.MethodName,
+				Metadata:       rpc.RequestMetadata,
+				Deadline:       rpc.internals.Deadline,
 
-			switch err {
-			case stream.ErrClosed:
-				rpc.Err = ErrClosed
-			default:
-				rpc.Err = err
+				TraceId: protocol.UUID{
+					Low:  rpc.internals.TraceID[0],
+					High: rpc.internals.TraceID[1],
+				},
+			}, rpc.Request); err != nil {
+				self.pendingRPCs.Delete(rpc.internals.SequenceNumber)
+
+				switch err {
+				case stream.ErrClosed:
+					rpc.Err = ErrClosed
+				default:
+					rpc.Err = err
+				}
+
+				return
 			}
 
-			return
+			if err := pendingRPC_.WaitFor(rpc.Ctx); err != nil {
+				rpc.Err = err
+				return
+			}
+
+			if pendingRPC_.Err == stream.ErrRequestExpired {
+				<-rpc.Ctx.Done()
+				pendingRPC_.Err = rpc.Ctx.Err()
+			}
+
+			rpc.ResponseMetadata = pendingRPC_.ResponseMetadata
+			rpc.Response = pendingRPC_.Response
+			rpc.Err = pendingRPC_.Err
+			putPooledPendingRPC(pendingRPC_)
 		}
+	}
 
-		if err := pendingRPC_.WaitFor(rpc.Ctx); err != nil {
-			rpc.Err = err
-			return
-		}
-
-		if pendingRPC_.Err == stream.ErrRequestExpired {
-			<-rpc.Ctx.Done()
-			pendingRPC_.Err = rpc.Ctx.Err()
-		}
-
-		rpc.ResponseExtraData = pendingRPC_.ResponseExtraData
-		rpc.Response = pendingRPC_.Response
-		rpc.Err = pendingRPC_.Err
-		putPooledPendingRPC(pendingRPC_)
-	}, methodOptions.OutgoingRPCInterceptors)
-
+	methodOptions := self.options.GetMethod(rpc.ServiceName, rpc.MethodName)
+	rpc.internals.Init(rpcHandler, methodOptions.OutgoingRPCInterceptors)
 	rpc.Ctx = BindRPC(rpc.Ctx, rpc)
-	rpc.Handle()
 }
 
-func (self *Channel) Abort(extraData ExtraData) {
-	self.pendingAbort.Store(extraData)
-	self.getStream().Abort(extraData)
+func (self *Channel) Abort(metadata Metadata) {
+	self.pendingAbort.Store(metadata)
+	self.getStream().Abort(metadata)
 }
 
 func (self *Channel) GetTransportID() uuid.UUID {
@@ -232,7 +234,7 @@ func (self *Channel) setState(newState state) {
 			newStream := new(stream.Stream).Init(self.options.Stream, &self.dequeOfPendingRequests, nil)
 
 			if value := self.pendingAbort.Load(); value != nil {
-				newStream.Abort(value.(ExtraData))
+				newStream.Abort(value.(Metadata))
 			}
 
 			atomic.StorePointer(&self.stream, unsafe.Pointer(newStream))
