@@ -31,6 +31,8 @@ func (self *RPCError) Error() string {
 	switch self.Code {
 	case RPCErrorBadRequest:
 		message += "bad request"
+	case RPCErrorUnauthorized:
+		message += "unauthorized"
 	case RPCErrorForbidden:
 		message += "forbidden"
 	case RPCErrorNotFound:
@@ -58,30 +60,30 @@ func (self *RPCError) Error() string {
 	return message
 }
 
+func (self *RPCError) Equals(err error) bool {
+	if other, ok := err.(*RPCError); ok {
+		return *self == *other
+	}
+
+	return false
+}
+
 type RPCErrorCode = protocol.RPCErrorCode
 
 var (
-	ErrRPCBadRequest      = newRPCError(RPCErrorBadRequest, "")
-	ErrRPCUnauthorized    = newRPCError(RPCErrorUnauthorized, "")
-	ErrRPCForbidden       = newRPCError(RPCErrorForbidden, "")
-	ErrRPCNotFound        = newRPCError(RPCErrorNotFound, "")
-	ErrRPCTooManyRequests = newRPCError(RPCErrorTooManyRequests, "")
+	ErrRPCBadRequest      = NewRPCError(RPCErrorBadRequest, "")
+	ErrRPCUnauthorized    = NewRPCError(RPCErrorUnauthorized, "")
+	ErrRPCForbidden       = NewRPCError(RPCErrorForbidden, "")
+	ErrRPCNotFound        = NewRPCError(RPCErrorNotFound, "")
+	ErrRPCTooManyRequests = NewRPCError(RPCErrorTooManyRequests, "")
 
-	ErrRPCInternalServer     = newRPCError(RPCErrorInternalServer, "")
-	ErrRPCNotImplemented     = newRPCError(RPCErrorNotImplemented, "")
-	ErrRPCBadGateway         = newRPCError(RPCErrorBadGateway, "")
-	ErrRPCServiceUnavailable = newRPCError(RPCErrorServiceUnavailable, "")
-	ErrRPCGatewayTimeout     = newRPCError(RPCErrorGatewayTimeout, "")
+	ErrRPCInternalServer     = NewRPCError(RPCErrorInternalServer, "")
+	ErrRPCNotImplemented     = NewRPCError(RPCErrorNotImplemented, "")
+	ErrRPCBadGateway         = NewRPCError(RPCErrorBadGateway, "")
+	ErrRPCServiceUnavailable = NewRPCError(RPCErrorServiceUnavailable, "")
+	ErrRPCGatewayTimeout     = NewRPCError(RPCErrorGatewayTimeout, "")
 )
 
-func NewRPCBadRequestError(reasonCode string) error {
-	return newRPCError(RPCErrorBadRequest, reasonCode)
-}
-
-func NewRPCForbiddenError(reasonCode string) error {
-	return newRPCError(RPCErrorForbidden, reasonCode)
-}
-
-func newRPCError(code RPCErrorCode, reasonCode string) error {
-	return &RPCError{code, reasonCode}
+func NewRPCError(rpcErrorCode RPCErrorCode, reasonCode string) *RPCError {
+	return &RPCError{rpcErrorCode, reasonCode}
 }

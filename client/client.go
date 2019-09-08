@@ -120,11 +120,11 @@ func (self *Client) run() {
 }
 
 func (self *Client) getConnectTimeout() time.Duration {
-	if connectTimeout := self.options.ConnectTimeout; connectTimeout < 0 {
-		return 0
-	} else {
+	if connectTimeout := self.options.ConnectTimeout; connectTimeout >= 1 {
 		return connectTimeout
 	}
+
+	return 0
 }
 
 type serverURLManager struct {

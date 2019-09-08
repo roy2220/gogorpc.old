@@ -1,7 +1,18 @@
-syntax = "proto3";
+syntax = "proto2";
 
 package pbrpc;
+
+import "google/protobuf/descriptor.proto";
 
 option go_package = "github.com/let-z-go/pbrpc";
 
 message Void {}
+
+message Reason {
+    required string code = 1;
+    required int32 rpc_error_code = 2;
+}
+
+extend google.protobuf.FileOptions {
+    repeated Reason reason = 90000;
+}
