@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package examples.helloworld;
+
+import "github.com/let-z-go/pbrpc/pbrpc.proto";
+
+option go_package = "github.com/let-z-go/pbrpc/examples/helloworld/protocol";
+
+option (pbrpc.reason) = {
+    code: "ForbiddenName"
+    rpc_error_code: 403
+};
+
+service Greeter {
+    rpc SayHello (SayHelloReq) returns (SayHelloResp);
+}
+
+message SayHelloReq {
+    string name = 1;
+}
+
+message SayHelloResp {
+    string message = 1;
+}

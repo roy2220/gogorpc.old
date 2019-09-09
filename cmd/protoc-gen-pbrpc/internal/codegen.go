@@ -651,9 +651,7 @@ type reqresp struct {
 }
 
 func (self *reqresp) Load(raw string) {
-	i := strings.LastIndexByte(raw, '.')
-
-	if i == 0 {
+	if i := strings.LastIndexByte(raw, '.'); i == 0 {
 		self.MessageName = raw[1:]
 	} else {
 		self.PackageName = raw[1:i]
@@ -682,9 +680,8 @@ func (self *context) AddMessage(message_ *message) {
 
 func (self *context) AddReason(reason_ *reason) {
 	package_ := self.getOrSetPackage(reason_.InputFile.PackageName)
-	prevReason, ok := package_.Reasons[reason_.Code]
 
-	if ok {
+	if prevReason, ok := package_.Reasons[reason_.Code]; ok {
 		self.Fatal(fmt.Sprintf("redefinition: prevFileName=%#v", prevReason.InputFile.Name))
 	}
 
