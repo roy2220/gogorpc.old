@@ -43,10 +43,10 @@ func ExampleServer() {
 	req := channel.RawMessage("hello world")
 
 	rpc := channel.RPC{
-		Ctx:         context.Background(),
-		ServiceName: "foo",
-		MethodName:  "bar",
-		Request:     &req,
+		Ctx:        context.Background(),
+		ServiceID:  "foo",
+		MethodName: "bar",
+		Request:    &req,
 	}
 
 	cli.InvokeRPC(&rpc, channel.NewRawMessage)

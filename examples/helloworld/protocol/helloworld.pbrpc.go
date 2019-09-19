@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	ErrRPCForbiddenName = channel.NewRPCError(channel.RPCErrorCode(403), "examples.helloworld.ForbiddenName")
+	RPCErrForbiddenName = channel.NewRPCError(channel.RPCErrorType(403), "examples.helloworld.ForbiddenName")
 )
 
 const Greeter = "examples.helloworld.Greeter"
@@ -51,10 +51,10 @@ type GreeterStub struct {
 
 func (self GreeterStub) SayHello(ctx context.Context, request *SayHelloReq) *GreeterStub_SayHello {
 	rpc := GreeterStub_SayHello{inner: channel.RPC{
-		Ctx:         ctx,
-		ServiceName: Greeter,
-		MethodName:  Greeter_SayHello,
-		Request:     request,
+		Ctx:        ctx,
+		ServiceID:  Greeter,
+		MethodName: Greeter_SayHello,
+		Request:    request,
 	}}
 
 	self.rpcPreparer.PrepareRPC(&rpc.inner, func() channel.Message {

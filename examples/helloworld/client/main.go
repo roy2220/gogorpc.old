@@ -25,7 +25,7 @@ func main() {
 		if err == nil {
 			fmt.Println("resp:", resp)
 		} else {
-			if protocol.ErrRPCForbiddenName.Equals(err) {
+			if protocol.RPCErrForbiddenName.Equals(err) {
 				fmt.Println("forbidden name:", name)
 			} else {
 				fmt.Println("err:", err)

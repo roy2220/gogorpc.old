@@ -33,7 +33,7 @@ func TestServerShutdown(t *testing.T) {
 		cli.InvokeRPC(&channel.RPC{
 			Ctx:     context.Background(),
 			Request: channel.NullMessage,
-		}, channel.NewNullMessage)
+		}, channel.GetNullMessage)
 
 		s.Close()
 	}()

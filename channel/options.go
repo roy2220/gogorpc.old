@@ -44,15 +44,15 @@ func (self *Options) Normalize() *Options {
 		}
 
 		if !self.GeneralMethod.requestFactoryIsSet {
-			self.setRequestFactory("", "", NewNullMessage)
+			self.setRequestFactory("", "", GetNullMessage)
 		}
 	})
 
 	return self
 }
 
-func (self *Options) BuildMethod(serviceName string, methodName string) MethodOptionsBuilder {
-	return MethodOptionsBuilder{self, serviceName, methodName}
+func (self *Options) BuildMethod(serviceID string, methodName string) MethodOptionsBuilder {
+	return MethodOptionsBuilder{self, serviceID, methodName}
 }
 
 func (self *Options) Do(doer func(*Options)) *Options {
@@ -71,27 +71,27 @@ type AbortHandler func(ctx context.Context, metadata Metadata)
 type MethodOptionsBuilder struct {
 	options *Options
 
-	serviceName string
-	methodName  string
+	serviceID  string
+	methodName string
 }
 
 func (self MethodOptionsBuilder) SetRequestFactory(requestFactory MessageFactory) MethodOptionsBuilder {
-	self.options.setRequestFactory(self.serviceName, self.methodName, requestFactory)
+	self.options.setRequestFactory(self.serviceID, self.methodName, requestFactory)
 	return self
 }
 
 func (self MethodOptionsBuilder) SetIncomingRPCHandler(rpcHandler RPCHandler) MethodOptionsBuilder {
-	self.options.setIncomingRPCHandler(self.serviceName, self.methodName, rpcHandler)
+	self.options.setIncomingRPCHandler(self.serviceID, self.methodName, rpcHandler)
 	return self
 }
 
 func (self MethodOptionsBuilder) AddIncomingRPCInterceptor(rpcInterceptor RPCHandler) MethodOptionsBuilder {
-	self.options.addIncomingRPCInterceptor(self.serviceName, self.methodName, rpcInterceptor)
+	self.options.addIncomingRPCInterceptor(self.serviceID, self.methodName, rpcInterceptor)
 	return self
 }
 
 func (self MethodOptionsBuilder) AddOutgoingRPCInterceptor(rpcInterceptor RPCHandler) MethodOptionsBuilder {
-	self.options.addOutgoingRPCInterceptor(self.serviceName, self.methodName, rpcInterceptor)
+	self.options.addOutgoingRPCInterceptor(self.serviceID, self.methodName, rpcInterceptor)
 	return self
 }
 
@@ -116,11 +116,11 @@ type MethodOptions struct {
 
 type MessageFactory func() (message Message)
 
-func NewNullMessage() Message {
+func GetNullMessage() Message {
 	return NullMessage
 }
 
-var _ = MessageFactory(NewNullMessage)
+var _ = MessageFactory(GetNullMessage)
 
 func NewRawMessage() Message {
 	return new(RawMessage)
@@ -161,8 +161,8 @@ type serviceOptionsManager struct {
 	Services      map[string]*ServiceOptions
 }
 
-func (self *serviceOptionsManager) GetMethod(serviceName string, methodName string) *MethodOptions {
-	service, ok := self.Services[serviceName]
+func (self *serviceOptionsManager) GetMethod(serviceID string, methodName string) *MethodOptions {
+	service, ok := self.Services[serviceID]
 
 	if !ok {
 		return &self.GeneralMethod
@@ -177,8 +177,8 @@ func (self *serviceOptionsManager) GetMethod(serviceName string, methodName stri
 	return method
 }
 
-func (self *serviceOptionsManager) setRequestFactory(serviceName string, methodName string, messageFactory MessageFactory) {
-	if serviceName == "" {
+func (self *serviceOptionsManager) setRequestFactory(serviceID string, methodName string, messageFactory MessageFactory) {
+	if serviceID == "" {
 		self.GeneralMethod.RequestFactory = messageFactory
 		self.GeneralMethod.requestFactoryIsSet = true
 
@@ -198,7 +198,7 @@ func (self *serviceOptionsManager) setRequestFactory(serviceName string, methodN
 			}
 		}
 	} else {
-		service := self.getOrSetService(serviceName)
+		service := self.getOrSetService(serviceID)
 
 		if methodName == "" {
 			service.GeneralMethod.RequestFactory = messageFactory
@@ -219,8 +219,8 @@ func (self *serviceOptionsManager) setRequestFactory(serviceName string, methodN
 	}
 }
 
-func (self *serviceOptionsManager) setIncomingRPCHandler(serviceName string, methodName string, rpcHandler RPCHandler) {
-	if serviceName == "" {
+func (self *serviceOptionsManager) setIncomingRPCHandler(serviceID string, methodName string, rpcHandler RPCHandler) {
+	if serviceID == "" {
 		self.GeneralMethod.IncomingRPCHandler = rpcHandler
 		self.GeneralMethod.incomingRPCHandlerIsSet = true
 
@@ -240,7 +240,7 @@ func (self *serviceOptionsManager) setIncomingRPCHandler(serviceName string, met
 			}
 		}
 	} else {
-		service := self.getOrSetService(serviceName)
+		service := self.getOrSetService(serviceID)
 
 		if methodName == "" {
 			service.GeneralMethod.IncomingRPCHandler = rpcHandler
@@ -261,8 +261,8 @@ func (self *serviceOptionsManager) setIncomingRPCHandler(serviceName string, met
 	}
 }
 
-func (self *serviceOptionsManager) addIncomingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) {
-	if serviceName == "" {
+func (self *serviceOptionsManager) addIncomingRPCInterceptor(serviceID string, methodName string, rpcInterceptor RPCHandler) {
+	if serviceID == "" {
 		i := len(self.GeneralMethod.IncomingRPCInterceptors)
 		insertRPCInterceptor(rpcInterceptor, &self.GeneralMethod.IncomingRPCInterceptors, i)
 
@@ -274,7 +274,7 @@ func (self *serviceOptionsManager) addIncomingRPCInterceptor(serviceName string,
 			}
 		}
 	} else {
-		service := self.getOrSetService(serviceName)
+		service := self.getOrSetService(serviceID)
 
 		if methodName == "" {
 			i := len(service.GeneralMethod.IncomingRPCInterceptors)
@@ -290,8 +290,8 @@ func (self *serviceOptionsManager) addIncomingRPCInterceptor(serviceName string,
 	}
 }
 
-func (self *serviceOptionsManager) addOutgoingRPCInterceptor(serviceName string, methodName string, rpcInterceptor RPCHandler) {
-	if serviceName == "" {
+func (self *serviceOptionsManager) addOutgoingRPCInterceptor(serviceID string, methodName string, rpcInterceptor RPCHandler) {
+	if serviceID == "" {
 		i := len(self.GeneralMethod.OutgoingRPCInterceptors)
 		insertRPCInterceptor(rpcInterceptor, &self.GeneralMethod.OutgoingRPCInterceptors, i)
 
@@ -303,7 +303,7 @@ func (self *serviceOptionsManager) addOutgoingRPCInterceptor(serviceName string,
 			}
 		}
 	} else {
-		service := self.getOrSetService(serviceName)
+		service := self.getOrSetService(serviceID)
 
 		if methodName == "" {
 			i := len(service.GeneralMethod.OutgoingRPCInterceptors)
@@ -319,7 +319,7 @@ func (self *serviceOptionsManager) addOutgoingRPCInterceptor(serviceName string,
 	}
 }
 
-func (self *serviceOptionsManager) getOrSetService(serviceName string) *ServiceOptions {
+func (self *serviceOptionsManager) getOrSetService(serviceID string) *ServiceOptions {
 	services := self.Services
 
 	if services == nil {
@@ -327,7 +327,7 @@ func (self *serviceOptionsManager) getOrSetService(serviceName string) *ServiceO
 		self.Services = services
 	}
 
-	service := services[serviceName]
+	service := services[serviceID]
 
 	if service == nil {
 		service = new(ServiceOptions)
@@ -335,7 +335,7 @@ func (self *serviceOptionsManager) getOrSetService(serviceName string) *ServiceO
 		service.GeneralMethod.IncomingRPCHandler = self.GeneralMethod.IncomingRPCHandler
 		service.GeneralMethod.IncomingRPCInterceptors = copyRPCInterceptors(self.GeneralMethod.IncomingRPCInterceptors)
 		service.GeneralMethod.OutgoingRPCInterceptors = copyRPCInterceptors(self.GeneralMethod.OutgoingRPCInterceptors)
-		services[serviceName] = service
+		services[serviceID] = service
 	}
 
 	return service

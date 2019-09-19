@@ -159,7 +159,7 @@ func (self *file) Load(context_ *context, raw *descriptor.FileDescriptorProto) {
 		_, self.GoPackageName = filepath.Split(self.GoImportPath)
 
 		if self.GoImportPath == "" || self.GoPackageName == "" {
-			context_.Fatal("missing `go_package` option")
+			context_.Fatal("missing option `go_package`")
 		}
 	} else {
 		goPackageOption := *options.GoPackage
@@ -173,7 +173,7 @@ func (self *file) Load(context_ *context, raw *descriptor.FileDescriptorProto) {
 		}
 
 		if self.GoImportPath == "" || self.GoPackageName == "" {
-			context_.Fatal(fmt.Sprintf("invalid `go_package` option: goPackageOption=%#v", goPackageOption))
+			context_.Fatalf("invalid option `go_package`: goPackageOption=%#v", goPackageOption)
 		}
 	}
 
@@ -218,7 +218,7 @@ func (self *message) Resolve(context_ *context) {
 }
 
 func (self *message) GetNodeName() string {
-	return "message." + self.Name
+	return "<message>:" + self.Name
 }
 
 func (self *message) GetNodeNameDelimiter() string {
@@ -228,7 +228,7 @@ func (self *message) GetNodeNameDelimiter() string {
 type inputFile struct {
 	*file
 
-	Reasons  []*reason
+	Errors   []*error1
 	Services []*service
 
 	GoImports map[string]string
@@ -240,16 +240,23 @@ func (self *inputFile) Load(context_ *context, raw *descriptor.FileDescriptorPro
 	self.Services = make([]*service, 0, len(raw.Service))
 
 	if raw.Options != nil {
-		extension, err := proto.GetExtension(raw.Options, pbrpc.E_Reason)
+		extension, err := proto.GetExtension(raw.Options, pbrpc.E_Error)
 
 		if err == nil {
-			for _, rawReason := range extension.([]*pbrpc.Reason) {
-				reason_ := reason{
-					Code: rawReason.GetCode(),
+			for _, rawError := range extension.([]*pbrpc.Error) {
+				error_ := error1{
+					Name: rawError.Name,
 				}
 
-				reason_.Load(rawReason)
-				self.Reasons = append(self.Reasons, &reason_)
+				if error_.Name == "" {
+					context_.Fatal("invalid option `pbrpc.error`: empty `name`")
+				}
+
+				context_.EnterNode(&error_, func() {
+					error_.Load(context_, rawError)
+				})
+
+				self.Errors = append(self.Errors, &error_)
 			}
 		}
 	}
@@ -268,9 +275,9 @@ func (self *inputFile) Load(context_ *context, raw *descriptor.FileDescriptorPro
 }
 
 func (self *inputFile) Resolve(context_ *context) {
-	for _, reason_ := range self.Reasons {
-		context_.EnterNode(reason_, func() {
-			reason_.Resolve(context_)
+	for _, error_ := range self.Errors {
+		context_.EnterNode(error_, func() {
+			error_.Resolve(context_)
 		})
 	}
 
@@ -339,11 +346,11 @@ import (
 		panic(err)
 	}
 
-	if len(self.Reasons) >= 1 {
+	if len(self.Errors) >= 1 {
 		if err := template.Must(template.New("").Parse(`
 var (
-{{- range .Reasons}}
-	ErrRPC{{.Code}} = channel.NewRPCError(channel.RPCErrorCode({{.RPCErrorCode}}), "{{.FullCode}}")
+{{- range .Errors}}
+	RPCErr{{.Name}} = channel.NewRPCError(channel.RPCErrorType({{.Type}}), "{{.Code}}")
 {{- end}}
 )
 `)).Execute(&context_.Code, self); err != nil {
@@ -366,30 +373,34 @@ func (self *inputFile) GetNodeNameDelimiter() string {
 	return ":"
 }
 
-type reason struct {
-	Code         string
-	RPCErrorCode int32
+type error1 struct {
+	Name string
+	Type int32
 
 	InputFile *inputFile
-	FullCode  string
+	Code      string
 }
 
-func (self *reason) Load(raw *pbrpc.Reason) {
-	self.RPCErrorCode = raw.RpcErrorCode
+func (self *error1) Load(context_ *context, raw *pbrpc.Error) {
+	if raw.Type == 0 {
+		context_.Fatal("invalid option `pbrpc.error`: zero `code`")
+	}
+
+	self.Type = raw.Type
 }
 
-func (self *reason) Resolve(context_ *context) {
+func (self *error1) Resolve(context_ *context) {
 	self.InputFile = context_.Nodes[len(context_.Nodes)-2].(*inputFile)
-	self.FullCode = self.InputFile.PackageName + "." + self.Code
-	context_.AddReason(self)
+	self.Code = self.InputFile.PackageName + "." + self.Name
+	context_.AddError(self)
 	self.InputFile.ImportGoPackage("channel", "github.com/let-z-go/pbrpc/channel")
 }
 
-func (self *reason) GetNodeName() string {
-	return "reason." + self.Code
+func (self *error1) GetNodeName() string {
+	return "<pbrpc.error>:" + self.Name
 }
 
-func (self *reason) GetNodeNameDelimiter() string {
+func (self *error1) GetNodeNameDelimiter() string {
 	return ""
 }
 
@@ -398,7 +409,7 @@ type service struct {
 
 	Methods []*method
 
-	FullName string
+	ID string
 }
 
 func (self *service) Load(context_ *context, raw *descriptor.ServiceDescriptorProto) {
@@ -419,7 +430,7 @@ func (self *service) Load(context_ *context, raw *descriptor.ServiceDescriptorPr
 
 func (self *service) Resolve(context_ *context) {
 	inputFile_ := context_.Nodes[len(context_.Nodes)-2].(*inputFile)
-	self.FullName = inputFile_.PackageName + "." + self.Name
+	self.ID = inputFile_.PackageName + "." + self.Name
 	inputFile_.ImportGoPackage("channel", "github.com/let-z-go/pbrpc/channel")
 
 	for _, method_ := range self.Methods {
@@ -431,7 +442,7 @@ func (self *service) Resolve(context_ *context) {
 
 func (self *service) EmitCode(context_ *context) {
 	if err := template.Must(template.New("").Parse(`
-const {{.Name}} = "{{.FullName}}"
+const {{.Name}} = "{{.ID}}"
 {{- if .Methods}}
 
 const (
@@ -511,7 +522,7 @@ func (self {{$.Name}}Stub) {{.Name}}(ctx context.Context
 	{{- ") *"}}{{$.Name}}Stub_{{.Name}} {
 	rpc := {{$.Name}}Stub_{{.Name}}{inner: channel.RPC{
 		Ctx: ctx,
-		ServiceName: {{$.Name}},
+		ServiceID: {{$.Name}},
 		MethodName: {{$.Name}}_{{.Name}},
 	{{- if .Request}}
 		Request: request,
@@ -525,7 +536,7 @@ func (self {{$.Name}}Stub) {{.Name}}(ctx context.Context
 	})
 {{""}}
 	{{- else}}
-		{{- "channel.NewNullMessage"}})
+		{{- "channel.GetNullMessage"}})
 	{{- end}}
 	return &rpc
 }
@@ -579,7 +590,7 @@ func (self *{{$.Name}}Stub_{{.Name}}) ResponseMetadata() channel.Metadata {
 }
 
 func (self *service) GetNodeName() string {
-	return "service." + self.Name
+	return "<service>:" + self.Name
 }
 
 func (self *service) GetNodeNameDelimiter() string {
@@ -678,14 +689,14 @@ func (self *context) AddMessage(message_ *message) {
 	package_.Messages[message_.Name] = message_
 }
 
-func (self *context) AddReason(reason_ *reason) {
-	package_ := self.getOrSetPackage(reason_.InputFile.PackageName)
+func (self *context) AddError(error_ *error1) {
+	package_ := self.getOrSetPackage(error_.InputFile.PackageName)
 
-	if prevReason, ok := package_.Reasons[reason_.Code]; ok {
-		self.Fatal(fmt.Sprintf("redefinition: prevFileName=%#v", prevReason.InputFile.Name))
+	if prevError, ok := package_.Errors[error_.Name]; ok {
+		self.Fatalf("redefinition: prevFileName=%#v", prevError.InputFile.Name)
 	}
 
-	package_.Reasons[reason_.Code] = reason_
+	package_.Errors[error_.Name] = error_
 }
 
 func (self *context) Fatal(message string) {
@@ -706,6 +717,10 @@ func (self *context) Fatal(message string) {
 	panic(exception(message))
 }
 
+func (self *context) Fatalf(format string, args ...interface{}) {
+	self.Fatal(fmt.Sprintf(format, args...))
+}
+
 func (self *context) getOrSetPackage(packageName string) *package1 {
 	package_, ok := self.Packages[packageName]
 
@@ -717,7 +732,7 @@ func (self *context) getOrSetPackage(packageName string) *package1 {
 		package_ = &package1{
 			Name:     packageName,
 			Messages: map[string]*message{},
-			Reasons:  map[string]*reason{},
+			Errors:   map[string]*error1{},
 		}
 
 		self.Packages[packageName] = package_
@@ -734,7 +749,7 @@ type node interface {
 type package1 struct {
 	Name     string
 	Messages map[string]*message
-	Reasons  map[string]*reason
+	Errors   map[string]*error1
 }
 
 type exception string

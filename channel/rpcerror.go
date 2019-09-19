@@ -21,14 +21,14 @@ const (
 )
 
 type RPCError struct {
-	Code       RPCErrorCode
-	ReasonCode string
+	Type RPCErrorType
+	Code string
 }
 
 func (self *RPCError) Error() string {
 	message := "pbrpc/channel: rpc: "
 
-	switch self.Code {
+	switch self.Type {
 	case RPCErrorBadRequest:
 		message += "bad request"
 	case RPCErrorUnauthorized:
@@ -50,11 +50,11 @@ func (self *RPCError) Error() string {
 	case RPCErrorGatewayTimeout:
 		message += "gateway timeout"
 	default:
-		message += fmt.Sprintf("error %d", self.Code)
+		message += fmt.Sprintf("error %d", self.Type)
 	}
 
-	if self.ReasonCode != "" {
-		message += " - " + self.ReasonCode
+	if self.Code != "" {
+		message += " - " + self.Code
 	}
 
 	return message
@@ -68,22 +68,22 @@ func (self *RPCError) Equals(err error) bool {
 	return false
 }
 
-type RPCErrorCode = protocol.RPCErrorCode
+type RPCErrorType = protocol.RPCErrorType
 
 var (
-	ErrRPCBadRequest      = NewRPCError(RPCErrorBadRequest, "")
-	ErrRPCUnauthorized    = NewRPCError(RPCErrorUnauthorized, "")
-	ErrRPCForbidden       = NewRPCError(RPCErrorForbidden, "")
-	ErrRPCNotFound        = NewRPCError(RPCErrorNotFound, "")
-	ErrRPCTooManyRequests = NewRPCError(RPCErrorTooManyRequests, "")
+	RPCErrBadRequest      = NewRPCError(RPCErrorBadRequest, "")
+	RPCErrUnauthorized    = NewRPCError(RPCErrorUnauthorized, "")
+	RPCErrForbidden       = NewRPCError(RPCErrorForbidden, "")
+	RPCErrNotFound        = NewRPCError(RPCErrorNotFound, "")
+	RPCErrTooManyRequests = NewRPCError(RPCErrorTooManyRequests, "")
 
-	ErrRPCInternalServer     = NewRPCError(RPCErrorInternalServer, "")
-	ErrRPCNotImplemented     = NewRPCError(RPCErrorNotImplemented, "")
-	ErrRPCBadGateway         = NewRPCError(RPCErrorBadGateway, "")
-	ErrRPCServiceUnavailable = NewRPCError(RPCErrorServiceUnavailable, "")
-	ErrRPCGatewayTimeout     = NewRPCError(RPCErrorGatewayTimeout, "")
+	RPCErrInternalServer     = NewRPCError(RPCErrorInternalServer, "")
+	RPCErrNotImplemented     = NewRPCError(RPCErrorNotImplemented, "")
+	RPCErrBadGateway         = NewRPCError(RPCErrorBadGateway, "")
+	RPCErrServiceUnavailable = NewRPCError(RPCErrorServiceUnavailable, "")
+	RPCErrGatewayTimeout     = NewRPCError(RPCErrorGatewayTimeout, "")
 )
 
-func NewRPCError(rpcErrorCode RPCErrorCode, reasonCode string) *RPCError {
-	return &RPCError{rpcErrorCode, reasonCode}
+func NewRPCError(rpcErrorType RPCErrorType, rpcErrorCode string) *RPCError {
+	return &RPCError{rpcErrorType, rpcErrorCode}
 }

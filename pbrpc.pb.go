@@ -60,23 +60,23 @@ func (m *Void) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_Void proto.InternalMessageInfo
 
-type Reason struct {
-	Code         string `protobuf:"bytes,1,req,name=code" json:"code"`
-	RpcErrorCode int32  `protobuf:"varint,2,req,name=rpc_error_code,json=rpcErrorCode" json:"rpc_error_code"`
+type Error struct {
+	Name string `protobuf:"bytes,1,req,name=name" json:"name"`
+	Type int32  `protobuf:"varint,2,req,name=type" json:"type"`
 }
 
-func (m *Reason) Reset()         { *m = Reason{} }
-func (m *Reason) String() string { return proto.CompactTextString(m) }
-func (*Reason) ProtoMessage()    {}
-func (*Reason) Descriptor() ([]byte, []int) {
+func (m *Error) Reset()         { *m = Error{} }
+func (m *Error) String() string { return proto.CompactTextString(m) }
+func (*Error) ProtoMessage()    {}
+func (*Error) Descriptor() ([]byte, []int) {
 	return fileDescriptor_28dabeb111b4aab1, []int{1}
 }
-func (m *Reason) XXX_Unmarshal(b []byte) error {
+func (m *Error) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *Reason) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *Error) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_Reason.Marshal(b, m, deterministic)
+		return xxx_messageInfo_Error.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -86,66 +86,65 @@ func (m *Reason) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 		return b[:n], nil
 	}
 }
-func (m *Reason) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Reason.Merge(m, src)
+func (m *Error) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_Error.Merge(m, src)
 }
-func (m *Reason) XXX_Size() int {
+func (m *Error) XXX_Size() int {
 	return m.Size()
 }
-func (m *Reason) XXX_DiscardUnknown() {
-	xxx_messageInfo_Reason.DiscardUnknown(m)
+func (m *Error) XXX_DiscardUnknown() {
+	xxx_messageInfo_Error.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_Reason proto.InternalMessageInfo
+var xxx_messageInfo_Error proto.InternalMessageInfo
 
-func (m *Reason) GetCode() string {
+func (m *Error) GetName() string {
 	if m != nil {
-		return m.Code
+		return m.Name
 	}
 	return ""
 }
 
-func (m *Reason) GetRpcErrorCode() int32 {
+func (m *Error) GetType() int32 {
 	if m != nil {
-		return m.RpcErrorCode
+		return m.Type
 	}
 	return 0
 }
 
-var E_Reason = &proto.ExtensionDesc{
+var E_Error = &proto.ExtensionDesc{
 	ExtendedType:  (*descriptor.FileOptions)(nil),
-	ExtensionType: ([]*Reason)(nil),
+	ExtensionType: ([]*Error)(nil),
 	Field:         90000,
-	Name:          "pbrpc.reason",
-	Tag:           "bytes,90000,rep,name=reason",
+	Name:          "pbrpc.error",
+	Tag:           "bytes,90000,rep,name=error",
 	Filename:      "pbrpc.proto",
 }
 
 func init() {
 	proto.RegisterType((*Void)(nil), "pbrpc.Void")
-	proto.RegisterType((*Reason)(nil), "pbrpc.Reason")
-	proto.RegisterExtension(E_Reason)
+	proto.RegisterType((*Error)(nil), "pbrpc.Error")
+	proto.RegisterExtension(E_Error)
 }
 
 func init() { proto.RegisterFile("pbrpc.proto", fileDescriptor_28dabeb111b4aab1) }
 
 var fileDescriptor_28dabeb111b4aab1 = []byte{
-	// 240 bytes of a gzipped FileDescriptorProto
+	// 220 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xe2, 0x2e, 0x48, 0x2a, 0x2a,
 	0x48, 0xd6, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0x62, 0x05, 0x73, 0xa4, 0x14, 0xd2, 0xf3, 0xf3,
 	0xd3, 0x73, 0x52, 0xf5, 0xc1, 0x82, 0x49, 0xa5, 0x69, 0xfa, 0x29, 0xa9, 0xc5, 0xc9, 0x45, 0x99,
-	0x05, 0x25, 0xf9, 0x45, 0x10, 0x85, 0x4a, 0x6c, 0x5c, 0x2c, 0x61, 0xf9, 0x99, 0x29, 0x4a, 0x7e,
-	0x5c, 0x6c, 0x41, 0xa9, 0x89, 0xc5, 0xf9, 0x79, 0x42, 0x12, 0x5c, 0x2c, 0xc9, 0xf9, 0x29, 0xa9,
-	0x12, 0x8c, 0x0a, 0x4c, 0x1a, 0x9c, 0x4e, 0x2c, 0x27, 0xee, 0xc9, 0x33, 0x04, 0x81, 0x45, 0x84,
-	0xb4, 0xb8, 0xf8, 0x8a, 0x0a, 0x92, 0xe3, 0x53, 0x8b, 0x8a, 0xf2, 0x8b, 0xe2, 0xc1, 0x6a, 0x98,
-	0x14, 0x98, 0x34, 0x58, 0xa1, 0x6a, 0x78, 0x8a, 0x0a, 0x92, 0x5d, 0x41, 0x52, 0xce, 0xf9, 0x29,
-	0xa9, 0x56, 0xae, 0x5c, 0x6c, 0x45, 0x10, 0xf3, 0x64, 0xf4, 0x20, 0x8e, 0xd0, 0x83, 0x39, 0x42,
-	0xcf, 0x2d, 0x33, 0x27, 0xd5, 0xbf, 0xa0, 0x24, 0x33, 0x3f, 0xaf, 0x58, 0x62, 0xc2, 0x7e, 0x56,
-	0x05, 0x66, 0x0d, 0x6e, 0x23, 0x5e, 0x3d, 0x88, 0xf3, 0x21, 0x8e, 0x08, 0x82, 0x6a, 0x76, 0x32,
-	0x3e, 0xf1, 0x48, 0x8e, 0xf1, 0xc2, 0x23, 0x39, 0xc6, 0x07, 0x8f, 0xe4, 0x18, 0x27, 0x3c, 0x96,
-	0x63, 0xb8, 0xf0, 0x58, 0x8e, 0xe1, 0xc6, 0x63, 0x39, 0x86, 0x28, 0xc9, 0xf4, 0xcc, 0x92, 0x8c,
-	0xd2, 0x24, 0xbd, 0xe4, 0xfc, 0x5c, 0xfd, 0x9c, 0xd4, 0x12, 0xdd, 0x2a, 0xdd, 0xf4, 0x7c, 0x7d,
-	0xb0, 0x19, 0x80, 0x00, 0x00, 0x00, 0xff, 0xff, 0x82, 0x07, 0x7f, 0x73, 0x0a, 0x01, 0x00, 0x00,
+	0x05, 0x25, 0xf9, 0x45, 0x10, 0x85, 0x4a, 0x6c, 0x5c, 0x2c, 0x61, 0xf9, 0x99, 0x29, 0x4a, 0xd6,
+	0x5c, 0xac, 0xae, 0x45, 0x45, 0xf9, 0x45, 0x42, 0x12, 0x5c, 0x2c, 0x79, 0x89, 0xb9, 0xa9, 0x12,
+	0x8c, 0x0a, 0x4c, 0x1a, 0x9c, 0x4e, 0x2c, 0x27, 0xee, 0xc9, 0x33, 0x04, 0x81, 0x45, 0x40, 0x32,
+	0x25, 0x95, 0x05, 0xa9, 0x12, 0x4c, 0x0a, 0x4c, 0x1a, 0xac, 0x30, 0x19, 0x90, 0x88, 0x95, 0x13,
+	0x17, 0x6b, 0x2a, 0x58, 0xb3, 0x8c, 0x1e, 0xc4, 0x42, 0x3d, 0x98, 0x85, 0x7a, 0x6e, 0x99, 0x39,
+	0xa9, 0xfe, 0x05, 0x25, 0x99, 0xf9, 0x79, 0xc5, 0x12, 0x13, 0xf6, 0xb3, 0x2a, 0x30, 0x6b, 0x70,
+	0x1b, 0xf1, 0xe8, 0x41, 0x9c, 0x0a, 0xb6, 0x30, 0x08, 0xa2, 0xd5, 0xc9, 0xf8, 0xc4, 0x23, 0x39,
+	0xc6, 0x0b, 0x8f, 0xe4, 0x18, 0x1f, 0x3c, 0x92, 0x63, 0x9c, 0xf0, 0x58, 0x8e, 0xe1, 0xc2, 0x63,
+	0x39, 0x86, 0x1b, 0x8f, 0xe5, 0x18, 0xa2, 0x24, 0xd3, 0x33, 0x4b, 0x32, 0x4a, 0x93, 0xf4, 0x92,
+	0xf3, 0x73, 0xf5, 0x73, 0x52, 0x4b, 0x74, 0xab, 0x74, 0xd3, 0xf3, 0xf5, 0xc1, 0x26, 0x00, 0x02,
+	0x00, 0x00, 0xff, 0xff, 0x04, 0xcf, 0xad, 0xbe, 0xf4, 0x00, 0x00, 0x00,
 }
 
 func (m *Void) Marshal() (dAtA []byte, err error) {
@@ -171,7 +170,7 @@ func (m *Void) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *Reason) Marshal() (dAtA []byte, err error) {
+func (m *Error) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -181,22 +180,22 @@ func (m *Reason) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *Reason) MarshalTo(dAtA []byte) (int, error) {
+func (m *Error) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *Reason) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *Error) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	i = encodeVarintPbrpc(dAtA, i, uint64(m.RpcErrorCode))
+	i = encodeVarintPbrpc(dAtA, i, uint64(m.Type))
 	i--
 	dAtA[i] = 0x10
-	i -= len(m.Code)
-	copy(dAtA[i:], m.Code)
-	i = encodeVarintPbrpc(dAtA, i, uint64(len(m.Code)))
+	i -= len(m.Name)
+	copy(dAtA[i:], m.Name)
+	i = encodeVarintPbrpc(dAtA, i, uint64(len(m.Name)))
 	i--
 	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
@@ -222,15 +221,15 @@ func (m *Void) Size() (n int) {
 	return n
 }
 
-func (m *Reason) Size() (n int) {
+func (m *Error) Size() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
-	l = len(m.Code)
+	l = len(m.Name)
 	n += 1 + l + sovPbrpc(uint64(l))
-	n += 1 + sovPbrpc(uint64(m.RpcErrorCode))
+	n += 1 + sovPbrpc(uint64(m.Type))
 	return n
 }
 
@@ -293,7 +292,7 @@ func (m *Void) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *Reason) Unmarshal(dAtA []byte) error {
+func (m *Error) Unmarshal(dAtA []byte) error {
 	var hasFields [1]uint64
 	l := len(dAtA)
 	iNdEx := 0
@@ -317,15 +316,15 @@ func (m *Reason) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: Reason: wiretype end group for non-group")
+			return fmt.Errorf("proto: Error: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: Reason: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: Error: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Code", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -353,14 +352,14 @@ func (m *Reason) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Code = string(dAtA[iNdEx:postIndex])
+			m.Name = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 			hasFields[0] |= uint64(0x00000001)
 		case 2:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field RpcErrorCode", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Type", wireType)
 			}
-			m.RpcErrorCode = 0
+			m.Type = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowPbrpc
@@ -370,7 +369,7 @@ func (m *Reason) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.RpcErrorCode |= int32(b&0x7F) << shift
+				m.Type |= int32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -395,10 +394,10 @@ func (m *Reason) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return github_com_gogo_protobuf_proto.NewRequiredNotSetError("code")
+		return github_com_gogo_protobuf_proto.NewRequiredNotSetError("name")
 	}
 	if hasFields[0]&uint64(0x00000002) == 0 {
-		return github_com_gogo_protobuf_proto.NewRequiredNotSetError("rpc_error_code")
+		return github_com_gogo_protobuf_proto.NewRequiredNotSetError("type")
 	}
 
 	if iNdEx > l {

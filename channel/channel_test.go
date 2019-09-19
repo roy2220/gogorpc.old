@@ -46,10 +46,10 @@ func TestPingAndPong(t *testing.T) {
 					defer wg.Done()
 					msg := RawMessage(fmt.Sprintf("req2:%d", i))
 					rpc := RPC{
-						Ctx:         ctx,
-						ServiceName: "service2",
-						MethodName:  "method2",
-						Request:     &msg,
+						Ctx:        ctx,
+						ServiceID:  "service2",
+						MethodName: "method2",
+						Request:    &msg,
 					}
 					cn.InvokeRPC(&rpc, NewRawMessage)
 					if !assert.NoError(t, rpc.Err) {
@@ -71,10 +71,10 @@ func TestPingAndPong(t *testing.T) {
 					defer wg.Done()
 					msg := RawMessage(fmt.Sprintf("req1:%d", i))
 					rpc := RPC{
-						Ctx:         ctx,
-						ServiceName: "service1",
-						MethodName:  "method1",
-						Request:     &msg,
+						Ctx:        ctx,
+						ServiceID:  "service1",
+						MethodName: "method1",
+						Request:    &msg,
 					}
 					cn.InvokeRPC(&rpc, NewRawMessage)
 					if !assert.NoError(t, rpc.Err) {
@@ -115,12 +115,12 @@ func TestBadHandshake(t *testing.T) {
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			for i := 0; i < 10; i++ {
 				rpc := RPC{
-					Ctx:         ctx,
-					ServiceName: "service2",
-					MethodName:  "method2",
-					Request:     NullMessage,
+					Ctx:        ctx,
+					ServiceID:  "service2",
+					MethodName: "method2",
+					Request:    NullMessage,
 				}
-				cn.InvokeRPC(&rpc, NewNullMessage)
+				cn.InvokeRPC(&rpc, GetNullMessage)
 				assert.EqualError(t, rpc.Err, "pbrpc/channel: closed")
 			}
 			cn.Abort(nil)
@@ -155,7 +155,7 @@ func TestBroken(t *testing.T) {
 					defer wg.Done()
 					rpc := RPC{
 						Ctx:             ctx,
-						ServiceName:     "1",
+						ServiceID:       "1",
 						MethodName:      "2",
 						Request:         NullMessage,
 						RequestMetadata: Metadata{"I": []byte{byte(i)}},
@@ -191,18 +191,18 @@ func TestReconnection1(t *testing.T) {
 				go func(i int) {
 					defer wg.Done()
 					rpc := RPC{
-						Ctx:         ctx,
-						ServiceName: "1",
-						MethodName:  "2",
-						Request:     NullMessage,
+						Ctx:        ctx,
+						ServiceID:  "1",
+						MethodName: "2",
+						Request:    NullMessage,
 					}
 					if i == 0 {
 						rpc.Request = testBlockMessage{time.Second / 2 * 3}
-						cn.InvokeRPC(&rpc, NewNullMessage)
+						cn.InvokeRPC(&rpc, GetNullMessage)
 						assert.EqualError(t, rpc.Err, "pbrpc/channel: broken")
 					} else {
 						time.Sleep(time.Second / 2)
-						cn.InvokeRPC(&rpc, NewNullMessage)
+						cn.InvokeRPC(&rpc, GetNullMessage)
 						assert.EqualError(t, rpc.Err, "pbrpc/channel: rpc: not found")
 					}
 				}(i)
@@ -236,18 +236,18 @@ func TestReconnection2(t *testing.T) {
 				go func(i int) {
 					defer wg.Done()
 					rpc := RPC{
-						Ctx:         ctx,
-						ServiceName: "1",
-						MethodName:  "2",
-						Request:     NullMessage,
+						Ctx:        ctx,
+						ServiceID:  "1",
+						MethodName: "2",
+						Request:    NullMessage,
 					}
 					if i == 0 {
 						rpc.Request = testBlockMessage{time.Second / 2 * 3}
-						cn.InvokeRPC(&rpc, NewNullMessage)
+						cn.InvokeRPC(&rpc, GetNullMessage)
 						assert.EqualError(t, rpc.Err, "pbrpc/channel: broken")
 					} else {
 						time.Sleep(time.Second / 2)
-						cn.InvokeRPC(&rpc, NewNullMessage)
+						cn.InvokeRPC(&rpc, GetNullMessage)
 						assert.EqualError(t, rpc.Err, "pbrpc/channel: closed")
 					}
 				}(i)
@@ -302,12 +302,12 @@ func TestInterception(t *testing.T) {
 		opts2,
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			rpc := RPC{
-				Ctx:         ctx,
-				ServiceName: "foo",
-				MethodName:  "bar",
-				Request:     NullMessage,
+				Ctx:        ctx,
+				ServiceID:  "foo",
+				MethodName: "bar",
+				Request:    NullMessage,
 			}
-			cn.InvokeRPC(&rpc, NewNullMessage)
+			cn.InvokeRPC(&rpc, GetNullMessage)
 			cn.Abort(nil)
 			return false
 		},
@@ -336,12 +336,12 @@ func TestDeadline(t *testing.T) {
 			ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 			defer cancel()
 			rpc := RPC{
-				Ctx:         ctx,
-				ServiceName: "foo",
-				MethodName:  "bar",
-				Request:     NullMessage,
+				Ctx:        ctx,
+				ServiceID:  "foo",
+				MethodName: "bar",
+				Request:    NullMessage,
 			}
-			cn.InvokeRPC(&rpc, NewNullMessage)
+			cn.InvokeRPC(&rpc, GetNullMessage)
 			assert.EqualError(t, rpc.Err, "context deadline exceeded")
 			cn.Abort(nil)
 			return false

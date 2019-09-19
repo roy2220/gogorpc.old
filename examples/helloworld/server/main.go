@@ -12,7 +12,7 @@ type GreeterHandler struct{}
 
 func (GreeterHandler) SayHello(ctx context.Context, request *protocol.SayHelloReq) (*protocol.SayHelloResp, error) {
 	if request.Name == "spike" {
-		return nil, protocol.ErrRPCForbiddenName
+		return nil, protocol.RPCErrForbiddenName
 	}
 
 	return &protocol.SayHelloResp{

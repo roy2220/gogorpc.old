@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-type Acceptor func(ctx context.Context, serverURL *url.URL, shutdownCounter *int32, connectionHandler ConnectionHandler) error
+type Acceptor func(ctx context.Context, serverURL *url.URL, activityCounter *int32, connectionHandler ConnectionHandler) error
 type ConnectionHandler func(connection net.Conn)
 
 func RegisterAcceptor(schemeName string, acceptor Acceptor) error {
@@ -77,7 +77,7 @@ func (self AcceptorNotFoundError) Error() string {
 
 var acceptors = map[string]Acceptor{}
 
-func tcpAcceptor(ctx context.Context, serverURL *url.URL, shutdownCounter *int32, connectionHandler ConnectionHandler) error {
+func tcpAcceptor(ctx context.Context, serverURL *url.URL, activityCounter *int32, connectionHandler ConnectionHandler) error {
 	listener, err := net.Listen("tcp", serverURL.Host)
 
 	if err != nil {
@@ -116,11 +116,11 @@ func tcpAcceptor(ctx context.Context, serverURL *url.URL, shutdownCounter *int32
 			}
 
 			retryBackoff = 0
-			atomic.AddInt32(shutdownCounter, 1)
+			atomic.AddInt32(activityCounter, 1)
 
 			go func() {
 				connectionHandler(connection)
-				atomic.AddInt32(shutdownCounter, -1)
+				atomic.AddInt32(activityCounter, -1)
 			}()
 		}
 	}()

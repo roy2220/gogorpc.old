@@ -6,9 +6,9 @@ import "github.com/let-z-go/pbrpc/pbrpc.proto";
 
 option go_package = "github.com/let-z-go/pbrpc/examples/helloworld/protocol";
 
-option (pbrpc.reason) = {
-    code: "ForbiddenName"
-    rpc_error_code: 403
+option (pbrpc.error) = {
+    name: "ForbiddenName"
+    type: 403
 };
 
 service Greeter {

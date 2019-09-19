@@ -355,7 +355,7 @@ func TestPingAndPong1(t *testing.T) {
 			resp := RawMessage("pong")
 			pk.Err = mp1.Stream.SendResponse(&protocol.ResponseHeader{
 				SequenceNumber: pk.RequestHeader.SequenceNumber,
-				ErrorCode:      protocol.RPC_ERROR_NOT_IMPLEMENTED,
+				ErrorType:      protocol.RPC_ERROR_NOT_IMPLEMENTED,
 			}, &resp)
 		},
 		CbNewResponse: func(pk *Packet) {
@@ -391,7 +391,7 @@ func TestPingAndPong1(t *testing.T) {
 			resp := RawMessage("pong")
 			pk.Err = mp2.Stream.SendResponse(&protocol.ResponseHeader{
 				SequenceNumber: pk.RequestHeader.SequenceNumber,
-				ErrorCode:      protocol.RPC_ERROR_NOT_IMPLEMENTED,
+				ErrorType:      protocol.RPC_ERROR_NOT_IMPLEMENTED,
 			}, &resp)
 		},
 		CbNewResponse: func(pk *Packet) {
