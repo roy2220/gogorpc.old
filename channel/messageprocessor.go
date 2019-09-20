@@ -54,7 +54,8 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 
 		self.Stream.SendResponse(&protocol.ResponseHeader{
 			SequenceNumber: requestHeader.SequenceNumber,
-			ErrorType:      RPCErrorBadRequest,
+			ErrorType:      RPCErrBadRequest.Type,
+			ErrorCode:      RPCErrBadRequest.Code,
 		}, NullMessage)
 
 		return
@@ -70,7 +71,8 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 
 		self.Stream.SendResponse(&protocol.ResponseHeader{
 			SequenceNumber: requestHeader.SequenceNumber,
-			ErrorType:      RPCErrorNotFound,
+			ErrorType:      RPCErrNotFound.Type,
+			ErrorCode:      RPCErrNotFound.Code,
 		}, NullMessage)
 
 		return
@@ -125,7 +127,8 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 					Str("service_name", rpc.ServiceID).
 					Str("method_name", rpc.MethodName).
 					Msg("rpc_internal_server_error")
-				responseHeader.ErrorType = RPCErrorInternalServer
+				responseHeader.ErrorType = RPCErrInternalServer.Type
+				responseHeader.ErrorCode = RPCErrInternalServer.Code
 			}
 
 			response = NullMessage

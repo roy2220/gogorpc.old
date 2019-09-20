@@ -203,7 +203,7 @@ func TestReconnection1(t *testing.T) {
 					} else {
 						time.Sleep(time.Second / 2)
 						cn.InvokeRPC(&rpc, GetNullMessage)
-						assert.EqualError(t, rpc.Err, "gogorpc/channel: rpc: not found")
+						assert.EqualError(t, rpc.Err, "gogorpc/channel: rpc error: 404 - NotFound")
 					}
 				}(i)
 			}

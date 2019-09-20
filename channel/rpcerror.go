@@ -26,38 +26,7 @@ type RPCError struct {
 }
 
 func (self *RPCError) Error() string {
-	message := "gogorpc/channel: rpc: "
-
-	switch self.Type {
-	case RPCErrorBadRequest:
-		message += "bad request"
-	case RPCErrorUnauthorized:
-		message += "unauthorized"
-	case RPCErrorForbidden:
-		message += "forbidden"
-	case RPCErrorNotFound:
-		message += "not found"
-	case RPCErrorTooManyRequests:
-		message += "too many requests"
-	case RPCErrorInternalServer:
-		message += "internal server"
-	case RPCErrorNotImplemented:
-		message += "not implemented"
-	case RPCErrorBadGateway:
-		message += "bad gateway"
-	case RPCErrorServiceUnavailable:
-		message += "service unavailable"
-	case RPCErrorGatewayTimeout:
-		message += "gateway timeout"
-	default:
-		message += fmt.Sprintf("error %d", self.Type)
-	}
-
-	if self.Code != "" {
-		message += " - " + self.Code
-	}
-
-	return message
+	return fmt.Sprintf("gogorpc/channel: rpc error: %d - %s", self.Type, self.Code)
 }
 
 func (self *RPCError) Equals(err error) bool {
@@ -71,17 +40,17 @@ func (self *RPCError) Equals(err error) bool {
 type RPCErrorType = protocol.RPCErrorType
 
 var (
-	RPCErrBadRequest      = NewRPCError(RPCErrorBadRequest, "")
-	RPCErrUnauthorized    = NewRPCError(RPCErrorUnauthorized, "")
-	RPCErrForbidden       = NewRPCError(RPCErrorForbidden, "")
-	RPCErrNotFound        = NewRPCError(RPCErrorNotFound, "")
-	RPCErrTooManyRequests = NewRPCError(RPCErrorTooManyRequests, "")
+	RPCErrBadRequest      = NewRPCError(RPCErrorBadRequest, "BadRequest")
+	RPCErrUnauthorized    = NewRPCError(RPCErrorUnauthorized, "Unauthorized")
+	RPCErrForbidden       = NewRPCError(RPCErrorForbidden, "Forbidden")
+	RPCErrNotFound        = NewRPCError(RPCErrorNotFound, "NotFound")
+	RPCErrTooManyRequests = NewRPCError(RPCErrorTooManyRequests, "TooManyRequests")
 
-	RPCErrInternalServer     = NewRPCError(RPCErrorInternalServer, "")
-	RPCErrNotImplemented     = NewRPCError(RPCErrorNotImplemented, "")
-	RPCErrBadGateway         = NewRPCError(RPCErrorBadGateway, "")
-	RPCErrServiceUnavailable = NewRPCError(RPCErrorServiceUnavailable, "")
-	RPCErrGatewayTimeout     = NewRPCError(RPCErrorGatewayTimeout, "")
+	RPCErrInternalServer     = NewRPCError(RPCErrorInternalServer, "InternalServer")
+	RPCErrNotImplemented     = NewRPCError(RPCErrorNotImplemented, "NotImplemented")
+	RPCErrBadGateway         = NewRPCError(RPCErrorBadGateway, "BadGateway")
+	RPCErrServiceUnavailable = NewRPCError(RPCErrorServiceUnavailable, "ServiceUnavailable")
+	RPCErrGatewayTimeout     = NewRPCError(RPCErrorGatewayTimeout, "GatewayTimeout")
 )
 
 func NewRPCError(rpcErrorType RPCErrorType, rpcErrorCode string) *RPCError {
