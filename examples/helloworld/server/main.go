@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 
-	"github.com/let-z-go/pbrpc/channel"
-	"github.com/let-z-go/pbrpc/examples/helloworld/protocol"
-	"github.com/let-z-go/pbrpc/server"
+	"github.com/let-z-go/gogorpc/channel"
+	"github.com/let-z-go/gogorpc/examples/helloworld/protocol"
+	"github.com/let-z-go/gogorpc/server"
 )
 
 type GreeterHandler struct{}

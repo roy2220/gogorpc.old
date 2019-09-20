@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/let-z-go/pbrpc/channel"
+	"github.com/let-z-go/gogorpc/channel"
 )
 
 type Server struct {
@@ -109,7 +109,7 @@ func (self *Server) WaitForShutdown() bool {
 	return self.activity.WaitFor()
 }
 
-var ErrClosed = errors.New("pbrpc/server: closed")
+var ErrClosed = errors.New("gogorpc/server: closed")
 
 type activity struct {
 	Ctx     context.Context

@@ -14,7 +14,7 @@ import (
 	"github.com/gogo/protobuf/protoc-gen-gogo/descriptor"
 	plugin "github.com/gogo/protobuf/protoc-gen-gogo/plugin"
 
-	"github.com/let-z-go/pbrpc"
+	"github.com/let-z-go/gogorpc"
 )
 
 func ReadRequest() *plugin.CodeGeneratorRequest {
@@ -127,7 +127,7 @@ func (self *fileSet) EmitCode(context_ *context, response *plugin.CodeGeneratorR
 			inputFile_.EmitCode(context_)
 		})
 
-		outputFileName := strings.TrimSuffix(inputFile_.Name, ".proto") + ".pbrpc.go"
+		outputFileName := strings.TrimSuffix(inputFile_.Name, ".proto") + ".gogorpc.go"
 		outputFileContent := context_.Code.String()
 
 		if code, err := format.Source([]byte(outputFileContent)); err == nil {
@@ -240,16 +240,16 @@ func (self *inputFile) Load(context_ *context, raw *descriptor.FileDescriptorPro
 	self.Services = make([]*service, 0, len(raw.Service))
 
 	if raw.Options != nil {
-		extension, err := proto.GetExtension(raw.Options, pbrpc.E_Error)
+		extension, err := proto.GetExtension(raw.Options, gogorpc.E_Error)
 
 		if err == nil {
-			for _, rawError := range extension.([]*pbrpc.Error) {
+			for _, rawError := range extension.([]*gogorpc.Error) {
 				error_ := error1{
 					Name: rawError.Name,
 				}
 
 				if error_.Name == "" {
-					context_.Fatal("invalid option `pbrpc.error`: empty `name`")
+					context_.Fatal("invalid option `gogorpc.error`: empty `name`")
 				}
 
 				context_.EnterNode(&error_, func() {
@@ -381,9 +381,9 @@ type error1 struct {
 	Code      string
 }
 
-func (self *error1) Load(context_ *context, raw *pbrpc.Error) {
+func (self *error1) Load(context_ *context, raw *gogorpc.Error) {
 	if raw.Type == 0 {
-		context_.Fatal("invalid option `pbrpc.error`: zero `code`")
+		context_.Fatal("invalid option `gogorpc.error`: zero `code`")
 	}
 
 	self.Type = raw.Type
@@ -393,11 +393,11 @@ func (self *error1) Resolve(context_ *context) {
 	self.InputFile = context_.Nodes[len(context_.Nodes)-2].(*inputFile)
 	self.Code = self.InputFile.PackageName + "." + self.Name
 	context_.AddError(self)
-	self.InputFile.ImportGoPackage("channel", "github.com/let-z-go/pbrpc/channel")
+	self.InputFile.ImportGoPackage("channel", "github.com/let-z-go/gogorpc/channel")
 }
 
 func (self *error1) GetNodeName() string {
-	return "<pbrpc.error>:" + self.Name
+	return "<gogorpc.error>:" + self.Name
 }
 
 func (self *error1) GetNodeNameDelimiter() string {
@@ -431,7 +431,7 @@ func (self *service) Load(context_ *context, raw *descriptor.ServiceDescriptorPr
 func (self *service) Resolve(context_ *context) {
 	inputFile_ := context_.Nodes[len(context_.Nodes)-2].(*inputFile)
 	self.ID = inputFile_.PackageName + "." + self.Name
-	inputFile_.ImportGoPackage("channel", "github.com/let-z-go/pbrpc/channel")
+	inputFile_.ImportGoPackage("channel", "github.com/let-z-go/gogorpc/channel")
 
 	for _, method_ := range self.Methods {
 		context_.EnterNode(method_, func() {
@@ -618,7 +618,7 @@ func (self *method) Resolve(context_ *context) {
 	inputFile_.ImportGoPackage("context", "context")
 
 	switch packageName, messageName := self.Request.PackageName, self.Request.MessageName; {
-	case packageName == "pbrpc" && messageName == "Void":
+	case packageName == "gogorpc" && messageName == "Void":
 		self.Request = nil
 	default:
 		file_ := context_.Packages[packageName].Messages[messageName].File
@@ -632,7 +632,7 @@ func (self *method) Resolve(context_ *context) {
 	}
 
 	switch packageName, messageName := self.Response.PackageName, self.Response.MessageName; {
-	case packageName == "pbrpc" && messageName == "Void":
+	case packageName == "gogorpc" && messageName == "Void":
 		self.Response = nil
 	default:
 		file_ := context_.Packages[packageName].Messages[messageName].File

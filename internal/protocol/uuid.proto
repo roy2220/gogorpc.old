@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package pbrpc.protocol;
+package gogorpc.protocol;
 
-option go_package = "github.com/let-z-go/pbrpc/internal/protocol";
+option go_package = "github.com/let-z-go/gogorpc/internal/protocol";
 
 message UUID {
     fixed64 low = 1;

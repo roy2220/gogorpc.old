@@ -115,7 +115,7 @@ func (m *TransportHandshakeHeader) GetMaxOutgoingPacketSize() int32 {
 }
 
 type PacketHeader struct {
-	MessageType MessageType `protobuf:"varint,1,opt,name=message_type,json=messageType,proto3,enum=pbrpc.protocol.MessageType" json:"message_type,omitempty"`
+	MessageType MessageType `protobuf:"varint,1,opt,name=message_type,json=messageType,proto3,enum=gogorpc.protocol.MessageType" json:"message_type,omitempty"`
 }
 
 func (m *PacketHeader) Reset()         { *m = PacketHeader{} }
@@ -159,9 +159,9 @@ func (m *PacketHeader) GetMessageType() MessageType {
 }
 
 func init() {
-	proto.RegisterEnum("pbrpc.protocol.MessageType", MessageType_name, MessageType_value)
-	proto.RegisterType((*TransportHandshakeHeader)(nil), "pbrpc.protocol.TransportHandshakeHeader")
-	proto.RegisterType((*PacketHeader)(nil), "pbrpc.protocol.PacketHeader")
+	proto.RegisterEnum("gogorpc.protocol.MessageType", MessageType_name, MessageType_value)
+	proto.RegisterType((*TransportHandshakeHeader)(nil), "gogorpc.protocol.TransportHandshakeHeader")
+	proto.RegisterType((*PacketHeader)(nil), "gogorpc.protocol.PacketHeader")
 }
 
 func init() { proto.RegisterFile("protocol/transport.proto", fileDescriptor_32f8dabe690e614a) }

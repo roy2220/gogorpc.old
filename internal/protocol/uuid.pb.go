@@ -76,7 +76,7 @@ func (m *UUID) GetHigh() uint64 {
 }
 
 func init() {
-	proto.RegisterType((*UUID)(nil), "pbrpc.protocol.UUID")
+	proto.RegisterType((*UUID)(nil), "gogorpc.protocol.UUID")
 }
 
 func init() { proto.RegisterFile("protocol/uuid.proto", fileDescriptor_70cf74d951327a30) }

@@ -14,8 +14,8 @@ import (
 	"github.com/let-z-go/toolkit/utils"
 	"github.com/let-z-go/toolkit/uuid"
 
-	"github.com/let-z-go/pbrpc/internal/protocol"
-	"github.com/let-z-go/pbrpc/internal/stream"
+	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/stream"
 )
 
 type Channel struct {
@@ -212,7 +212,7 @@ func (self *Channel) setState(newState state) {
 	}
 
 	utils.Assert(stateTransitionIsValid, func() string {
-		return fmt.Sprintf("pbrpc/channel: invalid state transition: oldState=%#v, newState=%#v", oldState, newState)
+		return fmt.Sprintf("gogorpc/channel: invalid state transition: oldState=%#v, newState=%#v", oldState, newState)
 	})
 
 	if newState != oldState {
@@ -290,9 +290,9 @@ func (self *Channel) isClosed() bool {
 }
 
 var (
-	ErrHandshakeRefused = errors.New("pbrpc/channel: handshake refused")
-	ErrBroken           = errors.New("pbrpc/channel: broken")
-	ErrClosed           = errors.New("pbrpc/channel: closed")
+	ErrHandshakeRefused = errors.New("gogorpc/channel: handshake refused")
+	ErrBroken           = errors.New("gogorpc/channel: broken")
+	ErrClosed           = errors.New("gogorpc/channel: closed")
 )
 
 const (

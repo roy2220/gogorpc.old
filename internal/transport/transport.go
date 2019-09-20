@@ -13,7 +13,7 @@ import (
 	"github.com/let-z-go/toolkit/uuid"
 	"github.com/rs/zerolog"
 
-	"github.com/let-z-go/pbrpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/protocol"
 )
 
 type Transport struct {
@@ -455,14 +455,14 @@ type NetworkError struct {
 }
 
 func (self *NetworkError) Error() string {
-	return fmt.Sprintf("pbrpc/transport: network: %s", self.Inner.Error())
+	return fmt.Sprintf("gogorpc/transport: network: %s", self.Inner.Error())
 }
 
 var (
-	ErrHandshakeTooLarge = errors.New("pbrpc/transport: handshake too large")
-	ErrBadHandshake      = errors.New("pbrpc/transport: bad handshake")
-	ErrPacketTooLarge    = errors.New("pbrpc/transport: packet too large")
-	ErrBadPacket         = errors.New("pbrpc/transport: bad packet")
+	ErrHandshakeTooLarge = errors.New("gogorpc/transport: handshake too large")
+	ErrBadHandshake      = errors.New("gogorpc/transport: bad handshake")
+	ErrPacketTooLarge    = errors.New("gogorpc/transport: packet too large")
+	ErrBadPacket         = errors.New("gogorpc/transport: bad packet")
 )
 
 func makeDeadline(timeout time.Duration) time.Time {

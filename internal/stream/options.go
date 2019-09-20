@@ -6,7 +6,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/let-z-go/pbrpc/internal/transport"
+	"github.com/let-z-go/gogorpc/internal/transport"
 )
 
 type Options struct {

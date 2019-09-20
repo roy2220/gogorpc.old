@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/let-z-go/pbrpc/cmd/protoc-gen-pbrpc/internal"
+	"github.com/let-z-go/gogorpc/cmd/protoc-gen-gogorpc/internal"
 )
 
 func main() {

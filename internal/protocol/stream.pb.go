@@ -264,7 +264,7 @@ func (m *RequestHeader) GetTraceId() UUID {
 type ResponseHeader struct {
 	SequenceNumber int32             `protobuf:"varint,1,opt,name=sequence_number,json=sequenceNumber,proto3" json:"sequence_number,omitempty"`
 	Metadata       map[string][]byte `protobuf:"bytes,2,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	ErrorType      RPCErrorType      `protobuf:"varint,3,opt,name=error_type,json=errorType,proto3,enum=pbrpc.protocol.RPCErrorType" json:"error_type,omitempty"`
+	ErrorType      RPCErrorType      `protobuf:"varint,3,opt,name=error_type,json=errorType,proto3,enum=gogorpc.protocol.RPCErrorType" json:"error_type,omitempty"`
 	ErrorCode      string            `protobuf:"bytes,4,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
 }
 
@@ -330,7 +330,7 @@ func (m *ResponseHeader) GetErrorCode() string {
 }
 
 type Hangup struct {
-	ErrorCode HangupErrorCode   `protobuf:"varint,1,opt,name=error_code,json=errorCode,proto3,enum=pbrpc.protocol.HangupErrorCode" json:"error_code,omitempty"`
+	ErrorCode HangupErrorCode   `protobuf:"varint,1,opt,name=error_code,json=errorCode,proto3,enum=gogorpc.protocol.HangupErrorCode" json:"error_code,omitempty"`
 	Metadata  map[string][]byte `protobuf:"bytes,2,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
 }
 
@@ -382,15 +382,15 @@ func (m *Hangup) GetMetadata() map[string][]byte {
 }
 
 func init() {
-	proto.RegisterEnum("pbrpc.protocol.RPCErrorType", RPCErrorType_name, RPCErrorType_value)
-	proto.RegisterEnum("pbrpc.protocol.HangupErrorCode", HangupErrorCode_name, HangupErrorCode_value)
-	proto.RegisterType((*StreamHandshakeHeader)(nil), "pbrpc.protocol.StreamHandshakeHeader")
-	proto.RegisterType((*RequestHeader)(nil), "pbrpc.protocol.RequestHeader")
-	proto.RegisterMapType((map[string][]byte)(nil), "pbrpc.protocol.RequestHeader.MetadataEntry")
-	proto.RegisterType((*ResponseHeader)(nil), "pbrpc.protocol.ResponseHeader")
-	proto.RegisterMapType((map[string][]byte)(nil), "pbrpc.protocol.ResponseHeader.MetadataEntry")
-	proto.RegisterType((*Hangup)(nil), "pbrpc.protocol.Hangup")
-	proto.RegisterMapType((map[string][]byte)(nil), "pbrpc.protocol.Hangup.MetadataEntry")
+	proto.RegisterEnum("gogorpc.protocol.RPCErrorType", RPCErrorType_name, RPCErrorType_value)
+	proto.RegisterEnum("gogorpc.protocol.HangupErrorCode", HangupErrorCode_name, HangupErrorCode_value)
+	proto.RegisterType((*StreamHandshakeHeader)(nil), "gogorpc.protocol.StreamHandshakeHeader")
+	proto.RegisterType((*RequestHeader)(nil), "gogorpc.protocol.RequestHeader")
+	proto.RegisterMapType((map[string][]byte)(nil), "gogorpc.protocol.RequestHeader.MetadataEntry")
+	proto.RegisterType((*ResponseHeader)(nil), "gogorpc.protocol.ResponseHeader")
+	proto.RegisterMapType((map[string][]byte)(nil), "gogorpc.protocol.ResponseHeader.MetadataEntry")
+	proto.RegisterType((*Hangup)(nil), "gogorpc.protocol.Hangup")
+	proto.RegisterMapType((map[string][]byte)(nil), "gogorpc.protocol.Hangup.MetadataEntry")
 }
 
 func init() { proto.RegisterFile("protocol/stream.proto", fileDescriptor_df773e1ecf94133c) }

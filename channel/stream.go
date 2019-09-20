@@ -1,7 +1,7 @@
 package channel
 
 import (
-	"github.com/let-z-go/pbrpc/internal/stream"
+	"github.com/let-z-go/gogorpc/internal/stream"
 )
 
 type (

@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/let-z-go/pbrpc/internal/protocol"
-	"github.com/let-z-go/pbrpc/internal/transport"
+	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/transport"
 )
 
 type Handshaker interface {
@@ -16,7 +16,7 @@ type Handshaker interface {
 	EmitHandshake() (handshakePayload Message, err error)
 }
 
-var ErrBadHandshake = errors.New("pbrpc/stream: bad handshake")
+var ErrBadHandshake = errors.New("gogorpc/stream: bad handshake")
 
 type passiveHandshaker struct {
 	Inner Handshaker

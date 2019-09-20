@@ -12,7 +12,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/let-z-go/pbrpc/internal/transport"
+	"github.com/let-z-go/gogorpc/internal/transport"
 )
 
 func TestPingAndPong(t *testing.T) {
@@ -121,7 +121,7 @@ func TestBadHandshake(t *testing.T) {
 					Request:    NullMessage,
 				}
 				cn.InvokeRPC(&rpc, GetNullMessage)
-				assert.EqualError(t, rpc.Err, "pbrpc/channel: closed")
+				assert.EqualError(t, rpc.Err, "gogorpc/channel: closed")
 			}
 			cn.Abort(nil)
 			return false
@@ -162,7 +162,7 @@ func TestBroken(t *testing.T) {
 					}
 					cn.InvokeRPC(&rpc, NewRawMessage)
 					if i%2 == 0 {
-						assert.EqualError(t, rpc.Err, "pbrpc/channel: broken")
+						assert.EqualError(t, rpc.Err, "gogorpc/channel: broken")
 					}
 				}(i)
 			}
@@ -199,11 +199,11 @@ func TestReconnection1(t *testing.T) {
 					if i == 0 {
 						rpc.Request = testBlockMessage{time.Second / 2 * 3}
 						cn.InvokeRPC(&rpc, GetNullMessage)
-						assert.EqualError(t, rpc.Err, "pbrpc/channel: broken")
+						assert.EqualError(t, rpc.Err, "gogorpc/channel: broken")
 					} else {
 						time.Sleep(time.Second / 2)
 						cn.InvokeRPC(&rpc, GetNullMessage)
-						assert.EqualError(t, rpc.Err, "pbrpc/channel: rpc: not found")
+						assert.EqualError(t, rpc.Err, "gogorpc/channel: rpc: not found")
 					}
 				}(i)
 			}
@@ -244,11 +244,11 @@ func TestReconnection2(t *testing.T) {
 					if i == 0 {
 						rpc.Request = testBlockMessage{time.Second / 2 * 3}
 						cn.InvokeRPC(&rpc, GetNullMessage)
-						assert.EqualError(t, rpc.Err, "pbrpc/channel: broken")
+						assert.EqualError(t, rpc.Err, "gogorpc/channel: broken")
 					} else {
 						time.Sleep(time.Second / 2)
 						cn.InvokeRPC(&rpc, GetNullMessage)
-						assert.EqualError(t, rpc.Err, "pbrpc/channel: closed")
+						assert.EqualError(t, rpc.Err, "gogorpc/channel: closed")
 					}
 				}(i)
 			}

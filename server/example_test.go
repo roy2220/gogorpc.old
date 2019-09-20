@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/let-z-go/pbrpc/channel"
-	"github.com/let-z-go/pbrpc/client"
+	"github.com/let-z-go/gogorpc/channel"
+	"github.com/let-z-go/gogorpc/client"
 )
 
 func ExampleServer() {

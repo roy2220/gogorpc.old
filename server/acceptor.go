@@ -52,7 +52,7 @@ type AcceptorExistsError struct {
 }
 
 func (self AcceptorExistsError) Error() string {
-	message := "pbrpc/client: acceptor exists"
+	message := "gogorpc/server: acceptor exists"
 
 	if self.context != "" {
 		message += ": " + self.context
@@ -66,7 +66,7 @@ type AcceptorNotFoundError struct {
 }
 
 func (self AcceptorNotFoundError) Error() string {
-	message := "pbrpc/client: acceptor not found"
+	message := "gogorpc/server: acceptor not found"
 
 	if self.context != "" {
 		message += ": " + self.context

@@ -6,7 +6,7 @@ package protocol
 
 import (
 	context "context"
-	channel "github.com/let-z-go/pbrpc/channel"
+	channel "github.com/let-z-go/gogorpc/channel"
 )
 
 var (

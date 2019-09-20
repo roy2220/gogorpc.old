@@ -14,8 +14,8 @@ import (
 	"github.com/let-z-go/toolkit/deque"
 	"github.com/let-z-go/toolkit/uuid"
 
-	"github.com/let-z-go/pbrpc/internal/protocol"
-	"github.com/let-z-go/pbrpc/internal/transport"
+	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/transport"
 )
 
 type Stream struct {
@@ -872,10 +872,10 @@ type PendingResponse struct {
 }
 
 var (
-	ErrConcurrencyOverflow = errors.New("pbrpc/stream: concurrency overflow")
-	ErrClosed              = errors.New("pbrpc/stream: closed")
-	ErrPacketDropped       = errors.New("pbrpc/stream: packet dropped")
-	ErrRequestExpired      = errors.New("pbrpc/stream: request expired")
+	ErrConcurrencyOverflow = errors.New("gogorpc/stream: concurrency overflow")
+	ErrClosed              = errors.New("gogorpc/stream: closed")
+	ErrPacketDropped       = errors.New("gogorpc/stream: packet dropped")
+	ErrRequestExpired      = errors.New("gogorpc/stream: request expired")
 )
 
 func PutPooledPendingRequests(listOfPendingRequests *list.List) {
@@ -918,7 +918,7 @@ type pendingMessages struct {
 	ListLength int
 }
 
-var errBadPacket = errors.New("pbrpc/stream: bad packet")
+var errBadPacket = errors.New("gogorpc/stream: bad packet")
 
 var (
 	pendingRequestPool  = sync.Pool{New: func() interface{} { return new(PendingRequest) }}

@@ -50,7 +50,7 @@ type ConnectorExistsError struct {
 }
 
 func (self ConnectorExistsError) Error() string {
-	message := "pbrpc/client: connector exists"
+	message := "gogorpc/client: connector exists"
 
 	if self.context != "" {
 		message += ": " + self.context
@@ -64,7 +64,7 @@ type ConnectorNotFoundError struct {
 }
 
 func (self ConnectorNotFoundError) Error() string {
-	message := "pbrpc/client: connector not found"
+	message := "gogorpc/client: connector not found"
 
 	if self.context != "" {
 		message += ": " + self.context

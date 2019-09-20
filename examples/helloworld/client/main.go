@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/let-z-go/pbrpc/client"
-	"github.com/let-z-go/pbrpc/examples/helloworld/protocol"
+	"github.com/let-z-go/gogorpc/client"
+	"github.com/let-z-go/gogorpc/examples/helloworld/protocol"
 )
 
 func main() {

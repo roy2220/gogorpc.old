@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/let-z-go/pbrpc/channel"
+	"github.com/let-z-go/gogorpc/channel"
 )
 
 type Client struct {

@@ -3,7 +3,7 @@ package stream
 import (
 	"fmt"
 
-	"github.com/let-z-go/pbrpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/protocol"
 )
 
 const (
@@ -21,7 +21,7 @@ type HangupError struct {
 }
 
 func (self *HangupError) Error() string {
-	message := "pbrpc/stream: hangup"
+	message := "gogorpc/stream: hangup"
 
 	if self.IsPassive {
 		message += " (passive): "

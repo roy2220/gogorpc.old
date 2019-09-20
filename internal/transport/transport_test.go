@@ -15,7 +15,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/let-z-go/pbrpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/protocol"
 )
 
 func TestOptions(t *testing.T) {
@@ -325,7 +325,7 @@ func TestSendAndReceivePackets(t *testing.T) {
 		for {
 			err := tp.Peek(ctx, 0, &pk)
 			if err != nil {
-				if !assert.EqualError(t, err, "pbrpc/transport: network: EOF", i) {
+				if !assert.EqualError(t, err, "gogorpc/transport: network: EOF", i) {
 					t.FailNow()
 				}
 				if !assert.Equal(t, i, N) {

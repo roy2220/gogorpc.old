@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/let-z-go/pbrpc/channel"
+	"github.com/let-z-go/gogorpc/channel"
 	"github.com/rs/zerolog"
 )
 

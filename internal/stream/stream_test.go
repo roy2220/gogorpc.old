@@ -15,8 +15,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/let-z-go/pbrpc/internal/protocol"
-	"github.com/let-z-go/pbrpc/internal/transport"
+	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/transport"
 )
 
 func TestOptions(t *testing.T) {

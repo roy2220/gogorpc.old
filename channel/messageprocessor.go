@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/let-z-go/pbrpc/internal/protocol"
-	"github.com/let-z-go/pbrpc/internal/stream"
+	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/stream"
 	"github.com/let-z-go/toolkit/uuid"
 )
 

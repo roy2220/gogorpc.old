@@ -3,7 +3,7 @@ package channel
 import (
 	"fmt"
 
-	"github.com/let-z-go/pbrpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/protocol"
 )
 
 const (
@@ -26,7 +26,7 @@ type RPCError struct {
 }
 
 func (self *RPCError) Error() string {
-	message := "pbrpc/channel: rpc: "
+	message := "gogorpc/channel: rpc: "
 
 	switch self.Type {
 	case RPCErrorBadRequest:
