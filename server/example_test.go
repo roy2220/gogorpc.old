@@ -38,7 +38,7 @@ func ExampleServer() {
 	go svr.Run()
 
 	// run client
-	cli := new(client.Client).Init(&client.Options{}, []string{"tcp://127.0.0.1:8888"})
+	cli := new(client.Client).Init(&client.Options{}, "tcp://127.0.0.1:8888")
 	defer cli.Close()
 	req := channel.RawMessage("hello world")
 

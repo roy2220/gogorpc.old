@@ -27,7 +27,7 @@ func TestServerShutdown(t *testing.T) {
 	})
 	s := new(Server).Init(&opts, "tcp://127.0.0.1:8000")
 	go func() {
-		cli := new(client.Client).Init(&client.Options{Logger: &logger}, []string{"tcp://127.0.0.1:8000"})
+		cli := new(client.Client).Init(&client.Options{Logger: &logger}, "tcp://127.0.0.1:8000")
 		defer cli.Close()
 
 		cli.InvokeRPC(&channel.RPC{

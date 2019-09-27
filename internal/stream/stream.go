@@ -110,11 +110,14 @@ func (self *Stream) Process(ctx context.Context, messageProcessor MessageProcess
 		errs <- err
 
 		if _, ok := err.(*HangupError); ok {
+			timer := time.NewTimer(self.options.ActiveHangupTimeout)
+
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				errs <- ctx.Err()
 				return
-			case <-time.After(self.options.ActiveHangupTimeout):
+			case <-timer.C:
 				// wait for receivePackets returning EOF
 			}
 		}
@@ -543,37 +546,43 @@ func (self *Stream) checkPendingMessages(
 	pendingResponses chan *pendingMessages,
 	timeout time.Duration,
 ) (*pendingMessages, *pendingMessages, *protocol.Hangup, error) {
-	pendingRequests2 := (*pendingMessages)(nil)
-	pendingResponses2 := (*pendingMessages)(nil)
-	pendingHangup := (*protocol.Hangup)(nil)
+	var pendingRequests2 *pendingMessages
+	var pendingResponses2 *pendingMessages
+	var pendingHangup *protocol.Hangup
+	n := 0
 
 	select {
-	case err := <-errs:
-		return nil, nil, nil, err
 	case pendingRequests2 = <-pendingRequests:
+		n++
+	default:
+	}
+
+	select {
 	case pendingResponses2 = <-pendingResponses:
+		n++
+	default:
+	}
+
+	select {
 	case pendingHangup = <-self.pendingHangup:
-	case <-time.After(timeout):
+		n++
+	default:
 	}
 
-	if pendingRequests2 == nil {
+	if n == 0 {
+		timer := time.NewTimer(timeout)
+
 		select {
+		case err := <-errs:
+			timer.Stop()
+			return nil, nil, nil, err
 		case pendingRequests2 = <-pendingRequests:
-		default:
-		}
-	}
-
-	if pendingResponses2 == nil {
-		select {
+			timer.Stop()
 		case pendingResponses2 = <-pendingResponses:
-		default:
-		}
-	}
-
-	if pendingHangup == nil {
-		select {
+			timer.Stop()
 		case pendingHangup = <-self.pendingHangup:
-		default:
+			timer.Stop()
+		case <-timer.C:
 		}
 	}
 

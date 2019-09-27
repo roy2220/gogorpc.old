@@ -11,9 +11,9 @@ import (
 )
 
 type messageProcessor struct {
-	Options     *Options
-	Stream      *stream.Stream
-	PendingRPCs *sync.Map
+	Options      *Options
+	Stream       *stream.Stream
+	InflightRPCs *sync.Map
 
 	methodOptionsCache *MethodOptions
 	pendingRPCCache    *pendingRPC
@@ -140,13 +140,13 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 
 func (self *messageProcessor) PostEmitRequest(packet *stream.Packet) {
 	requestHeader := &packet.RequestHeader
-	value, _ := self.PendingRPCs.Load(requestHeader.SequenceNumber)
+	value, _ := self.InflightRPCs.Load(requestHeader.SequenceNumber)
 	pendingRPC_ := value.(*pendingRPC)
 
 	if packet.Err == nil {
 		pendingRPC_.IsEmitted = true
 	} else {
-		self.PendingRPCs.Delete(requestHeader.SequenceNumber)
+		self.InflightRPCs.Delete(requestHeader.SequenceNumber)
 		pendingRPC_.Fail(nil, packet.Err)
 		packet.Err = stream.ErrPacketDropped
 	}
@@ -154,7 +154,7 @@ func (self *messageProcessor) PostEmitRequest(packet *stream.Packet) {
 
 func (self *messageProcessor) NewResponse(packet *stream.Packet) {
 	responseHeader := &packet.ResponseHeader
-	value, ok := self.PendingRPCs.Load(responseHeader.SequenceNumber)
+	value, ok := self.InflightRPCs.Load(responseHeader.SequenceNumber)
 
 	if !ok {
 		packet.Err = stream.ErrPacketDropped
@@ -168,7 +168,7 @@ func (self *messageProcessor) NewResponse(packet *stream.Packet) {
 		return
 	}
 
-	self.PendingRPCs.Delete(responseHeader.SequenceNumber)
+	self.InflightRPCs.Delete(responseHeader.SequenceNumber)
 
 	if responseHeader.ErrorType == 0 {
 		packet.Message = pendingRPC_.NewResponse()

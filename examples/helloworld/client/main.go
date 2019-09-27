@@ -15,7 +15,7 @@ func main() {
 		},
 	}
 
-	cli := new(client.Client).Init(&opts, []string{"tcp://127.0.0.1:8888"})
+	cli := new(client.Client).Init(&opts, "tcp://127.0.0.1:8888")
 	defer cli.Close()
 
 	for _, name := range []string{"tom", "jerry", "spike"} {

@@ -9,12 +9,12 @@ import (
 )
 
 type Options struct {
-	Channel               *channel.Options
-	Logger                *zerolog.Logger
-	ConnectTimeout        time.Duration
-	CloseOnChannelFailure bool
-	WithoutConnectRetry   bool
-	ConnectRetry          ConnectRetryOptions
+	Channel             *channel.Options
+	Logger              *zerolog.Logger
+	ConnectTimeout      time.Duration
+	CloseOnChannelError bool
+	WithoutConnectRetry bool
+	ConnectRetry        ConnectRetryOptions
 
 	normalizeOnce sync.Once
 }

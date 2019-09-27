@@ -17,7 +17,7 @@ type Client struct {
 	cancel        context.CancelFunc
 }
 
-func (self *Client) Init(options *Options, rawServerURLs []string) *Client {
+func (self *Client) Init(options *Options, rawServerURLs ...string) *Client {
 	self.options = options.Normalize()
 	self.channel.Init(self.options.Channel)
 	self.rawServerURLs = rawServerURLs
@@ -89,11 +89,11 @@ func (self *Client) run() {
 				Str("transport_id", self.channel.GetTransportID().String()).
 				Msg("client_channel_connect_failed")
 
-			if !self.options.CloseOnChannelFailure {
+			if _, ok := err.(*channel.NetworkError); ok {
 				continue
 			}
 
-			if _, ok := err.(*channel.NetworkError); ok {
+			if !self.options.CloseOnChannelError {
 				continue
 			}
 
@@ -107,11 +107,11 @@ func (self *Client) run() {
 			Str("transport_id", self.channel.GetTransportID().String()).
 			Msg("client_channel_process_failed")
 
-		if !self.options.CloseOnChannelFailure {
+		if _, ok = err.(*channel.NetworkError); ok {
 			continue
 		}
 
-		if _, ok = err.(*channel.NetworkError); ok {
+		if !self.options.CloseOnChannelError {
 			continue
 		}
 
@@ -158,10 +158,16 @@ func (self *serverURLManager) LoadServerURLs(rawServerURLs []string) bool {
 		self.serverURLs = append(self.serverURLs, serverURL)
 	}
 
-	if len(self.serverURLs) == 0 {
+	n := len(self.serverURLs)
+
+	if n == 0 {
 		self.Options.Logger.Warn().Msg("client_no_valid_server_url")
 		return false
 	}
+
+	rand.Shuffle(n, func(i, j int) {
+		self.serverURLs[i], self.serverURLs[j] = self.serverURLs[j], self.serverURLs[i]
+	})
 
 	return true
 }
@@ -200,13 +206,16 @@ func (self *serverURLManager) GetNextServerURL(ctx context.Context, connectRetry
 			connectRetryBackoff = time.Duration(float64(connectRetryBackoff) * (0.5 + rand.Float64()))
 		}
 
+		timer := time.NewTimer(connectRetryBackoff)
+
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			self.Options.Logger.Error().Err(ctx.Err()).
 				Strs("valid_server_urls", self.getRawServerURLs()).
 				Msg("client_connect_retry_delay_failed")
 			return nil, false
-		case <-time.After(connectRetryBackoff):
+		case <-timer.C:
 		}
 	}
 

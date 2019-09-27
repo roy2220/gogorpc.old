@@ -24,7 +24,7 @@ type Channel struct {
 	stream                 unsafe.Pointer
 	state                  int32
 	nextSequenceNumber     uint32
-	pendingRPCs            sync.Map
+	inflightRPCs           sync.Map
 	pendingAbort           atomic.Value
 }
 
@@ -76,9 +76,9 @@ func (self *Channel) Process(ctx context.Context) error {
 	stream_ := self.getStream()
 
 	err := stream_.Process(ctx, &messageProcessor{
-		Options:     self.options,
-		Stream:      stream_,
-		PendingRPCs: &self.pendingRPCs,
+		Options:      self.options,
+		Stream:       stream_,
+		InflightRPCs: &self.inflightRPCs,
 	})
 
 	if hangupError, ok := err.(*stream.HangupError); ok && hangupError.IsPassive {
@@ -118,7 +118,7 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 		rpcHandler = func(rpc *RPC) {
 			pendingRPC_ := getPooledPendingRPC()
 			pendingRPC_.Init(responseFactory)
-			self.pendingRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
+			self.inflightRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
 
 			if err := self.getStream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
 				SequenceNumber: rpc.internals.SequenceNumber,
@@ -132,7 +132,7 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 					High: rpc.internals.TraceID[1],
 				},
 			}, rpc.Request); err != nil {
-				self.pendingRPCs.Delete(rpc.internals.SequenceNumber)
+				self.inflightRPCs.Delete(rpc.internals.SequenceNumber)
 
 				switch err {
 				case stream.ErrClosed:
@@ -240,11 +240,11 @@ func (self *Channel) setState(newState state) {
 			atomic.StorePointer(&self.stream, unsafe.Pointer(newStream))
 			oldStream.Close()
 
-			self.pendingRPCs.Range(func(key interface{}, value interface{}) bool {
+			self.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
 				pendingRPC_ := value.(*pendingRPC)
 
 				if pendingRPC_.IsEmitted {
-					self.pendingRPCs.Delete(key)
+					self.inflightRPCs.Delete(key)
 					pendingRPC_.Fail(nil, err)
 				}
 
@@ -256,8 +256,8 @@ func (self *Channel) setState(newState state) {
 			self.dequeOfPendingRequests.Close(listOfPendingRequests)
 			stream.PutPooledPendingRequests(listOfPendingRequests)
 
-			self.pendingRPCs.Range(func(key interface{}, value interface{}) bool {
-				self.pendingRPCs.Delete(key)
+			self.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
+				self.inflightRPCs.Delete(key)
 				pendingRPC_ := value.(*pendingRPC)
 
 				if pendingRPC_.IsEmitted {
