@@ -81,14 +81,14 @@ func (self *Server) Run() (err error) {
 	}
 
 	err = acceptor(self.ctx, url_, &self.activity.Counter, func(connection net.Conn) {
-		channel_ := new(channel.Channel).Init(self.options.Channel)
+		channel_ := new(channel.Channel).Init(true, self.options.Channel)
 		defer channel_.Close()
 
-		if err := channel_.Accept(self.activity.Ctx, connection); err != nil {
+		if err := channel_.Establish(self.activity.Ctx, url_, connection); err != nil {
 			self.options.Logger.Warn().Err(err).
 				Str("server_url", self.rawURL).
 				Str("transport_id", channel_.GetTransportID().String()).
-				Msg("server_channel_accept_failed")
+				Msg("server_channel_establish_failed")
 			return
 		}
 

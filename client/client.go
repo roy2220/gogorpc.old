@@ -19,7 +19,7 @@ type Client struct {
 
 func (self *Client) Init(options *Options, rawServerURLs ...string) *Client {
 	self.options = options.Normalize()
-	self.channel.Init(self.options.Channel)
+	self.channel.Init(false, self.options.Channel)
 	self.rawServerURLs = rawServerURLs
 	self.ctx, self.cancel = context.WithCancel(context.Background())
 	go self.run()
@@ -83,11 +83,11 @@ func (self *Client) run() {
 			continue
 		}
 
-		if err := self.channel.Connect(self.ctx, connection); err != nil {
+		if err := self.channel.Establish(self.ctx, serverURL, connection); err != nil {
 			self.options.Logger.Error().Err(err).
 				Str("server_url", serverURL.String()).
 				Str("transport_id", self.channel.GetTransportID().String()).
-				Msg("client_channel_connect_failed")
+				Msg("client_channel_establish_failed")
 
 			if _, ok := err.(*channel.NetworkError); ok {
 				continue

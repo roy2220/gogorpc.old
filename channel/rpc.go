@@ -39,25 +39,6 @@ func (self *RPC) IsHandled() bool {
 	return self.internals.IsHandled()
 }
 
-type Metadata map[string][]byte
-
-func (self *Metadata) Set(key string, value []byte) {
-	if *self == nil {
-		*self = map[string][]byte{}
-	}
-
-	(*self)[key] = value
-}
-
-func (self Metadata) Clear(key string) {
-	delete(self, key)
-}
-
-func (self Metadata) Get(key string) ([]byte, bool) {
-	value, ok := self[key]
-	return value, ok
-}
-
 type RPCHandler func(rpc *RPC)
 
 type RPCPreparer interface {

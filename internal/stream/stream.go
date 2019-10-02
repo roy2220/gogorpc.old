@@ -21,17 +21,24 @@ import (
 type Stream struct {
 	stream
 
-	localConcurrency        int32
+	incomingConcurrency     int32
 	deques                  [2]deque.Deque
 	dequeOfPendingRequests  *deque.Deque
 	dequeOfPendingResponses *deque.Deque
 	isHungUp_               int32
-	pendingHangup           chan *protocol.Hangup
+	pendingHangup           chan *Hangup
 }
 
-func (self *Stream) Init(options *Options, dequeOfPendingRequests *deque.Deque, dequeOfPendingResponses *deque.Deque) *Stream {
+func (self *Stream) Init(
+	isServerSide bool,
+	options *Options,
+	transportID uuid.UUID,
+	dequeOfPendingRequests *deque.Deque,
+	dequeOfPendingResponses *deque.Deque,
+) *Stream {
+	self.isServerSide = isServerSide
 	self.options = options.Normalize()
-	self.transport.Init(self.options.Transport)
+	self.transport.Init(self.options.Transport, transportID)
 
 	if dequeOfPendingRequests == nil {
 		dequeOfPendingRequests = self.deques[0].Init(0)
@@ -43,7 +50,7 @@ func (self *Stream) Init(options *Options, dequeOfPendingRequests *deque.Deque, 
 
 	self.dequeOfPendingRequests = dequeOfPendingRequests
 	self.dequeOfPendingResponses = dequeOfPendingResponses
-	self.pendingHangup = make(chan *protocol.Hangup, 1)
+	self.pendingHangup = make(chan *Hangup, 1)
 	return self
 }
 
@@ -65,12 +72,21 @@ func (self *Stream) Close() error {
 	return err
 }
 
-func (self *Stream) Accept(ctx context.Context, connection net.Conn, handshaker Handshaker) (bool, error) {
-	ok, err := self.transport.Accept(ctx, connection, &passiveHandshaker{
+func (self *Stream) Establish(ctx context.Context, connection net.Conn, handshaker Handshaker) (bool, error) {
+	transportHandshaker_ := transportHandshaker{
 		Inner: handshaker,
 
 		stream: &self.stream,
-	})
+	}
+
+	var ok bool
+	var err error
+
+	if self.isServerSide {
+		ok, err = self.transport.PostAccept(ctx, connection, &transportHandshaker_)
+	} else {
+		ok, err = self.transport.PostConnect(ctx, connection, &transportHandshaker_)
+	}
 
 	if err != nil {
 		return false, err
@@ -83,33 +99,15 @@ func (self *Stream) Accept(ctx context.Context, connection net.Conn, handshaker 
 	return ok, nil
 }
 
-func (self *Stream) Connect(ctx context.Context, connection net.Conn, transportID uuid.UUID, handshaker Handshaker) (bool, error) {
-	ok, err := self.transport.Connect(ctx, connection, transportID, &activeHandshaker{
-		Inner: handshaker,
-
-		stream: &self.stream,
-	})
-
-	if err != nil {
-		return false, err
-	}
-
-	if err := self.adjust(); err != nil {
-		return false, err
-	}
-
-	return ok, nil
-}
-
-func (self *Stream) Process(ctx context.Context, messageProcessor MessageProcessor) error {
+func (self *Stream) Process(ctx context.Context, messageProcessor MessageProcessor, messageFilter MessageFilter) error {
 	errs := make(chan error, 2)
 	ctx, cancel := context.WithCancel(ctx)
 
 	go func() {
-		err := self.sendPackets(ctx, messageProcessor)
+		err := self.sendPackets(ctx, messageProcessor, messageFilter)
 		errs <- err
 
-		if _, ok := err.(*HangupError); ok {
+		if _, ok := err.(*Hangup); ok {
 			timer := time.NewTimer(self.options.ActiveHangupTimeout)
 
 			select {
@@ -125,7 +123,7 @@ func (self *Stream) Process(ctx context.Context, messageProcessor MessageProcess
 		cancel()
 	}()
 
-	errs <- self.receivePackets(ctx, messageProcessor, messageProcessor)
+	errs <- self.receivePackets(ctx, messageProcessor, messageFilter)
 	cancel()
 	err := <-errs
 	<-errs
@@ -171,57 +169,58 @@ func (self *Stream) SendResponse(responseHeader *protocol.ResponseHeader, respon
 }
 
 func (self *Stream) Abort(metadata Metadata) {
-	self.hangUp(HangupErrorAborted, metadata)
+	self.hangUp(HangupAborted, metadata)
 }
 
 func (self *Stream) adjust() error {
 	{
-		n := self.remoteConcurrencyLimit - self.dequeOfPendingRequests.GetMaxLength()
+		n := self.outgoingConcurrencyLimit - self.dequeOfPendingRequests.GetMaxLength()
 
 		if n < 0 {
 			return ErrConcurrencyOverflow
 		}
 
-		self.dequeOfPendingRequests.CommitNodesRemoval(n)
+		self.dequeOfPendingRequests.CommitNodesRemoval(n) // dequeOfPendingRequests.maxLength += n
 	}
 
 	{
-		n := self.localConcurrencyLimit - self.dequeOfPendingResponses.GetMaxLength()
+		n := self.incomingConcurrencyLimit - self.dequeOfPendingResponses.GetMaxLength()
 
 		if n < 0 {
 			return ErrConcurrencyOverflow
 		}
 
-		self.dequeOfPendingResponses.CommitNodesRemoval(n)
+		self.dequeOfPendingResponses.CommitNodesRemoval(n) // dequeOfPendingResponses.maxLength += n
 	}
 
 	return nil
 }
 
-func (self *Stream) receivePackets(ctx context.Context, messageFactory MessageFactory, messageHandler MessageHandler) error {
+func (self *Stream) receivePackets(ctx context.Context, messageProcessor MessageProcessor, messageFilter MessageFilter) error {
 	var packet Packet
 
 	for {
-		if err := self.peek(ctx, self.incomingKeepaliveInterval/2*3, messageFactory, &packet); err != nil {
+		if err := self.peek(ctx, self.incomingKeepaliveInterval/2*3, messageProcessor, &packet); err != nil {
 			return err
 		}
 
-		oldLocalConcurrency := int(atomic.LoadInt32(&self.localConcurrency))
-		newLocalConcurrency := oldLocalConcurrency
+		oldIncomingConcurrency := int(atomic.LoadInt32(&self.incomingConcurrency))
+		newIncomingConcurrency := oldIncomingConcurrency
 		handledResponseCount := 0
 
 		if err := self.handlePacket(
 			ctx,
 			&packet,
-			messageHandler,
-			&newLocalConcurrency,
+			messageFilter,
+			messageProcessor,
+			&newIncomingConcurrency,
 			&handledResponseCount,
 		); err != nil {
 			return err
 		}
 
 		for {
-			ok, err := self.peekNext(messageFactory, &packet)
+			ok, err := self.peekNext(messageProcessor, &packet)
 
 			if err != nil {
 				return err
@@ -234,15 +233,16 @@ func (self *Stream) receivePackets(ctx context.Context, messageFactory MessageFa
 			if err := self.handlePacket(
 				ctx,
 				&packet,
-				messageHandler,
-				&newLocalConcurrency,
+				messageFilter,
+				messageProcessor,
+				&newIncomingConcurrency,
 				&handledResponseCount,
 			); err != nil {
 				return err
 			}
 		}
 
-		atomic.AddInt32(&self.localConcurrency, int32(newLocalConcurrency-oldLocalConcurrency))
+		atomic.AddInt32(&self.incomingConcurrency, int32(newIncomingConcurrency-oldIncomingConcurrency))
 		self.dequeOfPendingRequests.CommitNodesRemoval(handledResponseCount)
 	}
 }
@@ -254,7 +254,7 @@ func (self *Stream) peek(ctx context.Context, timeout time.Duration, messageFact
 		return err
 	}
 
-	self.loadPacket(packet, messageFactory, &transportPacket)
+	self.loadPacket(packet, &transportPacket, messageFactory)
 	return nil
 }
 
@@ -270,11 +270,11 @@ func (self *Stream) peekNext(messageFactory MessageFactory, packet *Packet) (boo
 		return false, nil
 	}
 
-	self.loadPacket(packet, messageFactory, &transportPacket)
+	self.loadPacket(packet, &transportPacket, messageFactory)
 	return true, nil
 }
 
-func (self *Stream) loadPacket(packet *Packet, messageFactory MessageFactory, transportPacket *transport.Packet) {
+func (self *Stream) loadPacket(packet *Packet, transportPacket *transport.Packet, messageFactory MessageFactory) {
 	packet.messageType = transportPacket.Header.MessageType
 
 	switch packet.messageType {
@@ -356,9 +356,15 @@ func (self *Stream) loadPacket(packet *Packet, messageFactory MessageFactory, tr
 			packet.Err = packet.Message.Unmarshal(rawPacket[responseOffset:])
 		}
 	case protocol.MESSAGE_HANGUP:
-		hangup := &packet.hangup
+		hangup := &packet.Hangup
 		hangup.Reset()
-		packet.Err = hangup.Unmarshal(transportPacket.Payload)
+
+		if hangup.Unmarshal(transportPacket.Payload) != nil {
+			packet.Err = errBadPacket
+			return
+		}
+
+		packet.Err = nil
 	default:
 		packet.Err = errBadPacket
 	}
@@ -367,31 +373,52 @@ func (self *Stream) loadPacket(packet *Packet, messageFactory MessageFactory, tr
 func (self *Stream) handlePacket(
 	ctx context.Context,
 	packet *Packet,
+	incomingMessageFilter IncomingMessageFilter,
 	messageHandler MessageHandler,
-	localConcurrency *int,
+	incomingConcurrency *int,
 	handledResponseCount *int,
 ) error {
 	if packet.Err == errBadPacket {
-		self.hangUp(HangupErrorBadIncomingPacket, nil)
+		self.hangUp(HangupBadIncomingPacket, nil)
 		return nil
 	}
 
 	switch packet.messageType {
 	case protocol.MESSAGE_KEEPALIVE:
-		messageHandler.HandleKeepalive(ctx, packet)
-	case protocol.MESSAGE_REQUEST:
+		if packet.Err == nil {
+			incomingMessageFilter.FilterIncomingKeepalive(packet)
+		}
+
 		if packet.Err == ErrPacketDropped {
 			return nil
 		}
 
-		if *localConcurrency == self.localConcurrencyLimit {
-			self.hangUp(HangupErrorTooManyIncomingRequests, nil)
+		messageHandler.HandleKeepalive(ctx, packet)
+
+		if packet.Err == nil {
+			self.transport.ShrinkInputBuffer()
+		}
+	case protocol.MESSAGE_REQUEST:
+		if packet.Err == nil {
+			incomingMessageFilter.FilterIncomingRequest(packet)
+		}
+
+		if packet.Err == ErrPacketDropped {
+			return nil
+		}
+
+		if *incomingConcurrency == self.incomingConcurrencyLimit {
+			self.hangUp(HangupTooManyIncomingRequests, nil)
 			return nil
 		}
 
 		messageHandler.HandleRequest(ctx, packet)
-		*localConcurrency++
+		*incomingConcurrency++
 	case protocol.MESSAGE_RESPONSE:
+		if packet.Err == nil {
+			incomingMessageFilter.FilterIncomingResponse(packet)
+		}
+
 		if packet.Err == ErrPacketDropped {
 			return nil
 		}
@@ -399,11 +426,24 @@ func (self *Stream) handlePacket(
 		messageHandler.HandleResponse(ctx, packet)
 		*handledResponseCount++
 	case protocol.MESSAGE_HANGUP:
-		self.options.Logger.Info().Err(packet.Err).
-			Str("transport_id", self.GetTransportID().String()).
-			Msg("stream_passive_hangup")
-		hangup := &packet.hangup
-		return &HangupError{hangup.ErrorCode, true, hangup.Metadata}
+		incomingMessageFilter.FilterIncomingHangup(packet)
+
+		if packet.Err == ErrPacketDropped {
+			return nil
+		}
+
+		if packet.Err == nil {
+			self.options.Logger.Info().Err(packet.Err).
+				Str("transport_id", self.GetTransportID().String()).
+				Msg("stream_passive_hangup")
+			hangup := &packet.Hangup
+
+			return &Hangup{
+				IsPassive: true,
+				Code:      hangup.Code,
+				Metadata:  hangup.Metadata,
+			}
+		}
 	default:
 		panic("unreachable code")
 	}
@@ -412,22 +452,23 @@ func (self *Stream) handlePacket(
 		self.options.Logger.Error().Err(packet.Err).
 			Str("transport_id", self.GetTransportID().String()).
 			Msg("stream_system_error")
-		self.hangUp(HangupErrorSystem, nil)
+		self.hangUp(HangupSystem, nil)
 	}
 
 	return nil
 }
 
-func (self *Stream) hangUp(hangupErrorCode HangupErrorCode, metadata Metadata) {
+func (self *Stream) hangUp(hangupCode HangupCode, metadata Metadata) {
 	if atomic.CompareAndSwapInt32(&self.isHungUp_, 0, 1) {
-		self.pendingHangup <- &protocol.Hangup{
-			ErrorCode: hangupErrorCode,
+		self.pendingHangup <- &Hangup{
+			IsPassive: false,
+			Code:      hangupCode,
 			Metadata:  metadata,
 		}
 	}
 }
 
-func (self *Stream) sendPackets(ctx context.Context, messageEmitter MessageEmitter) error {
+func (self *Stream) sendPackets(ctx context.Context, messageProcessor MessageProcessor, messageFilter MessageFilter) error {
 	errs := make(chan error, 2)
 	ctx, cancel := context.WithCancel(ctx)
 	pendingRequests := self.makePendingRequests(errs, ctx, cancel)
@@ -447,7 +488,7 @@ func (self *Stream) sendPackets(ctx context.Context, messageEmitter MessageEmitt
 			return err
 		}
 
-		err = self.emitPackets(pendingRequests2, pendingResponses2, pendingHangup, messageEmitter)
+		err = self.emitPackets(pendingRequests2, pendingResponses2, pendingHangup, messageProcessor, messageFilter)
 
 		if err != nil {
 			if pendingRequests2 != nil {
@@ -545,10 +586,10 @@ func (self *Stream) checkPendingMessages(
 	pendingRequests chan *pendingMessages,
 	pendingResponses chan *pendingMessages,
 	timeout time.Duration,
-) (*pendingMessages, *pendingMessages, *protocol.Hangup, error) {
+) (*pendingMessages, *pendingMessages, *Hangup, error) {
 	var pendingRequests2 *pendingMessages
 	var pendingResponses2 *pendingMessages
-	var pendingHangup *protocol.Hangup
+	var pendingHangup *Hangup
 	n := 0
 
 	select {
@@ -592,11 +633,12 @@ func (self *Stream) checkPendingMessages(
 func (self *Stream) emitPackets(
 	pendingRequests *pendingMessages,
 	pendingResponses *pendingMessages,
-	pendingHangup *protocol.Hangup,
+	pendingHangup *Hangup,
 	messageEmitter MessageEmitter,
+	outgoingMessageFilter OutgoingMessageFilter,
 ) error {
 	var packet Packet
-	packetErr := error(nil)
+	err := error(nil)
 	emittedPacketCount := 0
 
 	if pendingRequests != nil {
@@ -614,15 +656,18 @@ func (self *Stream) emitPackets(
 			if deadline := pendingRequest.Header.Deadline; deadline != 0 && deadline <= now {
 				packet.Err = ErrRequestExpired
 				messageEmitter.PostEmitRequest(&packet)
+
+				if packet.Err != nil && packet.Err != ErrPacketDropped {
+					err = packet.Err
+				}
 			} else {
-				self.write(&packet, messageEmitter)
+				err = self.write(&packet, messageEmitter, outgoingMessageFilter)
 			}
 
-			if packet.Err != nil && packet.Err != ErrPacketDropped {
-				self.options.Logger.Error().Err(packet.Err).
+			if err != nil {
+				self.options.Logger.Error().Err(err).
 					Str("transport_id", self.GetTransportID().String()).
 					Msg("stream_system_error")
-				packetErr = packet.Err
 				continue
 			}
 
@@ -631,7 +676,7 @@ func (self *Stream) emitPackets(
 			pendingRequestPool.Put(pendingRequest)
 			pendingRequests.ListLength--
 
-			if packet.Err == nil {
+			if err == nil {
 				emittedRequestCount++
 			} else {
 				droppedRequestCount++
@@ -652,13 +697,12 @@ func (self *Stream) emitPackets(
 			packet.messageType = protocol.MESSAGE_RESPONSE
 			packet.ResponseHeader = pendingResponse.Header
 			packet.Message = pendingResponse.Payload
-			self.write(&packet, messageEmitter)
+			err = self.write(&packet, messageEmitter, outgoingMessageFilter)
 
-			if packet.Err != nil && packet.Err != ErrPacketDropped {
-				self.options.Logger.Error().Err(packet.Err).
+			if err != nil {
+				self.options.Logger.Error().Err(err).
 					Str("transport_id", self.GetTransportID().String()).
 					Msg("stream_system_error")
-				packetErr = packet.Err
 				continue
 			}
 
@@ -667,7 +711,7 @@ func (self *Stream) emitPackets(
 			pendingResponsePool.Put(pendingResponse)
 			pendingResponses.ListLength--
 
-			if packet.Err == nil {
+			if err == nil {
 				emittedResponseCount++
 			} else {
 				droppedResponseCount++
@@ -675,97 +719,131 @@ func (self *Stream) emitPackets(
 		}
 
 		self.dequeOfPendingResponses.CommitNodesRemoval(emittedResponseCount + droppedResponseCount)
-		atomic.AddInt32(&self.localConcurrency, -int32(emittedResponseCount))
+		atomic.AddInt32(&self.incomingConcurrency, -int32(emittedResponseCount))
 		emittedPacketCount += emittedResponseCount
 	}
 
 	if pendingHangup != nil {
-		self.options.Logger.Info().Err(packet.Err).
+		self.options.Logger.Info().
 			Str("transport_id", self.GetTransportID().String()).
 			Msg("stream_active_hangup")
 		packet.messageType = protocol.MESSAGE_HANGUP
-		packet.hangup = *pendingHangup
-		self.write(&packet, messageEmitter)
-		return &HangupError{pendingHangup.ErrorCode, false, pendingHangup.Metadata}
+		packet.Hangup.Code = pendingHangup.Code
+		packet.Hangup.Metadata = pendingHangup.Metadata
+		err = self.write(&packet, messageEmitter, outgoingMessageFilter)
+
+		if err != nil {
+			return err
+		}
+
+		return pendingHangup
 	}
 
-	if packetErr == nil && emittedPacketCount == 0 {
+	if err == nil && emittedPacketCount == 0 {
 		packet.messageType = protocol.MESSAGE_KEEPALIVE
-		self.write(&packet, messageEmitter)
-		packetErr = packet.Err
+		err = self.write(&packet, messageEmitter, outgoingMessageFilter)
 	}
 
-	if packetErr != nil {
-		if packetErr == transport.ErrPacketTooLarge {
-			self.hangUp(HangupErrorOutgoingPacketTooLarge, nil)
+	if err != nil {
+		if err == transport.ErrPacketTooLarge {
+			self.hangUp(HangupOutgoingPacketTooLarge, nil)
 		} else {
-			self.hangUp(HangupErrorSystem, nil)
+			self.hangUp(HangupSystem, nil)
 		}
 	}
 
 	return nil
 }
 
-func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter) {
+func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter, outgoingMessageFilter OutgoingMessageFilter) error {
 	transportPacket := transport.Packet{
 		Header: protocol.PacketHeader{
 			MessageType: packet.messageType,
 		},
 	}
 
+	packet.Err = nil
+
 	switch packet.messageType {
 	case protocol.MESSAGE_KEEPALIVE:
 		packet.Message = nil
-		packet.Err = nil
 		messageEmitter.EmitKeepalive(packet)
 
 		if packet.Err == nil {
-			transportPacket.PayloadSize = packet.Message.Size()
+			outgoingMessageFilter.FilterOutgoingKeepalive(packet)
 
-			packet.Err = self.transport.Write(&transportPacket, func(buffer []byte) error {
-				_, err := packet.Message.MarshalTo(buffer)
-				return err
-			})
+			if packet.Err == nil {
+				transportPacket.PayloadSize = packet.Message.Size()
+
+				packet.Err = self.transport.Write(&transportPacket, func(buffer []byte) error {
+					_, err := packet.Message.MarshalTo(buffer)
+					return err
+				})
+
+				if packet.Err == nil {
+					self.transport.ShrinkOutputBuffer()
+				}
+			}
 		}
 	case protocol.MESSAGE_REQUEST:
-		requestHeader := &packet.RequestHeader
-		requestHeaderSize := requestHeader.Size()
-		transportPacket.PayloadSize = 4 + requestHeaderSize + packet.Message.Size()
+		outgoingMessageFilter.FilterOutgoingRequest(packet)
 
-		callback := func(buffer []byte) error {
-			binary.BigEndian.PutUint32(buffer, uint32(requestHeaderSize))
-			requestHeader.MarshalTo(buffer[4:])
-			_, err := packet.Message.MarshalTo(buffer[4+requestHeaderSize:])
-			return err
+		if packet.Err == nil {
+			requestHeader := &packet.RequestHeader
+			requestHeaderSize := requestHeader.Size()
+			transportPacket.PayloadSize = 4 + requestHeaderSize + packet.Message.Size()
+
+			callback := func(buffer []byte) error {
+				binary.BigEndian.PutUint32(buffer, uint32(requestHeaderSize))
+				requestHeader.MarshalTo(buffer[4:])
+				_, err := packet.Message.MarshalTo(buffer[4+requestHeaderSize:])
+				return err
+			}
+
+			packet.Err = self.transport.Write(&transportPacket, callback)
 		}
 
-		packet.Err = self.transport.Write(&transportPacket, callback)
 		messageEmitter.PostEmitRequest(packet)
 	case protocol.MESSAGE_RESPONSE:
-		responseHeader := &packet.ResponseHeader
-		responseHeaderSize := responseHeader.Size()
-		transportPacket.PayloadSize = 4 + responseHeaderSize + packet.Message.Size()
+		outgoingMessageFilter.FilterOutgoingResponse(packet)
 
-		callback := func(buffer []byte) error {
-			binary.BigEndian.PutUint32(buffer, uint32(responseHeaderSize))
-			responseHeader.MarshalTo(buffer[4:])
-			_, err := packet.Message.MarshalTo(buffer[4+responseHeaderSize:])
-			return err
+		if packet.Err == nil {
+			responseHeader := &packet.ResponseHeader
+			responseHeaderSize := responseHeader.Size()
+			transportPacket.PayloadSize = 4 + responseHeaderSize + packet.Message.Size()
+
+			callback := func(buffer []byte) error {
+				binary.BigEndian.PutUint32(buffer, uint32(responseHeaderSize))
+				responseHeader.MarshalTo(buffer[4:])
+				_, err := packet.Message.MarshalTo(buffer[4+responseHeaderSize:])
+				return err
+			}
+
+			packet.Err = self.transport.Write(&transportPacket, callback)
 		}
 
-		packet.Err = self.transport.Write(&transportPacket, callback)
 		messageEmitter.PostEmitResponse(packet)
 	case protocol.MESSAGE_HANGUP:
-		hangup := &packet.hangup
-		transportPacket.PayloadSize = hangup.Size()
+		outgoingMessageFilter.FilterOutgoingHangup(packet)
 
-		packet.Err = self.transport.Write(&transportPacket, func(buffer []byte) error {
-			hangup.MarshalTo(buffer)
-			return nil
-		})
+		if packet.Err == nil {
+			hangup := &packet.Hangup
+			transportPacket.PayloadSize = hangup.Size()
+
+			packet.Err = self.transport.Write(&transportPacket, func(buffer []byte) error {
+				hangup.MarshalTo(buffer)
+				return nil
+			})
+		}
 	default:
 		panic("unreachable code")
 	}
+
+	if packet.Err != nil && packet.Err != ErrPacketDropped {
+		return packet.Err
+	}
+
+	return nil
 }
 
 func (self *Stream) flush(ctx context.Context, timeout time.Duration) error {
@@ -774,98 +852,6 @@ func (self *Stream) flush(ctx context.Context, timeout time.Duration) error {
 
 func (self *Stream) isHungUp() bool {
 	return atomic.LoadInt32(&self.isHungUp_) == 1
-}
-
-type MessageProcessor interface {
-	MessageFactory
-	MessageHandler
-	MessageEmitter
-}
-
-type MessageFactory interface {
-	// Input:
-	//   packet.KeepaliveHeader
-	// Output:
-	//   packet.Message
-	//   packet.Err
-	NewKeepalive(packet *Packet)
-
-	// Input:
-	//   packet.RequestHeader
-	// Output:
-	//   packet.Message
-	//   packet.Err
-	NewRequest(packet *Packet)
-
-	// Input:
-	//   packet.ResponseHeader
-	// Output:
-	//   packet.Message
-	//   packet.Err
-	NewResponse(packet *Packet)
-}
-
-type MessageHandler interface {
-	// Input:
-	//   packet.KeepaliveHeader
-	//   packet.Message
-	//   packet.Err
-	// Output:
-	//   packet.Err
-	HandleKeepalive(ctx context.Context, packet *Packet)
-
-	// Input:
-	//   packet.RequestHeader
-	//   packet.Message
-	//   packet.Err
-	// Output:
-	//   packet.Err
-	HandleRequest(ctx context.Context, packet *Packet)
-
-	// Input:
-	//   packet.ResponseHeader
-	//   packet.Message
-	//   packet.Err
-	// Output:
-	//   packet.Err
-	HandleResponse(ctx context.Context, packet *Packet)
-}
-
-type MessageEmitter interface {
-	// Output:
-	//   packet.Message
-	//   packet.Err
-	EmitKeepalive(packet *Packet)
-
-	// Input:
-	//   packet.RequestHeader
-	//   packet.Message
-	//   packet.Err
-	// Output:
-	//   packet.RequestHeader
-	//   packet.Message
-	//   packet.Err
-	PostEmitRequest(packet *Packet)
-
-	// Input:
-	//   packet.ResponseHeader
-	//   packet.Message
-	//   packet.Err
-	// Output:
-	//   packet.ResponseHeader
-	//   packet.Message
-	//   packet.Err
-	PostEmitResponse(packet *Packet)
-}
-
-type Packet struct {
-	RequestHeader  protocol.RequestHeader
-	ResponseHeader protocol.ResponseHeader
-	Message        Message
-	Err            error
-
-	messageType protocol.MessageType
-	hangup      protocol.Hangup
 }
 
 type PendingRequest struct {
@@ -883,7 +869,6 @@ type PendingResponse struct {
 var (
 	ErrConcurrencyOverflow = errors.New("gogorpc/stream: concurrency overflow")
 	ErrClosed              = errors.New("gogorpc/stream: closed")
-	ErrPacketDropped       = errors.New("gogorpc/stream: packet dropped")
 	ErrRequestExpired      = errors.New("gogorpc/stream: request expired")
 )
 
@@ -910,16 +895,21 @@ func PutPooledPendingResponses(listOfPendingResponses *list.List) {
 }
 
 type stream struct {
+	isServerSide              bool
 	options                   *Options
 	transport                 transport.Transport
 	incomingKeepaliveInterval time.Duration
 	outgoingKeepaliveInterval time.Duration
-	localConcurrencyLimit     int
-	remoteConcurrencyLimit    int
+	incomingConcurrencyLimit  int
+	outgoingConcurrencyLimit  int
 }
 
 func (self *stream) GetTransportID() uuid.UUID {
 	return self.transport.GetID()
+}
+
+func (self *stream) IsServerSide() bool {
+	return self.isServerSide
 }
 
 type pendingMessages struct {

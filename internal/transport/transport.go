@@ -18,17 +18,18 @@ import (
 
 type Transport struct {
 	options               *Options
+	id                    uuid.UUID
 	connection            connection.Connection
 	inputByteStream       bytestream.ByteStream
 	outputByteStream      bytestream.ByteStream
-	id                    uuid.UUID
 	maxIncomingPacketSize int
 	maxOutgoingPacketSize int
 	peekedInputDataSize   int
 }
 
-func (self *Transport) Init(options *Options) *Transport {
+func (self *Transport) Init(options *Options, id uuid.UUID) *Transport {
 	self.options = options.Normalize()
+	self.id = id
 	return self
 }
 
@@ -40,25 +41,26 @@ func (self *Transport) Close() error {
 	return self.connection.Close()
 }
 
-func (self *Transport) Accept(ctx context.Context, rawConnection net.Conn, handshaker Handshaker) (bool, error) {
+func (self *Transport) PostAccept(ctx context.Context, rawConnection net.Conn, handshaker Handshaker) (bool, error) {
 	clientAddress := rawConnection.RemoteAddr().String()
 	self.options.Logger.Info().
 		Str("client_address", clientAddress).
 		Dur("handshake_timeout", self.options.HandshakeTimeout).
 		Int("min_input_buffer_size", self.options.MinInputBufferSize).
 		Int("max_input_buffer_size", self.options.MaxInputBufferSize).
-		Msg("transport_accepting")
+		Msg("transport_post_accepting")
 	self.connection.Init(rawConnection)
 	self.inputByteStream.ReserveBuffer(self.options.MinInputBufferSize)
 	deadline := makeDeadline(self.options.HandshakeTimeout)
 	var handshakeHeader protocol.TransportHandshakeHeader
 
 	ok, err := self.receiveHandshake(
+		true,
 		ctx,
 		deadline,
 		&handshakeHeader,
 		handshaker.HandleHandshake,
-		self.options.Logger.Info().Str("side", "server-side").Str("peer_address", clientAddress),
+		clientAddress,
 	)
 
 	if err != nil {
@@ -82,12 +84,13 @@ func (self *Transport) Accept(ctx context.Context, rawConnection net.Conn, hands
 	self.maxOutgoingPacketSize = int(handshakeHeader.MaxIncomingPacketSize)
 
 	if err := self.sendHandshake(
+		true,
 		ctx,
 		deadline,
 		&handshakeHeader,
 		handshaker.SizeHandshake(),
 		handshaker.EmitHandshake,
-		self.options.Logger.Info().Str("side", "server-side").Str("peer_address", clientAddress),
+		clientAddress,
 	); err != nil {
 		self.connection.Close()
 		return false, err
@@ -96,26 +99,22 @@ func (self *Transport) Accept(ctx context.Context, rawConnection net.Conn, hands
 	return ok, nil
 }
 
-func (self *Transport) Connect(ctx context.Context, rawConnection net.Conn, id uuid.UUID, handshaker Handshaker) (bool, error) {
+func (self *Transport) PostConnect(ctx context.Context, rawConnection net.Conn, handshaker Handshaker) (bool, error) {
 	serverAddress := rawConnection.RemoteAddr().String()
 	self.options.Logger.Info().
 		Str("server_address", serverAddress).
 		Dur("handshake_timeout", self.options.HandshakeTimeout).
 		Int("min_input_buffer_size", self.options.MinInputBufferSize).
 		Int("max_input_buffer_size", self.options.MaxInputBufferSize).
-		Msg("transport_connecting")
+		Msg("transport_post_connecting")
 	self.connection.Init(rawConnection)
 	self.inputByteStream.ReserveBuffer(self.options.MinInputBufferSize)
 	deadline := makeDeadline(self.options.HandshakeTimeout)
 
-	if id.IsZero() {
-		id = uuid.GenerateUUID4Fast()
-	}
-
 	handshakeHeader := protocol.TransportHandshakeHeader{
 		Id: protocol.UUID{
-			Low:  id[0],
-			High: id[1],
+			Low:  self.id[0],
+			High: self.id[1],
 		},
 
 		MaxIncomingPacketSize: int32(self.options.MaxIncomingPacketSize),
@@ -123,25 +122,25 @@ func (self *Transport) Connect(ctx context.Context, rawConnection net.Conn, id u
 	}
 
 	if err := self.sendHandshake(
+		false,
 		ctx,
 		deadline,
 		&handshakeHeader,
 		handshaker.SizeHandshake(),
 		handshaker.EmitHandshake,
-		self.options.Logger.Info().Str("side", "client-side").Str("peer_address", serverAddress),
+		serverAddress,
 	); err != nil {
 		self.connection.Close()
 		return false, err
 	}
 
-	handshakeHeader.Reset()
-
 	ok, err := self.receiveHandshake(
+		false,
 		ctx,
 		deadline,
 		&handshakeHeader,
 		handshaker.HandleHandshake,
-		self.options.Logger.Info().Str("side", "client-side").Str("peer_address", serverAddress),
+		serverAddress,
 	)
 
 	if err != nil {
@@ -270,6 +269,10 @@ func (self *Transport) PeekNext(packet *Packet) (bool, error) {
 	return true, nil
 }
 
+func (self *Transport) ShrinkInputBuffer() {
+	self.inputByteStream.Shrink(self.options.MinInputBufferSize)
+}
+
 func (self *Transport) Write(packet *Packet, callback func([]byte) error) error {
 	packetHeaderSize := packet.Header.Size()
 	packetSize := 8 + packetHeaderSize + packet.PayloadSize
@@ -302,16 +305,21 @@ func (self *Transport) Flush(ctx context.Context, timeout time.Duration) error {
 	return nil
 }
 
+func (self *Transport) ShrinkOutputBuffer() {
+	self.outputByteStream.Shrink(0)
+}
+
 func (self *Transport) GetID() uuid.UUID {
 	return self.id
 }
 
 func (self *Transport) receiveHandshake(
+	isServerSide bool,
 	ctx context.Context,
 	deadline time.Time,
 	handshakeHeader *protocol.TransportHandshakeHeader,
 	handshakeHandler func(context.Context, []byte) (bool, error),
-	logEvent *zerolog.Event,
+	peerAddress string,
 ) (bool, error) {
 	self.connection.PreRead(ctx, deadline)
 
@@ -365,12 +373,28 @@ func (self *Transport) receiveHandshake(
 		return false, ErrBadHandshake
 	}
 
+	handshakeHeader.Reset()
+
 	if handshakeHeader.Unmarshal(rawHandshake[8:handshakePayloadOffset]) != nil {
 		return false, ErrBadHandshake
 	}
 
-	self.id = uuid.UUID{handshakeHeader.Id.Low, handshakeHeader.Id.High}
-	logEvent.Int("size", len(rawHandshake)).
+	var logEvent *zerolog.Event
+
+	if isServerSide {
+		logEvent = self.options.Logger.Info().Str("side", "server-side")
+
+		if self.id.IsZero() {
+			self.id = uuid.UUID{handshakeHeader.Id.Low, handshakeHeader.Id.High}
+		} else {
+			handshakeHeader.Id.Low, handshakeHeader.Id.High = self.id[0], self.id[1]
+		}
+	} else {
+		logEvent = self.options.Logger.Info().Str("side", "client-side")
+	}
+
+	logEvent.Str("peer_address", peerAddress).
+		Int("size", len(rawHandshake)).
 		Int("header_size", handshakeHeaderSize).
 		Str("id", self.id.String()).
 		Int32("max_incoming_packet_size", handshakeHeader.MaxIncomingPacketSize).
@@ -384,27 +408,40 @@ func (self *Transport) receiveHandshake(
 }
 
 func (self *Transport) sendHandshake(
+	isServerSide bool,
 	ctx context.Context,
 	deadline time.Time,
 	handshakeHeader *protocol.TransportHandshakeHeader,
 	handshakePayloadSize int,
 	handshakeEmitter func([]byte) error,
-	logEvent *zerolog.Event,
+	peerAddress string,
 ) error {
-	handshakeHeaderSize := handshakeHeader.Size()
-	handshakeSize := 8 + handshakeHeaderSize + handshakePayloadSize
+	var logEvent *zerolog.Event
 
-	if handshakeSize > minMaxPacketSize {
-		return ErrHandshakeTooLarge
+	if isServerSide {
+		logEvent = self.options.Logger.Info().Str("side", "server-side")
+	} else {
+		logEvent = self.options.Logger.Info().Str("side", "client-side")
+
+		if self.id.IsZero() {
+			self.id = uuid.GenerateUUID4Fast()
+			handshakeHeader.Id.Low, handshakeHeader.Id.High = self.id[0], self.id[1]
+		}
 	}
 
-	self.id = uuid.UUID{handshakeHeader.Id.Low, handshakeHeader.Id.High}
-	logEvent.Int("size", handshakeSize).
+	handshakeHeaderSize := handshakeHeader.Size()
+	handshakeSize := 8 + handshakeHeaderSize + handshakePayloadSize
+	logEvent.Str("peer_address", peerAddress).
+		Int("size", handshakeSize).
 		Int("header_size", handshakeHeaderSize).
 		Str("id", self.id.String()).
 		Int32("max_incoming_packet_size", handshakeHeader.MaxIncomingPacketSize).
 		Int32("max_outgoing_packet_size", handshakeHeader.MaxOutgoingPacketSize).
 		Msg("transport_outgoing_handshake")
+
+	if handshakeSize > minMaxPacketSize {
+		return ErrHandshakeTooLarge
+	}
 
 	if err := self.outputByteStream.WriteDirectly(handshakeSize, func(buffer []byte) error {
 		binary.BigEndian.PutUint32(buffer, uint32(handshakeSize))
@@ -426,12 +463,12 @@ func (self *Transport) sendHandshake(
 }
 
 func (self *Transport) skip() {
-	bufferSize := self.inputByteStream.GetBufferSize()
+	bufferIsInsufficient := self.inputByteStream.GetBufferSize() == 0
 	self.inputByteStream.Skip(self.peekedInputDataSize)
 
-	if bufferSize == 0 {
+	if bufferIsInsufficient {
 		if self.inputByteStream.GetSize() < self.options.MaxInputBufferSize {
-			self.inputByteStream.ReserveBuffer(self.inputByteStream.GetBufferSize() + 1)
+			self.inputByteStream.Expand()
 		}
 	}
 

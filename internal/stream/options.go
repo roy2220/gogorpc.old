@@ -15,8 +15,8 @@ type Options struct {
 	ActiveHangupTimeout       time.Duration
 	IncomingKeepaliveInterval time.Duration
 	OutgoingKeepaliveInterval time.Duration
-	LocalConcurrencyLimit     int
-	RemoteConcurrencyLimit    int
+	IncomingConcurrencyLimit  int
+	OutgoingConcurrencyLimit  int
 
 	normalizeOnce sync.Once
 }
@@ -36,8 +36,8 @@ func (self *Options) Normalize() *Options {
 		normalizeDurValue(&self.ActiveHangupTimeout, defaultActiveHangupTimeout, minActiveHangupTimeout, maxActiveHangupTimeout)
 		normalizeDurValue(&self.IncomingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
 		normalizeDurValue(&self.OutgoingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
-		normalizeIntValue(&self.LocalConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
-		normalizeIntValue(&self.RemoteConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
+		normalizeIntValue(&self.IncomingConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
+		normalizeIntValue(&self.OutgoingConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
 	})
 
 	return self

@@ -18,9 +18,9 @@ import (
 func TestPingAndPong(t *testing.T) {
 	const N = 4000
 	opts := Options{Stream: &StreamOptions{
-		LocalConcurrencyLimit:  100,
-		RemoteConcurrencyLimit: 100,
-		Transport:              &transport.Options{Logger: &logger},
+		IncomingConcurrencyLimit: 100,
+		OutgoingConcurrencyLimit: 100,
+		Transport:                &transport.Options{Logger: &logger},
 	}}
 	opts.BuildMethod("service1", "method1").
 		SetRequestFactory(NewRawMessage).
@@ -95,23 +95,27 @@ func TestPingAndPong(t *testing.T) {
 func TestBadHandshake(t *testing.T) {
 	testSetup2(
 		t,
-		&Options{Handshaker: testHandshaker{
-			CbNewHandshake: func() Message {
-				return new(RawMessage)
-			},
-			CbHandleHandshake: func(ctx context.Context, hp Message) (bool, error) {
-				if string(*hp.(*RawMessage)) == "false" {
-					return false, nil
-				}
-				return true, nil
-			},
-		}.Init()},
-		&Options{Handshaker: testHandshaker{
-			CbEmitHandshake: func() (Message, error) {
-				msg := RawMessage("false")
-				return &msg, nil
-			},
-		}.Init()},
+		&Options{ExtensionFactory: testExtension{
+			Handshaker: testHandshaker{
+				CbNewHandshake: func() Message {
+					return new(RawMessage)
+				},
+				CbHandleHandshake: func(ctx context.Context, hp Message) (bool, error) {
+					if string(*hp.(*RawMessage)) == "false" {
+						return false, nil
+					}
+					return true, nil
+				},
+			}.Init(),
+		}.Factory()},
+		&Options{ExtensionFactory: testExtension{
+			Handshaker: testHandshaker{
+				CbEmitHandshake: func() (Message, error) {
+					msg := RawMessage("false")
+					return &msg, nil
+				},
+			}.Init(),
+		}.Factory()},
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			for i := 0; i < 10; i++ {
 				rpc := RPC{
@@ -179,11 +183,18 @@ func TestBroken(t *testing.T) {
 }
 
 func TestReconnection1(t *testing.T) {
+	opts := Options{
+		Stream: &StreamOptions{
+			Transport: &TransportOptions{
+				Logger: &logger,
+			},
+		},
+	}
 	f := false
 	testSetup2(
 		t,
-		&Options{},
-		&Options{},
+		&opts,
+		&opts,
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			wg := sync.WaitGroup{}
 			for i := 0; i < 10; i++ {
@@ -225,10 +236,17 @@ func TestReconnection1(t *testing.T) {
 }
 
 func TestReconnection2(t *testing.T) {
+	opts := Options{
+		Stream: &StreamOptions{
+			Transport: &TransportOptions{
+				Logger: &logger,
+			},
+		},
+	}
 	testSetup2(
 		t,
-		&Options{},
-		&Options{},
+		&opts,
+		&opts,
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			wg := sync.WaitGroup{}
 			for i := 0; i < 10; i++ {
@@ -366,7 +384,7 @@ func testSetup2(
 		t,
 		func(ctx context.Context, makeConn func() net.Conn) bool {
 			conn := makeConn()
-			cn := new(Channel).Init(opts1)
+			cn := new(Channel).Init(false, opts1)
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 			go func(conn net.Conn) {
@@ -376,7 +394,7 @@ func testSetup2(
 					if i >= 0 {
 						conn = makeConn()
 					}
-					if err := cn.Connect(ctx, conn); err != nil {
+					if err := cn.Establish(ctx, nil, conn); err != nil {
 						t.Log(err)
 						continue
 					}
@@ -391,13 +409,13 @@ func testSetup2(
 			return cb1(ctx, cn, conn)
 		},
 		func(ctx context.Context, conn net.Conn) bool {
-			cn := new(Channel).Init(opts2)
+			cn := new(Channel).Init(true, opts2)
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				defer cn.Close()
-				if err := cn.Accept(ctx, conn); err != nil {
+				if err := cn.Establish(ctx, nil, conn); err != nil {
 					t.Log(err)
 					return
 				}
@@ -450,6 +468,31 @@ func testSetup(
 		if !cb2(ctx, conn) {
 			break
 		}
+	}
+}
+
+type testExtension struct {
+	Listener
+	Handshaker
+	Keepaliver
+	MessageFilter
+}
+
+func (s testExtension) Factory() func(bool) Extension {
+	return func(bool) Extension {
+		if s.Listener == nil {
+			s.Listener = DummyListener{}
+		}
+		if s.Handshaker == nil {
+			s.Handshaker = DummyHandshaker{}
+		}
+		if s.Keepaliver == nil {
+			s.Keepaliver = DummyKeepaliver{}
+		}
+		if s.MessageFilter == nil {
+			s.MessageFilter = DummyMessageFilter{}
+		}
+		return s
 	}
 }
 

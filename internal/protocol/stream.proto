@@ -24,19 +24,19 @@ enum RPCErrorType {
     RPC_ERROR_GATEWAY_TIMEOUT = 504;
 }
 
-enum HangupErrorCode {
-    HANGUP_ERROR_ABORTED = 0;
-    HANGUP_ERROR_BAD_INCOMING_PACKET = 1;
-    HANGUP_ERROR_TOO_MANY_INCOMING_REQUESTS = 2;
-    HANGUP_ERROR_OUTGOING_PACKET_TOO_LARGE = 3;
-    HANGUP_ERROR_SYSTEM = 4;
+enum HangupCode {
+    HANGUP_ABORTED = 0;
+    HANGUP_BAD_INCOMING_PACKET = 1;
+    HANGUP_TOO_MANY_INCOMING_REQUESTS = 2;
+    HANGUP_OUTGOING_PACKET_TOO_LARGE = 3;
+    HANGUP_SYSTEM = 4;
 }
 
 message StreamHandshakeHeader {
     int32 incoming_keepalive_interval = 1;
     int32 outgoing_keepalive_interval = 2;
-    int32 local_concurrency_limit = 3;
-    int32 remote_concurrency_limit = 4;
+    int32 incoming_concurrency_limit = 3;
+    int32 outgoing_concurrency_limit = 4;
 }
 
 message RequestHeader {
@@ -56,6 +56,6 @@ message ResponseHeader {
 }
 
 message Hangup {
-    HangupErrorCode error_code = 1;
+    HangupCode code = 1;
     map<string, bytes> metadata = 2;
 }

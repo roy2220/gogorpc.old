@@ -1,18 +1,15 @@
 package channel
 
 import (
-	"context"
 	"sync"
 
 	"github.com/rs/zerolog"
 )
 
 type Options struct {
-	Stream       *StreamOptions
-	Logger       *zerolog.Logger
-	Handshaker   Handshaker
-	Keepaliver   Keepaliver
-	AbortHandler AbortHandler
+	Stream           *StreamOptions
+	Logger           *zerolog.Logger
+	ExtensionFactory ExtensionFactory
 
 	serviceOptionsManager
 
@@ -31,16 +28,10 @@ func (self *Options) Normalize() *Options {
 			self.Logger = self.Stream.Logger
 		}
 
-		if self.Handshaker == nil {
-			self.Handshaker = defaultHandshaker{}
-		}
-
-		if self.Keepaliver == nil {
-			self.Keepaliver = defaultKeepaliver{}
-		}
-
-		if self.AbortHandler == nil {
-			self.AbortHandler = defaultAbortHandler
+		if self.ExtensionFactory == nil {
+			self.ExtensionFactory = func(bool) Extension {
+				return DummyExtension{}
+			}
 		}
 
 		if !self.GeneralMethod.requestFactoryIsSet {
@@ -60,13 +51,7 @@ func (self *Options) Do(doer func(*Options)) *Options {
 	return self
 }
 
-type Keepaliver interface {
-	NewKeepalive() (keepalive Message)
-	HandleKeepalive(ctx context.Context, keepalive Message) (err error)
-	EmitKeepalive() (keepalive Message, err error)
-}
-
-type AbortHandler func(ctx context.Context, metadata Metadata)
+type ExtensionFactory func(extensionIsServerSide bool) (extension Extension)
 
 type MethodOptionsBuilder struct {
 	options *Options
@@ -127,34 +112,6 @@ func NewRawMessage() Message {
 }
 
 var _ = MessageFactory(NewRawMessage)
-
-type defaultHandshaker struct{}
-
-func (defaultHandshaker) NewHandshake() Message {
-	return NullMessage
-}
-
-func (defaultHandshaker) HandleHandshake(context.Context, Message) (bool, error) {
-	return true, nil
-}
-
-func (defaultHandshaker) EmitHandshake() (Message, error) {
-	return NullMessage, nil
-}
-
-type defaultKeepaliver struct{}
-
-func (defaultKeepaliver) NewKeepalive() Message {
-	return NullMessage
-}
-
-func (defaultKeepaliver) HandleKeepalive(context.Context, Message) error {
-	return nil
-}
-
-func (defaultKeepaliver) EmitKeepalive() (Message, error) {
-	return NullMessage, nil
-}
 
 type serviceOptionsManager struct {
 	GeneralMethod MethodOptions
@@ -364,8 +321,6 @@ func (self *ServiceOptions) getOrSetMethod(methodName string) *MethodOptions {
 }
 
 var defaultStreamOptions StreamOptions
-
-func defaultAbortHandler(context.Context, Metadata) {}
 
 func copyRPCInterceptors(rpcInterceptors []RPCHandler) []RPCHandler {
 	rpcInterceptorsCopy := make([]RPCHandler, len(rpcInterceptors))

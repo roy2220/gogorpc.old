@@ -24,16 +24,16 @@ func TestOptions(t *testing.T) {
 		ActiveHangupTimeout       time.Duration
 		IncomingKeepaliveInterval time.Duration
 		OutgoingKeepaliveInterval time.Duration
-		LocalConcurrencyLimit     int
-		RemoteConcurrencyLimit    int
+		IncomingConcurrencyLimit  int
+		OutgoingConcurrencyLimit  int
 	}
 	makePureOptions := func(opts *Options) PureOptions {
 		return PureOptions{
 			ActiveHangupTimeout:       opts.ActiveHangupTimeout,
 			IncomingKeepaliveInterval: opts.IncomingKeepaliveInterval,
 			OutgoingKeepaliveInterval: opts.OutgoingKeepaliveInterval,
-			LocalConcurrencyLimit:     opts.LocalConcurrencyLimit,
-			RemoteConcurrencyLimit:    opts.RemoteConcurrencyLimit,
+			IncomingConcurrencyLimit:  opts.IncomingConcurrencyLimit,
+			OutgoingConcurrencyLimit:  opts.OutgoingConcurrencyLimit,
 		}
 	}
 	{
@@ -41,16 +41,16 @@ func TestOptions(t *testing.T) {
 			ActiveHangupTimeout:       -1,
 			IncomingKeepaliveInterval: -1,
 			OutgoingKeepaliveInterval: -1,
-			LocalConcurrencyLimit:     -1,
-			RemoteConcurrencyLimit:    -1,
+			IncomingConcurrencyLimit:  -1,
+			OutgoingConcurrencyLimit:  -1,
 		}
 		opts1.Normalize()
 		opts2 := Options{
 			ActiveHangupTimeout:       minActiveHangupTimeout,
 			IncomingKeepaliveInterval: minKeepaliveInterval,
 			OutgoingKeepaliveInterval: minKeepaliveInterval,
-			LocalConcurrencyLimit:     minConcurrencyLimit,
-			RemoteConcurrencyLimit:    minConcurrencyLimit,
+			IncomingConcurrencyLimit:  minConcurrencyLimit,
+			OutgoingConcurrencyLimit:  minConcurrencyLimit,
 		}
 		assert.Equal(t, makePureOptions(&opts2), makePureOptions(&opts1))
 	}
@@ -59,16 +59,16 @@ func TestOptions(t *testing.T) {
 			ActiveHangupTimeout:       math.MaxInt64,
 			IncomingKeepaliveInterval: math.MaxInt64,
 			OutgoingKeepaliveInterval: math.MaxInt64,
-			LocalConcurrencyLimit:     math.MaxInt32,
-			RemoteConcurrencyLimit:    math.MaxInt32,
+			IncomingConcurrencyLimit:  math.MaxInt32,
+			OutgoingConcurrencyLimit:  math.MaxInt32,
 		}
 		opts1.Normalize()
 		opts2 := Options{
 			ActiveHangupTimeout:       maxActiveHangupTimeout,
 			IncomingKeepaliveInterval: maxKeepaliveInterval,
 			OutgoingKeepaliveInterval: maxKeepaliveInterval,
-			LocalConcurrencyLimit:     maxConcurrencyLimit,
-			RemoteConcurrencyLimit:    maxConcurrencyLimit,
+			IncomingConcurrencyLimit:  maxConcurrencyLimit,
+			OutgoingConcurrencyLimit:  maxConcurrencyLimit,
 		}
 		assert.Equal(t, makePureOptions(&opts2), makePureOptions(&opts1))
 	}
@@ -78,9 +78,9 @@ func TestHandshake1(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{Logger: &logger}}, nil, nil)
+			st := new(Stream).Init(false, &Options{Transport: &transport.Options{Logger: &logger}}, uuid.UUID{}, nil, nil)
 			defer st.Close()
-			ok, err := st.Connect(ctx, conn, uuid.UUID{}, testHandshaker{
+			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbEmitHandshake: func() (Message, error) {
 					msg := RawMessage("welcome")
 					return &msg, nil
@@ -102,9 +102,9 @@ func TestHandshake1(t *testing.T) {
 			assert.True(t, ok)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{Logger: &logger}}, nil, nil)
+			st := new(Stream).Init(true, &Options{Transport: &transport.Options{Logger: &logger}}, uuid.UUID{}, nil, nil)
 			defer st.Close()
-			ok, err := st.Accept(ctx, conn, testHandshaker{
+			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbNewHandshake: func() Message {
 					return new(RawMessage)
 				},
@@ -132,18 +132,18 @@ func TestHandshake2(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, nil)
+			st := new(Stream).Init(false, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, uuid.UUID{}, nil, nil)
 			defer st.Close()
-			ok, err := st.Connect(ctx, conn, uuid.UUID{}, testHandshaker{}.Init())
+			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.Regexp(t, "i/o timeout", err) {
 				t.FailNow()
 			}
 			assert.False(t, ok)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, nil)
+			st := new(Stream).Init(true, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, uuid.UUID{}, nil, nil)
 			defer st.Close()
-			ok, err := st.Accept(ctx, conn, testHandshaker{
+			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, h Message) (bool, error) {
 					<-ctx.Done()
 					<-time.After(10 * time.Millisecond)
@@ -162,9 +162,9 @@ func TestHandshake3(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, nil)
+			st := new(Stream).Init(false, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, uuid.UUID{}, nil, nil)
 			defer st.Close()
-			ok, err := st.Connect(ctx, conn, uuid.UUID{}, testHandshaker{
+			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, h Message) (bool, error) {
 					<-ctx.Done()
 					<-time.After(10 * time.Millisecond)
@@ -177,9 +177,9 @@ func TestHandshake3(t *testing.T) {
 			assert.False(t, ok)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, nil)
+			st := new(Stream).Init(true, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, uuid.UUID{}, nil, nil)
 			defer st.Close()
-			ok, err := st.Accept(ctx, conn, testHandshaker{}.Init())
+			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
@@ -200,15 +200,15 @@ func TestHandshake4(t *testing.T) {
 		func(ctx context.Context, st *Stream) {
 			assert.Equal(t, defaultKeepaliveInterval, st.incomingKeepaliveInterval)
 			assert.Equal(t, defaultKeepaliveInterval, st.outgoingKeepaliveInterval)
-			assert.Equal(t, defaultConcurrencyLimit, st.localConcurrencyLimit)
-			assert.Equal(t, defaultConcurrencyLimit, st.remoteConcurrencyLimit)
+			assert.Equal(t, defaultConcurrencyLimit, st.incomingConcurrencyLimit)
+			assert.Equal(t, defaultConcurrencyLimit, st.outgoingConcurrencyLimit)
 			st.Abort(nil)
 		},
 		func(ctx context.Context, st *Stream) {
 			assert.Equal(t, defaultKeepaliveInterval, st.incomingKeepaliveInterval)
 			assert.Equal(t, defaultKeepaliveInterval, st.outgoingKeepaliveInterval)
-			assert.Equal(t, defaultConcurrencyLimit, st.localConcurrencyLimit)
-			assert.Equal(t, defaultConcurrencyLimit, st.remoteConcurrencyLimit)
+			assert.Equal(t, defaultConcurrencyLimit, st.incomingConcurrencyLimit)
+			assert.Equal(t, defaultConcurrencyLimit, st.outgoingConcurrencyLimit)
 			st.Abort(nil)
 		},
 	)
@@ -274,61 +274,61 @@ func TestHandshake4(t *testing.T) {
 	)
 	testSetup2(
 		t,
-		&Options{RemoteConcurrencyLimit: minConcurrencyLimit + 100},
-		&Options{LocalConcurrencyLimit: minConcurrencyLimit},
+		&Options{OutgoingConcurrencyLimit: minConcurrencyLimit + 100},
+		&Options{IncomingConcurrencyLimit: minConcurrencyLimit},
 		&mp1,
 		&mp2,
 		func(ctx context.Context, st *Stream) {
-			assert.Equal(t, minConcurrencyLimit, st.remoteConcurrencyLimit)
+			assert.Equal(t, minConcurrencyLimit, st.outgoingConcurrencyLimit)
 			st.Abort(nil)
 		},
 		func(ctx context.Context, st *Stream) {
-			assert.Equal(t, minConcurrencyLimit, st.localConcurrencyLimit)
+			assert.Equal(t, minConcurrencyLimit, st.incomingConcurrencyLimit)
 			st.Abort(nil)
 		},
 	)
 	testSetup2(
 		t,
-		&Options{LocalConcurrencyLimit: minConcurrencyLimit + 100},
-		&Options{RemoteConcurrencyLimit: minConcurrencyLimit},
+		&Options{IncomingConcurrencyLimit: minConcurrencyLimit + 100},
+		&Options{OutgoingConcurrencyLimit: minConcurrencyLimit},
 		&mp1,
 		&mp2,
 		func(ctx context.Context, st *Stream) {
-			assert.Equal(t, minConcurrencyLimit, st.localConcurrencyLimit)
+			assert.Equal(t, minConcurrencyLimit, st.incomingConcurrencyLimit)
 			st.Abort(nil)
 		},
 		func(ctx context.Context, st *Stream) {
-			assert.Equal(t, minConcurrencyLimit, st.remoteConcurrencyLimit)
+			assert.Equal(t, minConcurrencyLimit, st.outgoingConcurrencyLimit)
 			st.Abort(nil)
 		},
 	)
 	testSetup2(
 		t,
-		&Options{RemoteConcurrencyLimit: minConcurrencyLimit},
-		&Options{LocalConcurrencyLimit: minConcurrencyLimit + 100},
+		&Options{OutgoingConcurrencyLimit: minConcurrencyLimit},
+		&Options{IncomingConcurrencyLimit: minConcurrencyLimit + 100},
 		&mp1,
 		&mp2,
 		func(ctx context.Context, st *Stream) {
-			assert.Equal(t, minConcurrencyLimit, st.remoteConcurrencyLimit)
+			assert.Equal(t, minConcurrencyLimit, st.outgoingConcurrencyLimit)
 			st.Abort(nil)
 		},
 		func(ctx context.Context, st *Stream) {
-			assert.Equal(t, minConcurrencyLimit, st.localConcurrencyLimit)
+			assert.Equal(t, minConcurrencyLimit, st.incomingConcurrencyLimit)
 			st.Abort(nil)
 		},
 	)
 	testSetup2(
 		t,
-		&Options{LocalConcurrencyLimit: minConcurrencyLimit},
-		&Options{RemoteConcurrencyLimit: minConcurrencyLimit + 100},
+		&Options{IncomingConcurrencyLimit: minConcurrencyLimit},
+		&Options{OutgoingConcurrencyLimit: minConcurrencyLimit + 100},
 		&mp1,
 		&mp2,
 		func(ctx context.Context, st *Stream) {
-			assert.Equal(t, minConcurrencyLimit, st.localConcurrencyLimit)
+			assert.Equal(t, minConcurrencyLimit, st.incomingConcurrencyLimit)
 			st.Abort(nil)
 		},
 		func(ctx context.Context, st *Stream) {
-			assert.Equal(t, minConcurrencyLimit, st.remoteConcurrencyLimit)
+			assert.Equal(t, minConcurrencyLimit, st.outgoingConcurrencyLimit)
 			st.Abort(nil)
 		},
 	)
@@ -418,7 +418,7 @@ func TestPingAndPong1(t *testing.T) {
 
 func TestPingAndPong2(t *testing.T) {
 	const N = 1000
-	opts1 := Options{LocalConcurrencyLimit: 10}
+	opts1 := Options{IncomingConcurrencyLimit: 10}
 	opts2 := Options{}
 	sns1 := map[int32]struct{}{}
 	sns2 := map[int32]struct{}{}
@@ -602,9 +602,9 @@ func testSetup2(
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(opts1, nil, nil)
+			st := new(Stream).Init(false, opts1, uuid.UUID{}, nil, nil)
 			defer st.Close()
-			ok, err := st.Connect(ctx, conn, uuid.UUID{}, testHandshaker{}.Init())
+			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
@@ -616,16 +616,16 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Process(ctx, mp1)
+				err := st.Process(ctx, mp1, DummyMessageFilter{})
 				t.Log(err)
 			}()
 			defer wg.Wait()
 			cb1(ctx, st)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(opts2, nil, nil)
+			st := new(Stream).Init(true, opts2, uuid.UUID{}, nil, nil)
 			defer st.Close()
-			ok, err := st.Accept(ctx, conn, testHandshaker{}.Init())
+			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
@@ -637,7 +637,7 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Process(ctx, mp2)
+				err := st.Process(ctx, mp2, DummyMessageFilter{})
 				t.Log(err)
 			}()
 			defer wg.Wait()

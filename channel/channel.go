@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/let-z-go/intrusives/list"
 	"github.com/let-z-go/toolkit/deque"
-	"github.com/let-z-go/toolkit/utils"
 	"github.com/let-z-go/toolkit/uuid"
 
 	"github.com/let-z-go/gogorpc/internal/protocol"
@@ -26,39 +26,41 @@ type Channel struct {
 	nextSequenceNumber     uint32
 	inflightRPCs           sync.Map
 	pendingAbort           atomic.Value
+	extension              Extension
 }
 
-func (self *Channel) Init(options *Options) *Channel {
+func (self *Channel) Init(isServerSide bool, options *Options) *Channel {
 	self.options = options.Normalize()
 	self.dequeOfPendingRequests.Init(0)
-	self.stream = unsafe.Pointer(new(stream.Stream).Init(self.options.Stream, &self.dequeOfPendingRequests, nil))
+
+	self.stream = unsafe.Pointer(new(stream.Stream).Init(
+		isServerSide,
+		self.options.Stream,
+		uuid.UUID{},
+		&self.dequeOfPendingRequests,
+		nil,
+	))
+
 	self.state = int32(initial)
+	self.extension = self.options.ExtensionFactory(isServerSide)
 	return self
 }
 
 func (self *Channel) Close() {
 	self.setState(closed)
+	self.extension.OnClosed(self)
 }
 
-func (self *Channel) Accept(ctx context.Context, connection net.Conn) error {
-	self.setState(establishing)
-	ok, err := self.getStream().Accept(ctx, connection, self.options.Handshaker)
-
-	if err != nil {
-		return err
+func (self *Channel) Establish(ctx context.Context, serverURL *url.URL, connection net.Conn) error {
+	if self.getState() == initial {
+		self.setState(establishing)
+		self.extension.OnEstablishing(self, serverURL)
+	} else {
+		self.setState(reestablishing)
+		self.extension.OnReestablishing(self, serverURL)
 	}
 
-	if !ok {
-		return ErrHandshakeRefused
-	}
-
-	return nil
-}
-
-func (self *Channel) Connect(ctx context.Context, connection net.Conn) error {
-	transportID := self.getStream().GetTransportID()
-	self.setState(establishing)
-	ok, err := self.getStream().Connect(ctx, connection, transportID, self.options.Handshaker)
+	ok, err := self.getStream().Establish(ctx, connection, self.extension)
 
 	if err != nil {
 		return err
@@ -73,18 +75,17 @@ func (self *Channel) Connect(ctx context.Context, connection net.Conn) error {
 
 func (self *Channel) Process(ctx context.Context) error {
 	self.setState(established)
+	self.extension.OnEstablished(self)
 	stream_ := self.getStream()
 
 	err := stream_.Process(ctx, &messageProcessor{
+		Keepaliver:   self.extension,
 		Options:      self.options,
 		Stream:       stream_,
 		InflightRPCs: &self.inflightRPCs,
-	})
+	}, self.extension)
 
-	if hangupError, ok := err.(*stream.HangupError); ok && hangupError.IsPassive {
-		self.options.AbortHandler(ctx, hangupError.Metadata)
-	}
-
+	self.extension.OnBroken(self, err)
 	return err
 }
 
@@ -177,44 +178,28 @@ func (self *Channel) GetTransportID() uuid.UUID {
 
 func (self *Channel) setState(newState state) {
 	oldState := self.getState()
-	stateTransitionIsValid := false
-	err := error(nil)
 
 	switch oldState {
 	case initial:
 		switch newState {
-		case establishing:
-			stateTransitionIsValid = true
-		case closed:
-			stateTransitionIsValid = true
-			err = ErrClosed
+		case establishing, closed:
+			goto ValidStateTransition
 		}
-	case establishing:
+	case establishing, reestablishing:
 		switch newState {
-		case establishing:
-			stateTransitionIsValid = true
-			err = ErrBroken
-		case established:
-			stateTransitionIsValid = true
-		case closed:
-			stateTransitionIsValid = true
-			err = ErrClosed
+		case reestablishing, established, closed:
+			goto ValidStateTransition
 		}
 	case established:
 		switch newState {
-		case establishing:
-			stateTransitionIsValid = true
-			err = ErrBroken
-		case closed:
-			stateTransitionIsValid = true
-			err = ErrClosed
+		case reestablishing, closed:
+			goto ValidStateTransition
 		}
 	}
 
-	utils.Assert(stateTransitionIsValid, func() string {
-		return fmt.Sprintf("gogorpc/channel: invalid state transition: oldState=%#v, newState=%#v", oldState, newState)
-	})
+	panic(fmt.Errorf("gogorpc/channel: invalid state transition: oldState=%#v, newState=%#v", oldState, newState))
 
+ValidStateTransition:
 	if newState != oldState {
 		atomic.StoreInt32(&self.state, int32(newState))
 		logEvent := self.options.Logger.Info()
@@ -228,47 +213,55 @@ func (self *Channel) setState(newState state) {
 			Msg("channel_state_transition")
 	}
 
-	if err != nil {
-		if err == ErrBroken {
-			oldStream := self.getStream()
-			newStream := new(stream.Stream).Init(self.options.Stream, &self.dequeOfPendingRequests, nil)
+	switch newState {
+	case reestablishing:
+		oldStream := self.getStream()
 
-			if value := self.pendingAbort.Load(); value != nil {
-				newStream.Abort(value.(Metadata))
-			}
+		newStream := new(stream.Stream).Init(
+			oldStream.IsServerSide(),
+			self.options.Stream,
+			oldStream.GetTransportID(),
+			&self.dequeOfPendingRequests,
+			nil,
+		)
 
-			atomic.StorePointer(&self.stream, unsafe.Pointer(newStream))
-			oldStream.Close()
+		if value := self.pendingAbort.Load(); value != nil {
+			newStream.Abort(value.(Metadata))
+		}
 
+		atomic.StorePointer(&self.stream, unsafe.Pointer(newStream))
+		oldStream.Close()
+
+		if oldState == established {
 			self.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
 				pendingRPC_ := value.(*pendingRPC)
 
 				if pendingRPC_.IsEmitted {
 					self.inflightRPCs.Delete(key)
-					pendingRPC_.Fail(nil, err)
-				}
-
-				return true
-			})
-		} else { // err == ErrClosed
-			self.getStream().Close()
-			listOfPendingRequests := new(list.List).Init()
-			self.dequeOfPendingRequests.Close(listOfPendingRequests)
-			stream.PutPooledPendingRequests(listOfPendingRequests)
-
-			self.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
-				self.inflightRPCs.Delete(key)
-				pendingRPC_ := value.(*pendingRPC)
-
-				if pendingRPC_.IsEmitted {
 					pendingRPC_.Fail(nil, ErrBroken)
-				} else {
-					pendingRPC_.Fail(nil, err)
 				}
 
 				return true
 			})
 		}
+	case closed:
+		self.getStream().Close()
+		listOfPendingRequests := new(list.List).Init()
+		self.dequeOfPendingRequests.Close(listOfPendingRequests)
+		stream.PutPooledPendingRequests(listOfPendingRequests)
+
+		self.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
+			self.inflightRPCs.Delete(key)
+			pendingRPC_ := value.(*pendingRPC)
+
+			if pendingRPC_.IsEmitted {
+				pendingRPC_.Fail(nil, ErrBroken)
+			} else {
+				pendingRPC_.Fail(nil, ErrClosed)
+			}
+
+			return true
+		})
 	}
 }
 
@@ -299,6 +292,7 @@ const (
 	initial = 1 + iota
 	establishing
 	established
+	reestablishing
 	closed
 )
 
@@ -312,6 +306,8 @@ func (self state) GoString() string {
 		return "<establishing>"
 	case established:
 		return "<established>"
+	case reestablishing:
+		return "<reestablishing>"
 	case closed:
 		return "<closed>"
 	default:

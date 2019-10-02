@@ -11,6 +11,7 @@ import (
 )
 
 type messageProcessor struct {
+	Keepaliver   Keepaliver
 	Options      *Options
 	Stream       *stream.Stream
 	InflightRPCs *sync.Map
@@ -21,25 +22,25 @@ type messageProcessor struct {
 
 var _ = stream.MessageProcessor((*messageProcessor)(nil))
 
-func (self *messageProcessor) NewKeepalive(packet *stream.Packet) {
-	packet.Message = self.Options.Keepaliver.NewKeepalive()
+func (self *messageProcessor) NewKeepalive(packet *Packet) {
+	packet.Message = self.Keepaliver.NewKeepalive()
 }
 
-func (self *messageProcessor) HandleKeepalive(ctx context.Context, packet *stream.Packet) {
-	packet.Err = self.Options.Keepaliver.HandleKeepalive(ctx, packet.Message)
+func (self *messageProcessor) HandleKeepalive(ctx context.Context, packet *Packet) {
+	packet.Err = self.Keepaliver.HandleKeepalive(ctx, packet.Message)
 }
 
-func (self *messageProcessor) EmitKeepalive(packet *stream.Packet) {
-	packet.Message, packet.Err = self.Options.Keepaliver.EmitKeepalive()
+func (self *messageProcessor) EmitKeepalive(packet *Packet) {
+	packet.Message, packet.Err = self.Keepaliver.EmitKeepalive()
 }
 
-func (self *messageProcessor) NewRequest(packet *stream.Packet) {
+func (self *messageProcessor) NewRequest(packet *Packet) {
 	methodOptions := self.Options.GetMethod(packet.RequestHeader.ServiceId, packet.RequestHeader.MethodName)
 	packet.Message = methodOptions.RequestFactory()
 	self.methodOptionsCache = methodOptions
 }
 
-func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.Packet) {
+func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet) {
 	requestHeader := &packet.RequestHeader
 	traceID := uuid.UUID{requestHeader.TraceId.Low, requestHeader.TraceId.High}
 
@@ -47,7 +48,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 		self.Options.Logger.Info().Err(packet.Err).
 			Str("transport_id", self.Stream.GetTransportID().String()).
 			Str("trace_id", traceID.String()).
-			Str("service_name", requestHeader.ServiceId).
+			Str("service_id", requestHeader.ServiceId).
 			Str("method_name", requestHeader.MethodName).
 			Msg("rpc_bad_request")
 		packet.Err = nil
@@ -65,7 +66,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 		self.Options.Logger.Info().
 			Str("transport_id", self.Stream.GetTransportID().String()).
 			Str("trace_id", traceID.String()).
-			Str("service_name", requestHeader.ServiceId).
+			Str("service_id", requestHeader.ServiceId).
 			Str("method_name", requestHeader.MethodName).
 			Msg("rpc_not_found")
 
@@ -117,20 +118,22 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 		if rpc.Err == nil {
 			response = rpc.Response
 		} else {
-			if error_, ok := rpc.Err.(*RPCError); ok {
-				responseHeader.ErrorType = error_.Type
-				responseHeader.ErrorCode = error_.Code
+			var rpcErr *RPCError
+
+			if rpcErr2, ok := rpc.Err.(*RPCError); ok {
+				rpcErr = rpcErr2
 			} else {
 				self.Options.Logger.Error().Err(rpc.Err).
 					Str("transport_id", self.Stream.GetTransportID().String()).
 					Str("trace_id", rpc.internals.TraceID.String()).
-					Str("service_name", rpc.ServiceID).
+					Str("service_id", rpc.ServiceID).
 					Str("method_name", rpc.MethodName).
 					Msg("rpc_internal_server_error")
-				responseHeader.ErrorType = RPCErrInternalServer.Type
-				responseHeader.ErrorCode = RPCErrInternalServer.Code
+				rpcErr = RPCErrInternalServer
 			}
 
+			responseHeader.ErrorType = rpcErr.Type
+			responseHeader.ErrorCode = rpcErr.Code
 			response = NullMessage
 		}
 
@@ -138,7 +141,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *stream.
 	}()
 }
 
-func (self *messageProcessor) PostEmitRequest(packet *stream.Packet) {
+func (self *messageProcessor) PostEmitRequest(packet *Packet) {
 	requestHeader := &packet.RequestHeader
 	value, _ := self.InflightRPCs.Load(requestHeader.SequenceNumber)
 	pendingRPC_ := value.(*pendingRPC)
@@ -148,23 +151,23 @@ func (self *messageProcessor) PostEmitRequest(packet *stream.Packet) {
 	} else {
 		self.InflightRPCs.Delete(requestHeader.SequenceNumber)
 		pendingRPC_.Fail(nil, packet.Err)
-		packet.Err = stream.ErrPacketDropped
+		packet.Err = ErrPacketDropped
 	}
 }
 
-func (self *messageProcessor) NewResponse(packet *stream.Packet) {
+func (self *messageProcessor) NewResponse(packet *Packet) {
 	responseHeader := &packet.ResponseHeader
 	value, ok := self.InflightRPCs.Load(responseHeader.SequenceNumber)
 
 	if !ok {
-		packet.Err = stream.ErrPacketDropped
+		packet.Err = ErrPacketDropped
 		return
 	}
 
 	pendingRPC_ := value.(*pendingRPC)
 
 	if !pendingRPC_.IsEmitted {
-		packet.Err = stream.ErrPacketDropped
+		packet.Err = ErrPacketDropped
 		return
 	}
 
@@ -173,25 +176,29 @@ func (self *messageProcessor) NewResponse(packet *stream.Packet) {
 	if responseHeader.ErrorType == 0 {
 		packet.Message = pendingRPC_.NewResponse()
 	} else {
-		packet.Err = &RPCError{
-			Type: responseHeader.ErrorType,
-			Code: responseHeader.ErrorCode,
-		}
+		packet.Message = NullMessage
 	}
 
 	self.pendingRPCCache = pendingRPC_
 }
 
-func (self *messageProcessor) HandleResponse(ctx context.Context, packet *stream.Packet) {
+func (self *messageProcessor) HandleResponse(ctx context.Context, packet *Packet) {
 	responseHeader := &packet.ResponseHeader
 
 	if packet.Err == nil {
-		self.pendingRPCCache.Succeed(responseHeader.Metadata, packet.Message)
+		if responseHeader.ErrorType == 0 {
+			self.pendingRPCCache.Succeed(responseHeader.Metadata, packet.Message)
+		} else {
+			self.pendingRPCCache.Fail(responseHeader.Metadata, &RPCError{
+				Type: responseHeader.ErrorType,
+				Code: responseHeader.ErrorCode,
+			})
+		}
 	} else {
 		self.pendingRPCCache.Fail(responseHeader.Metadata, packet.Err)
 		packet.Err = nil
 	}
 }
 
-func (self *messageProcessor) PostEmitResponse(packet *stream.Packet) {
+func (self *messageProcessor) PostEmitResponse(packet *Packet) {
 }

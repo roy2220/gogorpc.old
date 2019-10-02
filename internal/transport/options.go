@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/let-z-go/toolkit/utils"
 	"github.com/rs/zerolog"
 )
 
@@ -21,12 +22,14 @@ type Options struct {
 func (self *Options) Normalize() *Options {
 	self.normalizeOnce.Do(func() {
 		if self.Logger == nil {
-			self.Logger = &defaultLogger
+			self.Logger = &dummyLogger
 		}
 
 		normalizeDurValue(&self.HandshakeTimeout, defaultHandshakeTimeout, minHandshakeTimeout, maxHandshakeTimeout)
 		normalizeIntValue(&self.MinInputBufferSize, defaultMinInputBufferSize, minInputBufferSize, maxInputBufferSize)
+		self.MinInputBufferSize = int(utils.NextPowerOfTwo(int64(self.MinInputBufferSize)))
 		normalizeIntValue(&self.MaxInputBufferSize, defaultMaxInputBufferSize, minInputBufferSize, maxInputBufferSize)
+		self.MaxInputBufferSize = int(utils.NextPowerOfTwo(int64(self.MaxInputBufferSize)))
 
 		if self.MaxInputBufferSize < self.MinInputBufferSize {
 			self.MaxInputBufferSize = self.MinInputBufferSize
@@ -63,7 +66,7 @@ const (
 	maxInputBufferSize        = 1 << 30
 )
 
-var defaultLogger = zerolog.Nop()
+var dummyLogger = zerolog.Nop()
 
 func normalizeDurValue(value *time.Duration, defaultValue, minValue, maxValue time.Duration) {
 	if *value == 0 {
