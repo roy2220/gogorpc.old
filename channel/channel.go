@@ -117,9 +117,9 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 		}
 
 		rpcHandler = func(rpc *RPC) {
-			pendingRPC_ := newPooledPendingRPC()
-			pendingRPC_.Init(responseFactory)
-			self.inflightRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
+			inflightRPC_ := newPooledInflightRPC()
+			inflightRPC_.Init(responseFactory)
+			self.inflightRPCs.Store(rpc.internals.SequenceNumber, inflightRPC_)
 
 			if err := self.stream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
 				SequenceNumber: rpc.internals.SequenceNumber,
@@ -145,20 +145,20 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 				return
 			}
 
-			if err := pendingRPC_.WaitFor(rpc.Ctx); err != nil {
+			if err := inflightRPC_.WaitFor(rpc.Ctx); err != nil {
 				rpc.Err = err
 				return
 			}
 
-			if pendingRPC_.Err == stream.ErrRequestExpired {
+			if inflightRPC_.Err == stream.ErrRequestExpired {
 				<-rpc.Ctx.Done()
-				pendingRPC_.Err = rpc.Ctx.Err()
+				inflightRPC_.Err = rpc.Ctx.Err()
 			}
 
-			rpc.ResponseMetadata = pendingRPC_.ResponseMetadata
-			rpc.Response = pendingRPC_.Response
-			rpc.Err = pendingRPC_.Err
-			putPooledPendingRPC(pendingRPC_)
+			rpc.ResponseMetadata = inflightRPC_.ResponseMetadata
+			rpc.Response = inflightRPC_.Response
+			rpc.Err = inflightRPC_.Err
+			putPooledInflightRPC(inflightRPC_)
 		}
 	}
 
@@ -234,11 +234,11 @@ ValidStateTransition:
 
 		if oldState == established {
 			self.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
-				pendingRPC_ := value.(*pendingRPC)
+				inflightRPC_ := value.(*inflightRPC)
 
-				if pendingRPC_.IsEmitted {
+				if inflightRPC_.IsEmitted {
 					self.inflightRPCs.Delete(key)
-					pendingRPC_.Fail(nil, ErrBroken)
+					inflightRPC_.Fail(nil, ErrBroken)
 				}
 
 				return true
@@ -252,12 +252,12 @@ ValidStateTransition:
 
 		self.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
 			self.inflightRPCs.Delete(key)
-			pendingRPC_ := value.(*pendingRPC)
+			inflightRPC_ := value.(*inflightRPC)
 
-			if pendingRPC_.IsEmitted {
-				pendingRPC_.Fail(nil, ErrBroken)
+			if inflightRPC_.IsEmitted {
+				inflightRPC_.Fail(nil, ErrBroken)
 			} else {
-				pendingRPC_.Fail(nil, ErrClosed)
+				inflightRPC_.Fail(nil, ErrClosed)
 			}
 
 			return true

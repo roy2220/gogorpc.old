@@ -20,7 +20,7 @@ type messageProcessor struct {
 	InflightRPCs *sync.Map
 
 	methodOptionsCache *MethodOptions
-	pendingRPCCache    *pendingRPC
+	inflightRPCCache   *inflightRPC
 }
 
 var _ = stream.MessageProcessor((*messageProcessor)(nil))
@@ -95,6 +95,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 	}
 
 	rpc := GetPooledRPC()
+
 	*rpc = RPC{
 		Ctx:             ctx,
 		ServiceID:       requestHeader.ServiceId,
@@ -161,10 +162,10 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 func (self *messageProcessor) PostEmitRequest(packet *Packet) {
 	requestHeader := &packet.RequestHeader
 	value, _ := self.InflightRPCs.Load(requestHeader.SequenceNumber)
-	pendingRPC_ := value.(*pendingRPC)
+	inflightRPC_ := value.(*inflightRPC)
 
 	if packet.Err == nil {
-		pendingRPC_.IsEmitted = true
+		inflightRPC_.IsEmitted = true
 	} else {
 		self.InflightRPCs.Delete(requestHeader.SequenceNumber)
 
@@ -173,15 +174,15 @@ func (self *messageProcessor) PostEmitRequest(packet *Packet) {
 			responseHeader := &packet.ResponseHeader
 
 			if responseHeader.ErrorType == 0 {
-				self.pendingRPCCache.Succeed(responseHeader.Metadata, packet.Message)
+				self.inflightRPCCache.Succeed(responseHeader.Metadata, packet.Message)
 			} else {
-				pendingRPC_.Fail(responseHeader.Metadata, &RPCError{
+				inflightRPC_.Fail(responseHeader.Metadata, &RPCError{
 					Type: responseHeader.ErrorType,
 					Code: responseHeader.ErrorCode,
 				})
 			}
 		} else {
-			pendingRPC_.Fail(nil, packet.Err)
+			inflightRPC_.Fail(nil, packet.Err)
 		}
 
 		packet.Err = ErrPacketDropped
@@ -197,9 +198,9 @@ func (self *messageProcessor) NewResponse(packet *Packet) {
 		return
 	}
 
-	pendingRPC_ := value.(*pendingRPC)
+	inflightRPC_ := value.(*inflightRPC)
 
-	if !pendingRPC_.IsEmitted {
+	if !inflightRPC_.IsEmitted {
 		packet.Err = ErrPacketDropped
 		return
 	}
@@ -207,12 +208,12 @@ func (self *messageProcessor) NewResponse(packet *Packet) {
 	self.InflightRPCs.Delete(responseHeader.SequenceNumber)
 
 	if responseHeader.ErrorType == 0 {
-		packet.Message = pendingRPC_.NewResponse()
+		packet.Message = inflightRPC_.NewResponse()
 	} else {
 		packet.Message = NullMessage
 	}
 
-	self.pendingRPCCache = pendingRPC_
+	self.inflightRPCCache = inflightRPC_
 }
 
 func (self *messageProcessor) HandleResponse(ctx context.Context, packet *Packet) {
@@ -220,15 +221,15 @@ func (self *messageProcessor) HandleResponse(ctx context.Context, packet *Packet
 
 	if packet.Err == nil {
 		if responseHeader.ErrorType == 0 {
-			self.pendingRPCCache.Succeed(responseHeader.Metadata, packet.Message)
+			self.inflightRPCCache.Succeed(responseHeader.Metadata, packet.Message)
 		} else {
-			self.pendingRPCCache.Fail(responseHeader.Metadata, &RPCError{
+			self.inflightRPCCache.Fail(responseHeader.Metadata, &RPCError{
 				Type: responseHeader.ErrorType,
 				Code: responseHeader.ErrorCode,
 			})
 		}
 	} else {
-		self.pendingRPCCache.Fail(responseHeader.Metadata, packet.Err)
+		self.inflightRPCCache.Fail(responseHeader.Metadata, packet.Err)
 		packet.Err = nil
 	}
 }
