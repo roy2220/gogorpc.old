@@ -211,7 +211,7 @@ func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *
 	packetHeaderSize := int(int32(binary.BigEndian.Uint32(rawPacket[4:])))
 	packetPayloadOffset := 8 + packetHeaderSize
 
-	if packetHeaderSize < 0 || packetPayloadOffset > packetSize {
+	if packetPayloadOffset < 8 || packetPayloadOffset > packetSize {
 		return ErrBadPacket
 	}
 
@@ -254,7 +254,7 @@ func (self *Transport) PeekNext(packet *Packet) (bool, error) {
 	packetHeaderSize := int(int32(binary.BigEndian.Uint32(rawPacket[4:])))
 	packetPayloadOffset := 8 + packetHeaderSize
 
-	if packetHeaderSize < 0 || packetPayloadOffset > packetSize {
+	if packetPayloadOffset < 8 || packetPayloadOffset > packetSize {
 		return false, ErrBadPacket
 	}
 
@@ -369,7 +369,7 @@ func (self *Transport) receiveHandshake(
 	handshakeHeaderSize := int(int32(binary.BigEndian.Uint32(rawHandshake[4:])))
 	handshakePayloadOffset := 8 + handshakeHeaderSize
 
-	if handshakeHeaderSize < 0 || handshakePayloadOffset > handshakeSize {
+	if handshakePayloadOffset < 8 || handshakePayloadOffset > handshakeSize {
 		return false, ErrBadHandshake
 	}
 

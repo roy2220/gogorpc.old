@@ -51,7 +51,7 @@ func (self *transportHandshaker) HandleHandshake(ctx context.Context, rawHandsha
 	handshakeHeaderSize := int(int32(binary.BigEndian.Uint32(rawHandshake)))
 	handshakePayloadOffset := 4 + handshakeHeaderSize
 
-	if handshakeHeaderSize < 0 || handshakePayloadOffset > handshakeSize {
+	if handshakePayloadOffset < 4 || handshakePayloadOffset > handshakeSize {
 		return false, ErrBadHandshake
 	}
 

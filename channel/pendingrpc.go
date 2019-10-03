@@ -46,11 +46,18 @@ func (self *pendingRPC) WaitFor(ctx context.Context) error {
 	}
 }
 
-var pendingRPCPool = sync.Pool{New: func() interface{} { return new(pendingRPC) }}
+var pendingRPCPool = sync.Pool{}
 
 func getPooledPendingRPC() *pendingRPC {
-	pendingRPC_ := pendingRPCPool.Get().(*pendingRPC)
-	*pendingRPC_ = pendingRPC{}
+	var pendingRPC_ *pendingRPC
+
+	if value := pendingRPCPool.Get(); value == nil {
+		pendingRPC_ = new(pendingRPC)
+	} else {
+		pendingRPC_ = value.(*pendingRPC)
+		*pendingRPC_ = pendingRPC{}
+	}
+
 	return pendingRPC_
 }
 

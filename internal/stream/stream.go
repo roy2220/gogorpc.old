@@ -303,7 +303,7 @@ func (self *Stream) loadPacket(packet *Packet, transportPacket *transport.Packet
 		requestHeaderSize := int(int32(binary.BigEndian.Uint32(rawPacket)))
 		requestOffset := 4 + requestHeaderSize
 
-		if requestHeaderSize < 0 || requestOffset > packetSize {
+		if requestOffset < 4 || requestOffset > packetSize {
 			packet.Err = errBadPacket
 			return
 		}
@@ -335,7 +335,7 @@ func (self *Stream) loadPacket(packet *Packet, transportPacket *transport.Packet
 		responseHeaderSize := int(int32(binary.BigEndian.Uint32(rawPacket)))
 		responseOffset := 4 + responseHeaderSize
 
-		if responseHeaderSize < 0 || responseOffset > packetSize {
+		if responseOffset < 4 || responseOffset > packetSize {
 			packet.Err = errBadPacket
 			return
 		}
@@ -652,16 +652,18 @@ func (self *Stream) emitPackets(
 			packet.messageType = protocol.MESSAGE_REQUEST
 			packet.RequestHeader = pendingRequest.Header
 			packet.Message = pendingRequest.Payload
+			var ok bool
 
 			if deadline := pendingRequest.Header.Deadline; deadline != 0 && deadline <= now {
 				packet.Err = ErrRequestExpired
 				messageEmitter.PostEmitRequest(&packet)
+				ok, err = packet.Err == nil, packet.Err
 
-				if packet.Err != nil && packet.Err != ErrPacketDropped {
-					err = packet.Err
+				if err == ErrPacketDropped {
+					err = nil
 				}
 			} else {
-				err = self.write(&packet, messageEmitter, outgoingMessageFilter)
+				ok, err = self.write(&packet, messageEmitter, outgoingMessageFilter)
 			}
 
 			if err != nil {
@@ -676,7 +678,7 @@ func (self *Stream) emitPackets(
 			pendingRequestPool.Put(pendingRequest)
 			pendingRequests.ListLength--
 
-			if err == nil {
+			if ok {
 				emittedRequestCount++
 			} else {
 				droppedRequestCount++
@@ -697,7 +699,8 @@ func (self *Stream) emitPackets(
 			packet.messageType = protocol.MESSAGE_RESPONSE
 			packet.ResponseHeader = pendingResponse.Header
 			packet.Message = pendingResponse.Payload
-			err = self.write(&packet, messageEmitter, outgoingMessageFilter)
+			var ok bool
+			ok, err = self.write(&packet, messageEmitter, outgoingMessageFilter)
 
 			if err != nil {
 				self.options.Logger.Error().Err(err).
@@ -711,7 +714,7 @@ func (self *Stream) emitPackets(
 			pendingResponsePool.Put(pendingResponse)
 			pendingResponses.ListLength--
 
-			if err == nil {
+			if ok {
 				emittedResponseCount++
 			} else {
 				droppedResponseCount++
@@ -730,7 +733,7 @@ func (self *Stream) emitPackets(
 		packet.messageType = protocol.MESSAGE_HANGUP
 		packet.Hangup.Code = pendingHangup.Code
 		packet.Hangup.Metadata = pendingHangup.Metadata
-		err = self.write(&packet, messageEmitter, outgoingMessageFilter)
+		_, err = self.write(&packet, messageEmitter, outgoingMessageFilter)
 
 		if err != nil {
 			return err
@@ -741,7 +744,7 @@ func (self *Stream) emitPackets(
 
 	if err == nil && emittedPacketCount == 0 {
 		packet.messageType = protocol.MESSAGE_KEEPALIVE
-		err = self.write(&packet, messageEmitter, outgoingMessageFilter)
+		_, err = self.write(&packet, messageEmitter, outgoingMessageFilter)
 	}
 
 	if err != nil {
@@ -755,7 +758,7 @@ func (self *Stream) emitPackets(
 	return nil
 }
 
-func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter, outgoingMessageFilter OutgoingMessageFilter) error {
+func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter, outgoingMessageFilter OutgoingMessageFilter) (bool, error) {
 	transportPacket := transport.Packet{
 		Header: protocol.PacketHeader{
 			MessageType: packet.messageType,
@@ -839,11 +842,15 @@ func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter, outgoin
 		panic("unreachable code")
 	}
 
-	if packet.Err != nil && packet.Err != ErrPacketDropped {
-		return packet.Err
+	if err := packet.Err; err != nil {
+		if err == ErrPacketDropped {
+			err = nil
+		}
+
+		return false, err
 	}
 
-	return nil
+	return true, nil
 }
 
 func (self *Stream) flush(ctx context.Context, timeout time.Duration) error {

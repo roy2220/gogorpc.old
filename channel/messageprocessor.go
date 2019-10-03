@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/let-z-go/gogorpc/internal/stream"
 	"github.com/let-z-go/toolkit/uuid"
 )
+
+var ErrFastResponse = errors.New("gogorpc/channel: fast response")
 
 type messageProcessor struct {
 	Keepaliver   Keepaliver
@@ -45,20 +48,32 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 	traceID := uuid.UUID{requestHeader.TraceId.Low, requestHeader.TraceId.High}
 
 	if packet.Err != nil {
-		self.Options.Logger.Info().Err(packet.Err).
-			Str("transport_id", self.Stream.GetTransportID().String()).
-			Str("trace_id", traceID.String()).
-			Str("service_id", requestHeader.ServiceId).
-			Str("method_name", requestHeader.MethodName).
-			Msg("rpc_bad_request")
+		if packet.Err == ErrFastResponse {
+			// fast response by MessageFilter.FilterIncomingRequest
+			responseHeader := &packet.ResponseHeader
+			responseHeader.SequenceNumber = requestHeader.SequenceNumber
+
+			if packet.ResponseHeader.ErrorType == 0 {
+				self.Stream.SendResponse(responseHeader, packet.Message)
+			} else {
+				self.Stream.SendResponse(responseHeader, NullMessage)
+			}
+		} else {
+			self.Options.Logger.Info().Err(packet.Err).
+				Str("transport_id", self.Stream.GetTransportID().String()).
+				Str("trace_id", traceID.String()).
+				Str("service_id", requestHeader.ServiceId).
+				Str("method_name", requestHeader.MethodName).
+				Msg("rpc_bad_request")
+
+			self.Stream.SendResponse(&protocol.ResponseHeader{
+				SequenceNumber: requestHeader.SequenceNumber,
+				ErrorType:      RPCErrBadRequest.Type,
+				ErrorCode:      RPCErrBadRequest.Code,
+			}, NullMessage)
+		}
+
 		packet.Err = nil
-
-		self.Stream.SendResponse(&protocol.ResponseHeader{
-			SequenceNumber: requestHeader.SequenceNumber,
-			ErrorType:      RPCErrBadRequest.Type,
-			ErrorCode:      RPCErrBadRequest.Code,
-		}, NullMessage)
-
 		return
 	}
 
@@ -150,7 +165,23 @@ func (self *messageProcessor) PostEmitRequest(packet *Packet) {
 		pendingRPC_.IsEmitted = true
 	} else {
 		self.InflightRPCs.Delete(requestHeader.SequenceNumber)
-		pendingRPC_.Fail(nil, packet.Err)
+
+		if packet.Err == ErrFastResponse {
+			// fast response by MessageFilter.FilterOutgoingRequest
+			responseHeader := &packet.ResponseHeader
+
+			if responseHeader.ErrorType == 0 {
+				self.pendingRPCCache.Succeed(responseHeader.Metadata, packet.Message)
+			} else {
+				pendingRPC_.Fail(responseHeader.Metadata, &RPCError{
+					Type: responseHeader.ErrorType,
+					Code: responseHeader.ErrorCode,
+				})
+			}
+		} else {
+			pendingRPC_.Fail(nil, packet.Err)
+		}
+
 		packet.Err = ErrPacketDropped
 	}
 }
