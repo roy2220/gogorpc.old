@@ -309,7 +309,7 @@ func (self *Transport) ShrinkOutputBuffer() {
 	self.outputByteStream.Shrink(0)
 }
 
-func (self *Transport) GetID() uuid.UUID {
+func (self *Transport) ID() uuid.UUID {
 	return self.id
 }
 
@@ -467,7 +467,7 @@ func (self *Transport) skip() {
 	self.inputByteStream.Skip(self.peekedInputDataSize)
 
 	if bufferIsInsufficient {
-		if self.inputByteStream.GetSize() < self.options.MaxInputBufferSize {
+		if self.inputByteStream.Size() < self.options.MaxInputBufferSize {
 			self.inputByteStream.Expand()
 		}
 	}

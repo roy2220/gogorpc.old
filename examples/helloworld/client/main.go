@@ -20,7 +20,8 @@ func main() {
 
 	for _, name := range []string{"tom", "jerry", "spike"} {
 		req := protocol.SayHelloReq{Name: name}
-		resp, err := protocol.MakeGreeterStub(cli).SayHello(context.Background(), &req).Invoke()
+		stub := new(protocol.GreeterStub).Init(cli)
+		resp, err := stub.SayHello(context.Background(), &req)
 
 		if err == nil {
 			fmt.Println("resp:", resp)

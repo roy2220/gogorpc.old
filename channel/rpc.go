@@ -31,12 +31,12 @@ func (self *RPC) Reprepare() {
 	self.internals.Reprepare()
 }
 
-func (self *RPC) GetTraceID() uuid.UUID {
-	return self.internals.TraceID
-}
-
 func (self *RPC) IsHandled() bool {
 	return self.internals.IsHandled()
+}
+
+func (self *RPC) TraceID() uuid.UUID {
+	return self.internals.TraceID
 }
 
 type RPCHandler func(rpc *RPC)

@@ -86,7 +86,7 @@ func (self *Client) run() {
 		if err := self.channel.Establish(self.ctx, serverURL, connection); err != nil {
 			self.options.Logger.Error().Err(err).
 				Str("server_url", serverURL.String()).
-				Str("transport_id", self.channel.GetTransportID().String()).
+				Str("transport_id", self.channel.TransportID().String()).
 				Msg("client_channel_establish_failed")
 
 			if _, ok := err.(*channel.NetworkError); ok {
@@ -104,7 +104,7 @@ func (self *Client) run() {
 		err = self.channel.Process(self.ctx)
 		self.options.Logger.Error().Err(err).
 			Str("server_url", serverURL.String()).
-			Str("transport_id", self.channel.GetTransportID().String()).
+			Str("transport_id", self.channel.TransportID().String()).
 			Msg("client_channel_process_failed")
 
 		if _, ok = err.(*channel.NetworkError); ok {

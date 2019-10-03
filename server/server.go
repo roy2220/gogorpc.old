@@ -87,7 +87,7 @@ func (self *Server) Run() (err error) {
 		if err := channel_.Establish(self.activity.Ctx, url_, connection); err != nil {
 			self.options.Logger.Warn().Err(err).
 				Str("server_url", self.rawURL).
-				Str("transport_id", channel_.GetTransportID().String()).
+				Str("transport_id", channel_.TransportID().String()).
 				Msg("server_channel_establish_failed")
 			return
 		}
@@ -95,7 +95,7 @@ func (self *Server) Run() (err error) {
 		err := channel_.Process(self.activity.Ctx)
 		self.options.Logger.Warn().Err(err).
 			Str("server_url", self.rawURL).
-			Str("transport_id", channel_.GetTransportID().String()).
+			Str("transport_id", channel_.TransportID().String()).
 			Msg("server_channel_process_failed")
 	})
 

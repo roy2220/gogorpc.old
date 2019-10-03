@@ -60,7 +60,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 			}
 		} else {
 			self.Options.Logger.Info().Err(packet.Err).
-				Str("transport_id", self.Stream.GetTransportID().String()).
+				Str("transport_id", self.Stream.TransportID().String()).
 				Str("trace_id", traceID.String()).
 				Str("service_id", requestHeader.ServiceId).
 				Str("method_name", requestHeader.MethodName).
@@ -79,7 +79,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 
 	if self.methodOptionsCache.IncomingRPCHandler == nil {
 		self.Options.Logger.Info().
-			Str("transport_id", self.Stream.GetTransportID().String()).
+			Str("transport_id", self.Stream.TransportID().String()).
 			Str("trace_id", traceID.String()).
 			Str("service_id", requestHeader.ServiceId).
 			Str("method_name", requestHeader.MethodName).
@@ -94,7 +94,8 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 		return
 	}
 
-	rpc := RPC{
+	rpc := GetPooledRPC()
+	*rpc = RPC{
 		Ctx:             ctx,
 		ServiceID:       requestHeader.ServiceId,
 		MethodName:      requestHeader.MethodName,
@@ -120,7 +121,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 		}
 
 		defer cancel()
-		rpc.Ctx = BindRPC(rpc.Ctx, &rpc)
+		rpc.Ctx = BindRPC(rpc.Ctx, rpc)
 		rpc.Handle()
 
 		responseHeader := protocol.ResponseHeader{
@@ -139,7 +140,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 				rpcErr = rpcErr2
 			} else {
 				self.Options.Logger.Error().Err(rpc.Err).
-					Str("transport_id", self.Stream.GetTransportID().String()).
+					Str("transport_id", self.Stream.TransportID().String()).
 					Str("trace_id", rpc.internals.TraceID.String()).
 					Str("service_id", rpc.ServiceID).
 					Str("method_name", rpc.MethodName).
@@ -152,6 +153,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 			response = NullMessage
 		}
 
+		PutPooledRPC(rpc)
 		self.Stream.SendResponse(&responseHeader, response)
 	}()
 }

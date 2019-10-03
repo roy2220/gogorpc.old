@@ -20,6 +20,14 @@ func (GreeterHandler) SayHello(ctx context.Context, request *protocol.SayHelloRe
 	}, nil
 }
 
+func (GreeterHandler) SayHello2(ctx context.Context, request *protocol.SayHelloReq) error {
+	return channel.RPCErrNotImplemented
+}
+
+func (GreeterHandler) SayHello3(ctx context.Context) (*protocol.SayHelloResp, error) {
+	return nil, channel.RPCErrNotImplemented
+}
+
 func main() {
 	opts := server.Options{
 		Channel: (&channel.Options{}).

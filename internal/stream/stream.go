@@ -174,7 +174,7 @@ func (self *Stream) Abort(metadata Metadata) {
 
 func (self *Stream) adjust() error {
 	{
-		n := self.outgoingConcurrencyLimit - self.dequeOfPendingRequests.GetMaxLength()
+		n := self.outgoingConcurrencyLimit - self.dequeOfPendingRequests.MaxLength()
 
 		if n < 0 {
 			return ErrConcurrencyOverflow
@@ -184,7 +184,7 @@ func (self *Stream) adjust() error {
 	}
 
 	{
-		n := self.incomingConcurrencyLimit - self.dequeOfPendingResponses.GetMaxLength()
+		n := self.incomingConcurrencyLimit - self.dequeOfPendingResponses.MaxLength()
 
 		if n < 0 {
 			return ErrConcurrencyOverflow
@@ -434,7 +434,7 @@ func (self *Stream) handlePacket(
 
 		if packet.Err == nil {
 			self.options.Logger.Info().Err(packet.Err).
-				Str("transport_id", self.GetTransportID().String()).
+				Str("transport_id", self.TransportID().String()).
 				Msg("stream_passive_hangup")
 			hangup := &packet.Hangup
 
@@ -450,7 +450,7 @@ func (self *Stream) handlePacket(
 
 	if packet.Err != nil {
 		self.options.Logger.Error().Err(packet.Err).
-			Str("transport_id", self.GetTransportID().String()).
+			Str("transport_id", self.TransportID().String()).
 			Msg("stream_system_error")
 		self.hangUp(HangupSystem, nil)
 	}
@@ -668,7 +668,7 @@ func (self *Stream) emitPackets(
 
 			if err != nil {
 				self.options.Logger.Error().Err(err).
-					Str("transport_id", self.GetTransportID().String()).
+					Str("transport_id", self.TransportID().String()).
 					Msg("stream_system_error")
 				continue
 			}
@@ -704,7 +704,7 @@ func (self *Stream) emitPackets(
 
 			if err != nil {
 				self.options.Logger.Error().Err(err).
-					Str("transport_id", self.GetTransportID().String()).
+					Str("transport_id", self.TransportID().String()).
 					Msg("stream_system_error")
 				continue
 			}
@@ -728,7 +728,7 @@ func (self *Stream) emitPackets(
 
 	if pendingHangup != nil {
 		self.options.Logger.Info().
-			Str("transport_id", self.GetTransportID().String()).
+			Str("transport_id", self.TransportID().String()).
 			Msg("stream_active_hangup")
 		packet.messageType = protocol.MESSAGE_HANGUP
 		packet.Hangup.Code = pendingHangup.Code
@@ -911,8 +911,8 @@ type stream struct {
 	outgoingConcurrencyLimit  int
 }
 
-func (self *stream) GetTransportID() uuid.UUID {
-	return self.transport.GetID()
+func (self *stream) TransportID() uuid.UUID {
+	return self.transport.ID()
 }
 
 func (self *stream) IsServerSide() bool {

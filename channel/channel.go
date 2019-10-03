@@ -21,8 +21,8 @@ import (
 type Channel struct {
 	options                *Options
 	dequeOfPendingRequests deque.Deque
-	stream                 unsafe.Pointer
-	state                  int32
+	stream_                unsafe.Pointer
+	state_                 int32
 	nextSequenceNumber     uint32
 	inflightRPCs           sync.Map
 	pendingAbort           atomic.Value
@@ -33,7 +33,7 @@ func (self *Channel) Init(isServerSide bool, options *Options) *Channel {
 	self.options = options.Normalize()
 	self.dequeOfPendingRequests.Init(0)
 
-	self.stream = unsafe.Pointer(new(stream.Stream).Init(
+	self.stream_ = unsafe.Pointer(new(stream.Stream).Init(
 		isServerSide,
 		self.options.Stream,
 		uuid.UUID{},
@@ -41,7 +41,7 @@ func (self *Channel) Init(isServerSide bool, options *Options) *Channel {
 		nil,
 	))
 
-	self.state = int32(initial)
+	self.state_ = int32(initial)
 	self.extension = self.options.ExtensionFactory(isServerSide)
 	return self
 }
@@ -52,7 +52,7 @@ func (self *Channel) Close() {
 }
 
 func (self *Channel) Establish(ctx context.Context, serverURL *url.URL, connection net.Conn) error {
-	if self.getState() == initial {
+	if self.state() == initial {
 		self.setState(establishing)
 		self.extension.OnEstablishing(self, serverURL)
 	} else {
@@ -60,7 +60,7 @@ func (self *Channel) Establish(ctx context.Context, serverURL *url.URL, connecti
 		self.extension.OnReestablishing(self, serverURL)
 	}
 
-	ok, err := self.getStream().Establish(ctx, connection, self.extension)
+	ok, err := self.stream().Establish(ctx, connection, self.extension)
 
 	if err != nil {
 		return err
@@ -76,7 +76,7 @@ func (self *Channel) Establish(ctx context.Context, serverURL *url.URL, connecti
 func (self *Channel) Process(ctx context.Context) error {
 	self.setState(established)
 	self.extension.OnEstablished(self)
-	stream_ := self.getStream()
+	stream_ := self.stream()
 
 	err := stream_.Process(ctx, &messageProcessor{
 		Keepaliver:   self.extension,
@@ -117,11 +117,11 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 		}
 
 		rpcHandler = func(rpc *RPC) {
-			pendingRPC_ := getPooledPendingRPC()
+			pendingRPC_ := newPooledPendingRPC()
 			pendingRPC_.Init(responseFactory)
 			self.inflightRPCs.Store(rpc.internals.SequenceNumber, pendingRPC_)
 
-			if err := self.getStream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
+			if err := self.stream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
 				SequenceNumber: rpc.internals.SequenceNumber,
 				ServiceId:      rpc.ServiceID,
 				MethodName:     rpc.MethodName,
@@ -169,15 +169,15 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 
 func (self *Channel) Abort(metadata Metadata) {
 	self.pendingAbort.Store(metadata)
-	self.getStream().Abort(metadata)
+	self.stream().Abort(metadata)
 }
 
-func (self *Channel) GetTransportID() uuid.UUID {
-	return self.getStream().GetTransportID()
+func (self *Channel) TransportID() uuid.UUID {
+	return self.stream().TransportID()
 }
 
 func (self *Channel) setState(newState state) {
-	oldState := self.getState()
+	oldState := self.state()
 
 	switch oldState {
 	case initial:
@@ -201,11 +201,11 @@ func (self *Channel) setState(newState state) {
 
 ValidStateTransition:
 	if newState != oldState {
-		atomic.StoreInt32(&self.state, int32(newState))
+		atomic.StoreInt32(&self.state_, int32(newState))
 		logEvent := self.options.Logger.Info()
 
 		if oldState != initial {
-			logEvent.Str("transport_id", self.GetTransportID().String())
+			logEvent.Str("transport_id", self.TransportID().String())
 		}
 
 		logEvent.Str("old_state", oldState.GoString()).
@@ -215,12 +215,12 @@ ValidStateTransition:
 
 	switch newState {
 	case reestablishing:
-		oldStream := self.getStream()
+		oldStream := self.stream()
 
 		newStream := new(stream.Stream).Init(
 			oldStream.IsServerSide(),
 			self.options.Stream,
-			oldStream.GetTransportID(),
+			oldStream.TransportID(),
 			&self.dequeOfPendingRequests,
 			nil,
 		)
@@ -229,7 +229,7 @@ ValidStateTransition:
 			newStream.Abort(value.(Metadata))
 		}
 
-		atomic.StorePointer(&self.stream, unsafe.Pointer(newStream))
+		atomic.StorePointer(&self.stream_, unsafe.Pointer(newStream))
 		oldStream.Close()
 
 		if oldState == established {
@@ -245,7 +245,7 @@ ValidStateTransition:
 			})
 		}
 	case closed:
-		self.getStream().Close()
+		self.stream().Close()
 		listOfPendingRequests := new(list.List).Init()
 		self.dequeOfPendingRequests.Close(listOfPendingRequests)
 		stream.PutPooledPendingRequests(listOfPendingRequests)
@@ -265,21 +265,21 @@ ValidStateTransition:
 	}
 }
 
-func (self *Channel) getStream() *stream.Stream {
-	return (*stream.Stream)(atomic.LoadPointer(&self.stream))
-}
-
-func (self *Channel) getState() state {
-	return state(atomic.LoadInt32(&self.state))
-}
-
 func (self *Channel) getNextSequenceNumber() int {
 	return int((atomic.AddUint32(&self.nextSequenceNumber, 1) - 1) & 0x7FFFFFFF)
 }
 
 func (self *Channel) isClosed() bool {
-	state_ := self.getState()
+	state_ := self.state()
 	return !(state_ >= initial && state_ < closed)
+}
+
+func (self *Channel) stream() *stream.Stream {
+	return (*stream.Stream)(atomic.LoadPointer(&self.stream_))
+}
+
+func (self *Channel) state() state {
+	return state(atomic.LoadInt32(&self.state_))
 }
 
 var (

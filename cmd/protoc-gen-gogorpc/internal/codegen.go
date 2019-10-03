@@ -512,6 +512,17 @@ func Register{{.Name}}Handler(serviceHandler {{.Name}}Handler) func(*channel.Opt
 
 type {{.Name}}Stub struct {
 	rpcPreparer channel.RPCPreparer
+	requestMetadata channel.Metadata
+}
+
+func (self *{{.Name}}Stub) Init(rpcPreparer channel.RPCPreparer) *{{.Name}}Stub {
+	self.rpcPreparer = rpcPreparer
+	return self
+}
+
+func (self *{{.Name}}Stub) WithRequestMetadata(metadata channel.Metadata) *{{.Name}}Stub {
+	self.requestMetadata = metadata
+	return self
 }
 {{- range .Methods}}
 
@@ -519,17 +530,26 @@ func (self {{$.Name}}Stub) {{.Name}}(ctx context.Context
 	{{- if .Request}}
 		{{- ", request *"}}{{.Request.GoMessagePath}}
 	{{- end}}
-	{{- ") *"}}{{$.Name}}Stub_{{.Name}} {
-	rpc := {{$.Name}}Stub_{{.Name}}{inner: channel.RPC{
+	{{- ") "}}
+	{{- if .Response}}
+		{{- "(*"}}{{.Response.GoMessagePath}}, error)
+	{{- else}}
+		{{- "error"}}
+	{{- end}}
+	{{- " {"}}
+	rpc := channel.GetPooledRPC()
+
+	*rpc = channel.RPC{
 		Ctx: ctx,
 		ServiceID: {{$.Name}},
 		MethodName: {{$.Name}}_{{.Name}},
+		RequestMetadata: self.requestMetadata,
 	{{- if .Request}}
 		Request: request,
 	{{- end}}
-	}}
+	}
 
-	self.rpcPreparer.PrepareRPC(&rpc.inner,{{" "}}
+	self.rpcPreparer.PrepareRPC(rpc,{{" "}}
 	{{- if .Response}}
 		{{- "func() channel.Message {"}}
 		return new({{.Response.GoMessagePath}})
@@ -538,50 +558,94 @@ func (self {{$.Name}}Stub) {{.Name}}(ctx context.Context
 	{{- else}}
 		{{- "channel.GetNullMessage"}})
 	{{- end}}
-	return &rpc
+	rpc.Handle()
+	{{- if .Response}}
+	response, err := rpc.Response, rpc.Err
+	channel.PutPooledRPC(rpc)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return response.(*{{.Response.GoMessagePath}}), nil
+	{{- else}}
+	err := rpc.Err
+	channel.PutPooledRPC(rpc)
+	return err
+	{{- end}}
+}
+
+func (self {{$.Name}}Stub) Make{{.Name}}(ctx context.Context
+	{{- if .Request}}
+		{{- ", request *"}}{{.Request.GoMessagePath}}
+	{{- end}}
+	{{- ") "}}{{$.Name}}Stub_{{.Name}} {
+	rpc := channel.GetPooledRPC()
+
+	*rpc = channel.RPC{
+		Ctx: ctx,
+		ServiceID: {{$.Name}},
+		MethodName: {{$.Name}}_{{.Name}},
+		RequestMetadata: self.requestMetadata,
+	{{- if .Request}}
+		Request: request,
+	{{- end}}
+	}
+
+	self.rpcPreparer.PrepareRPC(rpc,{{" "}}
+	{{- if .Response}}
+		{{- "func() channel.Message {"}}
+		return new({{.Response.GoMessagePath}})
+	})
+{{""}}
+	{{- else}}
+		{{- "channel.GetNullMessage"}})
+	{{- end}}
+	return {{$.Name}}Stub_{{.Name}}{rpc}
 }
 {{- end}}
-
-func Make{{.Name}}Stub(rpcPreparer channel.RPCPreparer) {{.Name}}Stub {
-	return {{.Name}}Stub{rpcPreparer}
-}
 {{- range .Methods}}
 
 type {{$.Name}}Stub_{{.Name}} struct {
-	inner channel.RPC
+	rpc *channel.RPC
 }
 
-func (self *{{$.Name}}Stub_{{.Name}}) WithRequestMetadata(metadata channel.Metadata) *{{$.Name}}Stub_{{.Name}} {
-	self.inner.RequestMetadata = metadata
+func (self {{$.Name}}Stub_{{.Name}}) WithRequestMetadata(metadata channel.Metadata) {{$.Name}}Stub_{{.Name}} {
+	self.rpc.RequestMetadata = metadata
 	return self
 }
 
-func (self *{{$.Name}}Stub_{{.Name}}) Invoke(){{" "}}
+func (self {{$.Name}}Stub_{{.Name}}) Invoke(){{" "}}
 	{{- if .Response}}
 		{{- "(*"}}{{.Response.GoMessagePath}}, error)
 	{{- else}}
 		{{- "error"}}
 	{{- end}}
 	{{- " {"}}
-	if self.inner.IsHandled() {
-		self.inner.Reprepare()
+	if self.rpc.IsHandled() {
+		self.rpc.Reprepare()
 	}
 
-	self.inner.Handle()
+	self.rpc.Handle()
 	{{- if .Response}}
 
-	if self.inner.Err != nil {
-		return nil, self.inner.Err
+	if self.rpc.Err != nil {
+		return nil, self.rpc.Err
 	}
 
-	return self.inner.Response.(*{{.Response.GoMessagePath}}), nil
+	return self.rpc.Response.(*{{.Response.GoMessagePath}}), nil
 	{{- else}}
-	return self.inner.Err
+	return self.rpc.Err
 	{{- end}}
 }
 
-func (self *{{$.Name}}Stub_{{.Name}}) ResponseMetadata() channel.Metadata {
-	return self.inner.ResponseMetadata
+func (self {{$.Name}}Stub_{{.Name}}) ResponseMetadata() channel.Metadata {
+	return self.rpc.ResponseMetadata
+}
+
+func (self {{$.Name}}Stub_{{.Name}}) Close() {
+	channel.PutPooledRPC(self.rpc)
+	self.rpc = nil
 }
 {{- end}}
 `)).Execute(&context_.Code, self); err != nil {

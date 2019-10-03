@@ -71,7 +71,7 @@ func (self *transportHandshaker) HandleHandshake(ctx context.Context, rawHandsha
 
 	logEvent.Int("size", handshakeSize).
 		Int("header_size", handshakeHeaderSize).
-		Str("transport_id", self.GetTransportID().String()).
+		Str("transport_id", self.TransportID().String()).
 		Int32("incoming_keepalive_interval", self.handshakeHeader.IncomingKeepaliveInterval).
 		Int32("outgoing_keepalive_interval", self.handshakeHeader.OutgoingKeepaliveInterval).
 		Int32("incoming_concurrency_limit", self.handshakeHeader.IncomingConcurrencyLimit).
@@ -165,7 +165,7 @@ func (self *transportHandshaker) EmitHandshake(buffer []byte) error {
 
 	logEvent.Int("size", len(buffer)).
 		Int("header_size", self.handshakeHeaderSize).
-		Str("transport_id", self.GetTransportID().String()).
+		Str("transport_id", self.TransportID().String()).
 		Int32("incoming_keepalive_interval", self.handshakeHeader.IncomingKeepaliveInterval).
 		Int32("outgoing_keepalive_interval", self.handshakeHeader.OutgoingKeepaliveInterval).
 		Int32("incoming_concurrency_limit", self.handshakeHeader.IncomingConcurrencyLimit).

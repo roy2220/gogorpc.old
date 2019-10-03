@@ -13,6 +13,8 @@ option (gogorpc.error) = {
 
 service Greeter {
     rpc SayHello (SayHelloReq) returns (SayHelloResp);
+    rpc SayHello2 (SayHelloReq) returns (gogorpc.Void);
+    rpc SayHello3 (gogorpc.Void) returns (SayHelloResp);
 }
 
 message SayHelloReq {
