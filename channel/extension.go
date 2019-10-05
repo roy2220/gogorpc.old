@@ -9,10 +9,10 @@ type Extension interface {
 	Listener
 	Handshaker
 	Keepaliver
-	MessageFilter
 }
 
 type Listener interface {
+	OnInitialized(channel *Channel)
 	OnEstablishing(channel *Channel, serverURL *url.URL)
 	OnReestablishing(channel *Channel, serverURL *url.URL)
 	OnEstablished(channel *Channel)
@@ -30,7 +30,6 @@ type DummyExtension struct {
 	DummyListener
 	DummyHandshaker
 	DummyKeepaliver
-	DummyMessageFilter
 }
 
 var _ = Extension(DummyExtension{})
@@ -39,6 +38,7 @@ type DummyListener struct{}
 
 var _ = Listener(DummyListener{})
 
+func (DummyListener) OnInitialized(*Channel)              {}
 func (DummyListener) OnEstablishing(*Channel, *url.URL)   {}
 func (DummyListener) OnReestablishing(*Channel, *url.URL) {}
 func (DummyListener) OnEstablished(*Channel)              {}

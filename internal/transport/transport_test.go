@@ -21,6 +21,7 @@ import (
 func TestOptions(t *testing.T) {
 	type PureOptions struct {
 		HandshakeTimeout      time.Duration
+		MaxHandshakeSize      int
 		MinInputBufferSize    int
 		MaxInputBufferSize    int
 		MaxIncomingPacketSize int
@@ -29,6 +30,7 @@ func TestOptions(t *testing.T) {
 	makePureOptions := func(opts *Options) PureOptions {
 		return PureOptions{
 			HandshakeTimeout:      opts.HandshakeTimeout,
+			MaxHandshakeSize:      opts.MaxHandshakeSize,
 			MinInputBufferSize:    opts.MinInputBufferSize,
 			MaxInputBufferSize:    opts.MaxInputBufferSize,
 			MaxIncomingPacketSize: opts.MaxIncomingPacketSize,
@@ -40,6 +42,7 @@ func TestOptions(t *testing.T) {
 		opts1.Normalize()
 		opts2 := Options{
 			HandshakeTimeout:      defaultHandshakeTimeout,
+			MaxHandshakeSize:      defaultMaxHandshakeSize,
 			MinInputBufferSize:    defaultMinInputBufferSize,
 			MaxInputBufferSize:    defaultMaxInputBufferSize,
 			MaxIncomingPacketSize: defaultMaxPacketSize,
@@ -50,6 +53,7 @@ func TestOptions(t *testing.T) {
 	{
 		opts1 := Options{
 			HandshakeTimeout:      -1,
+			MaxHandshakeSize:      -1,
 			MinInputBufferSize:    -1,
 			MaxInputBufferSize:    -1,
 			MaxIncomingPacketSize: -1,
@@ -58,6 +62,7 @@ func TestOptions(t *testing.T) {
 		opts1.Normalize()
 		opts2 := Options{
 			HandshakeTimeout:      minHandshakeTimeout,
+			MaxHandshakeSize:      minMaxHandshakeSize,
 			MinInputBufferSize:    minInputBufferSize,
 			MaxInputBufferSize:    minInputBufferSize,
 			MaxIncomingPacketSize: minInputBufferSize,
@@ -68,6 +73,7 @@ func TestOptions(t *testing.T) {
 	{
 		opts1 := Options{
 			HandshakeTimeout:      math.MaxInt64,
+			MaxHandshakeSize:      math.MaxInt32,
 			MinInputBufferSize:    math.MaxInt32,
 			MaxInputBufferSize:    math.MaxInt32,
 			MaxIncomingPacketSize: math.MaxInt32,
@@ -76,6 +82,7 @@ func TestOptions(t *testing.T) {
 		opts1.Normalize()
 		opts2 := Options{
 			HandshakeTimeout:      maxHandshakeTimeout,
+			MaxHandshakeSize:      maxMaxHandshakeSize,
 			MinInputBufferSize:    maxInputBufferSize,
 			MaxInputBufferSize:    maxInputBufferSize,
 			MaxIncomingPacketSize: maxMaxPacketSize,

@@ -43,6 +43,7 @@ func (self *Channel) Init(isServerSide bool, options *Options) *Channel {
 
 	self.state_ = int32(initial)
 	self.extension = self.options.ExtensionFactory(isServerSide)
+	self.extension.OnInitialized(self)
 	return self
 }
 
@@ -51,7 +52,7 @@ func (self *Channel) Close() {
 	self.extension.OnClosed(self)
 }
 
-func (self *Channel) Establish(ctx context.Context, serverURL *url.URL, connection net.Conn) error {
+func (self *Channel) Run(ctx context.Context, serverURL *url.URL, connection net.Conn) error {
 	if self.state() == initial {
 		self.setState(establishing)
 		self.extension.OnEstablishing(self, serverURL)
@@ -70,20 +71,14 @@ func (self *Channel) Establish(ctx context.Context, serverURL *url.URL, connecti
 		return ErrHandshakeRefused
 	}
 
-	return nil
-}
-
-func (self *Channel) Process(ctx context.Context) error {
 	self.setState(established)
 	self.extension.OnEstablished(self)
 	stream_ := self.stream()
 
-	err := stream_.Process(ctx, &messageProcessor{
-		Keepaliver:   self.extension,
-		Options:      self.options,
-		Stream:       stream_,
-		InflightRPCs: &self.inflightRPCs,
-	}, self.extension)
+	err = stream_.Process(ctx, &messageProcessor{
+		Channel: self,
+		Stream:  stream_,
+	})
 
 	self.extension.OnBroken(self, err)
 	return err
@@ -95,8 +90,22 @@ func (self *Channel) InvokeRPC(rpc *RPC, responseFactory MessageFactory) {
 }
 
 func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
+	rpc.internals.Channel = self
+
 	if parentRPC, ok := GetRPC(rpc.Ctx); ok {
 		rpc.internals.TraceID = parentRPC.internals.TraceID
+
+		for key, value := range parentRPC.RequestExtraData.Value() {
+			if !(len(key) >= 1 && key[0] == '_') {
+				continue
+			}
+
+			if _, ok := rpc.RequestExtraData.TryGet(key); ok {
+				continue
+			}
+
+			rpc.RequestExtraData.Set(key, value)
+		}
 	} else {
 		rpc.internals.TraceID = uuid.GenerateUUID4Fast()
 	}
@@ -125,7 +134,7 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 				SequenceNumber: rpc.internals.SequenceNumber,
 				ServiceId:      rpc.ServiceID,
 				MethodName:     rpc.MethodName,
-				Metadata:       rpc.RequestMetadata,
+				ExtraData:      rpc.RequestExtraData.Value(),
 				Deadline:       rpc.internals.Deadline,
 
 				TraceId: protocol.UUID{
@@ -155,7 +164,7 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 				inflightRPC_.Err = rpc.Ctx.Err()
 			}
 
-			rpc.ResponseMetadata = inflightRPC_.ResponseMetadata
+			rpc.ResponseExtraData = inflightRPC_.ResponseExtraData.Ref(false)
 			rpc.Response = inflightRPC_.Response
 			rpc.Err = inflightRPC_.Err
 			putPooledInflightRPC(inflightRPC_)
@@ -167,13 +176,17 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 	rpc.Ctx = BindRPC(rpc.Ctx, rpc)
 }
 
-func (self *Channel) Abort(metadata Metadata) {
-	self.pendingAbort.Store(metadata)
-	self.stream().Abort(metadata)
+func (self *Channel) Abort(extraData ExtraData) {
+	self.pendingAbort.Store(extraData)
+	self.stream().Abort(extraData)
 }
 
 func (self *Channel) TransportID() uuid.UUID {
 	return self.stream().TransportID()
+}
+
+func (self *Channel) Extension() Extension {
+	return self.extension
 }
 
 func (self *Channel) setState(newState state) {
@@ -226,7 +239,7 @@ ValidStateTransition:
 		)
 
 		if value := self.pendingAbort.Load(); value != nil {
-			newStream.Abort(value.(Metadata))
+			newStream.Abort(value.(ExtraData))
 		}
 
 		atomic.StorePointer(&self.stream_, unsafe.Pointer(newStream))
@@ -289,7 +302,7 @@ var (
 )
 
 const (
-	initial = 1 + iota
+	initial = state(1 + iota)
 	establishing
 	established
 	reestablishing
@@ -314,3 +327,5 @@ func (self state) GoString() string {
 		return fmt.Sprintf("<state:%d>", self)
 	}
 }
+
+var noExtraData = make(ExtraData)

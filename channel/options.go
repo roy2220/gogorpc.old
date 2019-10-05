@@ -1,8 +1,10 @@
 package channel
 
 import (
+	"fmt"
 	"sync"
 
+	"github.com/let-z-go/toolkit/utils"
 	"github.com/rs/zerolog"
 )
 
@@ -136,6 +138,10 @@ func (self *serviceOptionsManager) GetMethod(serviceID string, methodName string
 
 func (self *serviceOptionsManager) setRequestFactory(serviceID string, methodName string, messageFactory MessageFactory) {
 	if serviceID == "" {
+		utils.Assert(methodName == "", func() string {
+			return fmt.Sprintf("gogorpc/channel: invalid argument: methodName=%#v, serviceID=%#v", methodName, serviceID)
+		})
+
 		self.GeneralMethod.RequestFactory = messageFactory
 		self.GeneralMethod.requestFactoryIsSet = true
 
@@ -178,6 +184,10 @@ func (self *serviceOptionsManager) setRequestFactory(serviceID string, methodNam
 
 func (self *serviceOptionsManager) setIncomingRPCHandler(serviceID string, methodName string, rpcHandler RPCHandler) {
 	if serviceID == "" {
+		utils.Assert(methodName == "", func() string {
+			return fmt.Sprintf("gogorpc/channel: invalid argument: methodName=%#v, serviceID=%#v", methodName, serviceID)
+		})
+
 		self.GeneralMethod.IncomingRPCHandler = rpcHandler
 		self.GeneralMethod.incomingRPCHandlerIsSet = true
 
@@ -220,6 +230,10 @@ func (self *serviceOptionsManager) setIncomingRPCHandler(serviceID string, metho
 
 func (self *serviceOptionsManager) addIncomingRPCInterceptor(serviceID string, methodName string, rpcInterceptor RPCHandler) {
 	if serviceID == "" {
+		utils.Assert(methodName == "", func() string {
+			return fmt.Sprintf("gogorpc/channel: invalid argument: methodName=%#v, serviceID=%#v", methodName, serviceID)
+		})
+
 		i := len(self.GeneralMethod.IncomingRPCInterceptors)
 		insertRPCInterceptor(rpcInterceptor, &self.GeneralMethod.IncomingRPCInterceptors, i)
 
@@ -249,6 +263,10 @@ func (self *serviceOptionsManager) addIncomingRPCInterceptor(serviceID string, m
 
 func (self *serviceOptionsManager) addOutgoingRPCInterceptor(serviceID string, methodName string, rpcInterceptor RPCHandler) {
 	if serviceID == "" {
+		utils.Assert(methodName == "", func() string {
+			return fmt.Sprintf("gogorpc/channel: invalid argument: methodName=%#v, serviceID=%#v", methodName, serviceID)
+		})
+
 		i := len(self.GeneralMethod.OutgoingRPCInterceptors)
 		insertRPCInterceptor(rpcInterceptor, &self.GeneralMethod.OutgoingRPCInterceptors, i)
 

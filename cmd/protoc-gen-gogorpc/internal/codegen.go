@@ -512,7 +512,7 @@ func Register{{.Name}}Handler(serviceHandler {{.Name}}Handler) func(*channel.Opt
 
 type {{.Name}}Stub struct {
 	rpcPreparer channel.RPCPreparer
-	requestMetadata channel.Metadata
+	requestExtraData channel.ExtraData
 }
 
 func (self *{{.Name}}Stub) Init(rpcPreparer channel.RPCPreparer) *{{.Name}}Stub {
@@ -520,8 +520,8 @@ func (self *{{.Name}}Stub) Init(rpcPreparer channel.RPCPreparer) *{{.Name}}Stub 
 	return self
 }
 
-func (self *{{.Name}}Stub) WithRequestMetadata(metadata channel.Metadata) *{{.Name}}Stub {
-	self.requestMetadata = metadata
+func (self *{{.Name}}Stub) WithRequestExtraData(extraData channel.ExtraData) *{{.Name}}Stub {
+	self.requestExtraData = extraData
 	return self
 }
 {{- range .Methods}}
@@ -543,7 +543,7 @@ func (self {{$.Name}}Stub) {{.Name}}(ctx context.Context
 		Ctx: ctx,
 		ServiceID: {{$.Name}},
 		MethodName: {{$.Name}}_{{.Name}},
-		RequestMetadata: self.requestMetadata,
+		RequestExtraData: self.requestExtraData.Ref(true),
 	{{- if .Request}}
 		Request: request,
 	{{- end}}
@@ -586,7 +586,7 @@ func (self {{$.Name}}Stub) Make{{.Name}}(ctx context.Context
 		Ctx: ctx,
 		ServiceID: {{$.Name}},
 		MethodName: {{$.Name}}_{{.Name}},
-		RequestMetadata: self.requestMetadata,
+		RequestExtraData: self.requestExtraData.Ref(true),
 	{{- if .Request}}
 		Request: request,
 	{{- end}}
@@ -610,8 +610,8 @@ type {{$.Name}}Stub_{{.Name}} struct {
 	rpc *channel.RPC
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) WithRequestMetadata(metadata channel.Metadata) {{$.Name}}Stub_{{.Name}} {
-	self.rpc.RequestMetadata = metadata
+func (self {{$.Name}}Stub_{{.Name}}) WithRequestExtraData(extraData channel.ExtraDataRef) {{$.Name}}Stub_{{.Name}} {
+	self.rpc.RequestExtraData = extraData
 	return self
 }
 
@@ -639,8 +639,8 @@ func (self {{$.Name}}Stub_{{.Name}}) Invoke(){{" "}}
 	{{- end}}
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) ResponseMetadata() channel.Metadata {
-	return self.rpc.ResponseMetadata
+func (self {{$.Name}}Stub_{{.Name}}) ResponseExtraData() channel.ExtraDataRef {
+	return self.rpc.ResponseExtraData
 }
 
 func (self {{$.Name}}Stub_{{.Name}}) Close() {

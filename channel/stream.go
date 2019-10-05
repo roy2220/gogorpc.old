@@ -5,6 +5,13 @@ import (
 )
 
 const (
+	Incoming         = stream.Incoming
+	Outgoing         = stream.Outgoing
+	MessageKeepalive = stream.MessageKeepalive
+	MessageRequest   = stream.MessageRequest
+	MessageResponse  = stream.MessageResponse
+	MessageHangup    = stream.MessageHangup
+
 	HangupAborted                 = stream.HangupAborted
 	HangupBadIncomingPacket       = stream.HangupBadIncomingPacket
 	HangupTooManyIncomingRequests = stream.HangupTooManyIncomingRequests
@@ -15,31 +22,21 @@ const (
 type (
 	StreamOptions = stream.Options
 
-	Packet     = stream.Packet
-	Message    = stream.Message
-	RawMessage = stream.RawMessage
+	Packet       = stream.Packet
+	Direction    = stream.Direction
+	MessageType  = stream.MessageType
+	PacketFilter = stream.PacketFilter
+	Message      = stream.Message
+	RawMessage   = stream.RawMessage
 
 	Handshaker      = stream.Handshaker
 	DummyHandshaker = stream.DummyHandshaker
 
 	Hangup     = stream.Hangup
 	HangupCode = stream.HangupCode
-	Metadata   = stream.Metadata
 
-	MessageFilter              = stream.MessageFilter
-	IncomingMessageFilter      = stream.IncomingMessageFilter
-	OutgoingMessageFilter      = stream.OutgoingMessageFilter
-	KeepaliveFilter            = stream.KeepaliveFilter
-	RequestFilter              = stream.RequestFilter
-	ResponseFilter             = stream.ResponseFilter
-	HangupFilter               = stream.HangupFilter
-	DummyMessageFilter         = stream.DummyMessageFilter
-	DummyIncomingMessageFilter = stream.DummyIncomingMessageFilter
-	DummyOutgoingMessageFilter = stream.DummyOutgoingMessageFilter
-	DummyKeepaliveFilter       = stream.DummyKeepaliveFilter
-	DummyRequestFilter         = stream.DummyRequestFilter
-	DummyResponseFilter        = stream.DummyResponseFilter
-	DummyHangupFilter          = stream.DummyHangupFilter
+	ExtraData    = stream.ExtraData
+	ExtraDataRef = stream.ExtraDataRef
 )
 
 var (

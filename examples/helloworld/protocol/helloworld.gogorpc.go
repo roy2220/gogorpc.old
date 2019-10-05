@@ -72,8 +72,8 @@ func RegisterGreeterHandler(serviceHandler GreeterHandler) func(*channel.Options
 }
 
 type GreeterStub struct {
-	rpcPreparer     channel.RPCPreparer
-	requestMetadata channel.Metadata
+	rpcPreparer      channel.RPCPreparer
+	requestExtraData channel.ExtraData
 }
 
 func (self *GreeterStub) Init(rpcPreparer channel.RPCPreparer) *GreeterStub {
@@ -81,8 +81,8 @@ func (self *GreeterStub) Init(rpcPreparer channel.RPCPreparer) *GreeterStub {
 	return self
 }
 
-func (self *GreeterStub) WithRequestMetadata(metadata channel.Metadata) *GreeterStub {
-	self.requestMetadata = metadata
+func (self *GreeterStub) WithRequestExtraData(extraData channel.ExtraData) *GreeterStub {
+	self.requestExtraData = extraData
 	return self
 }
 
@@ -90,11 +90,11 @@ func (self GreeterStub) SayHello(ctx context.Context, request *SayHelloReq) (*Sa
 	rpc := channel.GetPooledRPC()
 
 	*rpc = channel.RPC{
-		Ctx:             ctx,
-		ServiceID:       Greeter,
-		MethodName:      Greeter_SayHello,
-		RequestMetadata: self.requestMetadata,
-		Request:         request,
+		Ctx:              ctx,
+		ServiceID:        Greeter,
+		MethodName:       Greeter_SayHello,
+		RequestExtraData: self.requestExtraData.Ref(true),
+		Request:          request,
 	}
 
 	self.rpcPreparer.PrepareRPC(rpc, func() channel.Message {
@@ -116,11 +116,11 @@ func (self GreeterStub) MakeSayHello(ctx context.Context, request *SayHelloReq) 
 	rpc := channel.GetPooledRPC()
 
 	*rpc = channel.RPC{
-		Ctx:             ctx,
-		ServiceID:       Greeter,
-		MethodName:      Greeter_SayHello,
-		RequestMetadata: self.requestMetadata,
-		Request:         request,
+		Ctx:              ctx,
+		ServiceID:        Greeter,
+		MethodName:       Greeter_SayHello,
+		RequestExtraData: self.requestExtraData.Ref(true),
+		Request:          request,
 	}
 
 	self.rpcPreparer.PrepareRPC(rpc, func() channel.Message {
@@ -134,11 +134,11 @@ func (self GreeterStub) SayHello2(ctx context.Context, request *SayHelloReq) err
 	rpc := channel.GetPooledRPC()
 
 	*rpc = channel.RPC{
-		Ctx:             ctx,
-		ServiceID:       Greeter,
-		MethodName:      Greeter_SayHello2,
-		RequestMetadata: self.requestMetadata,
-		Request:         request,
+		Ctx:              ctx,
+		ServiceID:        Greeter,
+		MethodName:       Greeter_SayHello2,
+		RequestExtraData: self.requestExtraData.Ref(true),
+		Request:          request,
 	}
 
 	self.rpcPreparer.PrepareRPC(rpc, channel.GetNullMessage)
@@ -152,11 +152,11 @@ func (self GreeterStub) MakeSayHello2(ctx context.Context, request *SayHelloReq)
 	rpc := channel.GetPooledRPC()
 
 	*rpc = channel.RPC{
-		Ctx:             ctx,
-		ServiceID:       Greeter,
-		MethodName:      Greeter_SayHello2,
-		RequestMetadata: self.requestMetadata,
-		Request:         request,
+		Ctx:              ctx,
+		ServiceID:        Greeter,
+		MethodName:       Greeter_SayHello2,
+		RequestExtraData: self.requestExtraData.Ref(true),
+		Request:          request,
 	}
 
 	self.rpcPreparer.PrepareRPC(rpc, channel.GetNullMessage)
@@ -167,10 +167,10 @@ func (self GreeterStub) SayHello3(ctx context.Context) (*SayHelloResp, error) {
 	rpc := channel.GetPooledRPC()
 
 	*rpc = channel.RPC{
-		Ctx:             ctx,
-		ServiceID:       Greeter,
-		MethodName:      Greeter_SayHello3,
-		RequestMetadata: self.requestMetadata,
+		Ctx:              ctx,
+		ServiceID:        Greeter,
+		MethodName:       Greeter_SayHello3,
+		RequestExtraData: self.requestExtraData.Ref(true),
 	}
 
 	self.rpcPreparer.PrepareRPC(rpc, func() channel.Message {
@@ -192,10 +192,10 @@ func (self GreeterStub) MakeSayHello3(ctx context.Context) GreeterStub_SayHello3
 	rpc := channel.GetPooledRPC()
 
 	*rpc = channel.RPC{
-		Ctx:             ctx,
-		ServiceID:       Greeter,
-		MethodName:      Greeter_SayHello3,
-		RequestMetadata: self.requestMetadata,
+		Ctx:              ctx,
+		ServiceID:        Greeter,
+		MethodName:       Greeter_SayHello3,
+		RequestExtraData: self.requestExtraData.Ref(true),
 	}
 
 	self.rpcPreparer.PrepareRPC(rpc, func() channel.Message {
@@ -209,8 +209,8 @@ type GreeterStub_SayHello struct {
 	rpc *channel.RPC
 }
 
-func (self GreeterStub_SayHello) WithRequestMetadata(metadata channel.Metadata) GreeterStub_SayHello {
-	self.rpc.RequestMetadata = metadata
+func (self GreeterStub_SayHello) WithRequestExtraData(extraData channel.ExtraDataRef) GreeterStub_SayHello {
+	self.rpc.RequestExtraData = extraData
 	return self
 }
 
@@ -228,8 +228,8 @@ func (self GreeterStub_SayHello) Invoke() (*SayHelloResp, error) {
 	return self.rpc.Response.(*SayHelloResp), nil
 }
 
-func (self GreeterStub_SayHello) ResponseMetadata() channel.Metadata {
-	return self.rpc.ResponseMetadata
+func (self GreeterStub_SayHello) ResponseExtraData() channel.ExtraDataRef {
+	return self.rpc.ResponseExtraData
 }
 
 func (self GreeterStub_SayHello) Close() {
@@ -241,8 +241,8 @@ type GreeterStub_SayHello2 struct {
 	rpc *channel.RPC
 }
 
-func (self GreeterStub_SayHello2) WithRequestMetadata(metadata channel.Metadata) GreeterStub_SayHello2 {
-	self.rpc.RequestMetadata = metadata
+func (self GreeterStub_SayHello2) WithRequestExtraData(extraData channel.ExtraDataRef) GreeterStub_SayHello2 {
+	self.rpc.RequestExtraData = extraData
 	return self
 }
 
@@ -255,8 +255,8 @@ func (self GreeterStub_SayHello2) Invoke() error {
 	return self.rpc.Err
 }
 
-func (self GreeterStub_SayHello2) ResponseMetadata() channel.Metadata {
-	return self.rpc.ResponseMetadata
+func (self GreeterStub_SayHello2) ResponseExtraData() channel.ExtraDataRef {
+	return self.rpc.ResponseExtraData
 }
 
 func (self GreeterStub_SayHello2) Close() {
@@ -268,8 +268,8 @@ type GreeterStub_SayHello3 struct {
 	rpc *channel.RPC
 }
 
-func (self GreeterStub_SayHello3) WithRequestMetadata(metadata channel.Metadata) GreeterStub_SayHello3 {
-	self.rpc.RequestMetadata = metadata
+func (self GreeterStub_SayHello3) WithRequestExtraData(extraData channel.ExtraDataRef) GreeterStub_SayHello3 {
+	self.rpc.RequestExtraData = extraData
 	return self
 }
 
@@ -287,8 +287,8 @@ func (self GreeterStub_SayHello3) Invoke() (*SayHelloResp, error) {
 	return self.rpc.Response.(*SayHelloResp), nil
 }
 
-func (self GreeterStub_SayHello3) ResponseMetadata() channel.Metadata {
-	return self.rpc.ResponseMetadata
+func (self GreeterStub_SayHello3) ResponseExtraData() channel.ExtraDataRef {
+	return self.rpc.ResponseExtraData
 }
 
 func (self GreeterStub_SayHello3) Close() {

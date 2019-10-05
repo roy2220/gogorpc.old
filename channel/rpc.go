@@ -7,15 +7,15 @@ import (
 )
 
 type RPC struct {
-	Ctx             context.Context
-	ServiceID       string
-	MethodName      string
-	RequestMetadata Metadata
-	Request         Message
+	Ctx              context.Context
+	ServiceID        string
+	MethodName       string
+	RequestExtraData ExtraDataRef
+	Request          Message
 
-	ResponseMetadata Metadata
-	Response         Message
-	Err              error
+	ResponseExtraData ExtraDataRef
+	Response          Message
+	Err               error
 
 	internals rpcInternals
 }
@@ -25,7 +25,7 @@ func (self *RPC) Handle() bool {
 }
 
 func (self *RPC) Reprepare() {
-	self.ResponseMetadata = nil
+	self.ResponseExtraData = ExtraDataRef{}
 	self.Response = nil
 	self.Err = nil
 	self.internals.Reprepare()
@@ -33,6 +33,16 @@ func (self *RPC) Reprepare() {
 
 func (self *RPC) IsHandled() bool {
 	return self.internals.IsHandled()
+}
+
+func (self *RPC) Channel() interface {
+	InvokeRPC(rpc *RPC, responseFactory MessageFactory)
+	PrepareRPC(rpc *RPC, responseFactory MessageFactory)
+	Abort(extraData ExtraData)
+	TransportID() uuid.UUID
+	Extension() Extension
+} {
+	return self.internals.Channel
 }
 
 func (self *RPC) TraceID() uuid.UUID {
@@ -64,6 +74,7 @@ func MustGetRPC(ctx context.Context) *RPC {
 }
 
 type rpcInternals struct {
+	Channel        *Channel
 	SequenceNumber int32
 	Deadline       int64
 	TraceID        uuid.UUID

@@ -343,7 +343,7 @@ func (self *Transport) receiveHandshake(
 		return false, ErrBadHandshake
 	}
 
-	if handshakeSize > minMaxPacketSize {
+	if handshakeSize > self.options.MaxHandshakeSize {
 		return false, ErrHandshakeTooLarge
 	}
 
@@ -439,7 +439,7 @@ func (self *Transport) sendHandshake(
 		Int32("max_outgoing_packet_size", handshakeHeader.MaxOutgoingPacketSize).
 		Msg("transport_outgoing_handshake")
 
-	if handshakeSize > minMaxPacketSize {
+	if handshakeSize > self.options.MaxHandshakeSize {
 		return ErrHandshakeTooLarge
 	}
 

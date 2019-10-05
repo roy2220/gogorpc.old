@@ -2,10 +2,27 @@ package stream
 
 import (
 	"errors"
+	"strconv"
 
 	"github.com/gogo/protobuf/proto"
 
 	"github.com/let-z-go/gogorpc/internal/protocol"
+)
+
+const (
+	Incoming = Direction(iota)
+	Outgoing
+
+	NumberOfDirections = iota
+)
+
+const (
+	MessageKeepalive = protocol.MESSAGE_KEEPALIVE
+	MessageRequest   = protocol.MESSAGE_REQUEST
+	MessageResponse  = protocol.MESSAGE_RESPONSE
+	MessageHangup    = protocol.MESSAGE_HANGUP
+
+	NumberOfMessageTypes = 4
 )
 
 type Packet struct {
@@ -15,8 +32,32 @@ type Packet struct {
 	Hangup         protocol.Hangup
 	Err            error
 
-	messageType protocol.MessageType
+	direction   Direction
+	messageType MessageType
 }
+
+func (self *Packet) Direction() Direction {
+	return self.direction
+}
+
+func (self *Packet) MessageType() MessageType {
+	return self.messageType
+}
+
+type Direction int
+
+func (self Direction) String() string {
+	switch self {
+	case Incoming:
+		return "INCOMING"
+	case Outgoing:
+		return "OUTGOING"
+	default:
+		return strconv.Itoa(int(self))
+	}
+}
+
+type MessageType = protocol.MessageType
 
 type Message interface {
 	proto.Unmarshaler
@@ -24,6 +65,8 @@ type Message interface {
 
 	MarshalTo([]byte) (int, error)
 }
+
+type PacketFilter func(packet *Packet) bool
 
 type RawMessage []byte
 

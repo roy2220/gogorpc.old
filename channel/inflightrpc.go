@@ -6,10 +6,10 @@ import (
 )
 
 type inflightRPC struct {
-	IsEmitted        bool
-	ResponseMetadata Metadata
-	Response         Message
-	Err              error
+	IsEmitted         bool
+	ResponseExtraData ExtraData
+	Response          Message
+	Err               error
 
 	responseFactory MessageFactory
 	completion      chan struct{}
@@ -24,14 +24,14 @@ func (self *inflightRPC) NewResponse() Message {
 	return self.responseFactory()
 }
 
-func (self *inflightRPC) Succeed(metadata Metadata, response Message) {
-	self.ResponseMetadata = metadata
+func (self *inflightRPC) Succeed(extraData ExtraData, response Message) {
+	self.ResponseExtraData = extraData
 	self.Response = response
 	close(self.completion)
 }
 
-func (self *inflightRPC) Fail(metadata Metadata, err error) {
-	self.ResponseMetadata = metadata
+func (self *inflightRPC) Fail(extraData ExtraData, err error) {
+	self.ResponseExtraData = extraData
 	self.Response = NullMessage
 	self.Err = err
 	close(self.completion)

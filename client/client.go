@@ -2,8 +2,11 @@ package client
 
 import (
 	"context"
+	"errors"
 	"math/rand"
+	"net"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"github.com/let-z-go/gogorpc/channel"
@@ -15,6 +18,8 @@ type Client struct {
 	rawServerURLs []string
 	ctx           context.Context
 	cancel        context.CancelFunc
+	shutdown      chan struct{}
+	lastError     atomic.Value
 }
 
 func (self *Client) Init(options *Options, rawServerURLs ...string) *Client {
@@ -22,6 +27,7 @@ func (self *Client) Init(options *Options, rawServerURLs ...string) *Client {
 	self.channel.Init(false, self.options.Channel)
 	self.rawServerURLs = rawServerURLs
 	self.ctx, self.cancel = context.WithCancel(context.Background())
+	self.shutdown = make(chan struct{})
 	go self.run()
 	return self
 }
@@ -38,43 +44,76 @@ func (self *Client) PrepareRPC(rpc *channel.RPC, responseFactory channel.Message
 	self.channel.PrepareRPC(rpc, responseFactory)
 }
 
-func (self *Client) Abort(metadata channel.Metadata) {
-	self.channel.Abort(metadata)
+func (self *Client) Abort(extraData channel.ExtraData) {
+	self.channel.Abort(extraData)
 }
 
-func (self *Client) run() {
+func (self *Client) Shutdown() <-chan struct{} {
+	return self.shutdown
+}
+
+func (self *Client) LastError() error {
+	value := self.lastError.Load()
+
+	if value == nil {
+		return nil
+	}
+
+	return value.(error)
+}
+
+func (self *Client) run() (err error) {
 	defer func() {
-		self.options.Logger.Info().
+		self.options.Logger.Error().Err(err).
 			Strs("server_urls", self.rawServerURLs).
 			Msg("client_closed")
 		self.channel.Close()
 		self.cancel()
+		self.lastError.Store(err)
+		close(self.shutdown)
 	}()
 
 	serverURLManager_ := serverURLManager{
 		Options: self.options,
 	}
 
-	if !serverURLManager_.LoadServerURLs(self.rawServerURLs) {
+	err = serverURLManager_.LoadServerURLs(self.rawServerURLs)
+
+	if err != nil {
 		return
 	}
 
 	connectRetryCount := -1
 
 	for {
-		if self.ctx.Err() != nil {
+		err = self.ctx.Err()
+
+		if err != nil {
 			return
 		}
 
 		connectRetryCount++
-		serverURL, ok := serverURLManager_.GetNextServerURL(self.ctx, connectRetryCount)
 
-		if !ok {
+		if connectRetryCount >= 1 && self.options.WithoutConnectRetry {
 			return
 		}
 
-		connector := MustGetConnector(serverURL.Scheme)
-		connection, err := connector(self.ctx, self.getConnectTimeout(), serverURL)
+		var serverURL *url.URL
+		serverURL, err = serverURLManager_.GetNextServerURL(self.ctx, connectRetryCount)
+
+		if err != nil {
+			return
+		}
+
+		var connector Connector
+		connector, err = GetConnector(serverURL.Scheme)
+
+		if err != nil {
+			return
+		}
+
+		var connection net.Conn
+		connection, err = connector(self.ctx, self.getConnectTimeout(), serverURL)
 
 		if err != nil {
 			self.options.Logger.Error().Err(err).
@@ -83,39 +122,23 @@ func (self *Client) run() {
 			continue
 		}
 
-		if err := self.channel.Establish(self.ctx, serverURL, connection); err != nil {
-			self.options.Logger.Error().Err(err).
-				Str("server_url", serverURL.String()).
-				Str("transport_id", self.channel.TransportID().String()).
-				Msg("client_channel_establish_failed")
-
-			if _, ok := err.(*channel.NetworkError); ok {
-				continue
-			}
-
-			if !self.options.CloseOnChannelError {
-				continue
-			}
-
-			return
-		}
-
-		connectRetryCount = -1
-		err = self.channel.Process(self.ctx)
+		err = self.channel.Run(self.ctx, serverURL, connection)
 		self.options.Logger.Error().Err(err).
 			Str("server_url", serverURL.String()).
 			Str("transport_id", self.channel.TransportID().String()).
-			Msg("client_channel_process_failed")
+			Msg("client_channel_run_failed")
 
-		if _, ok = err.(*channel.NetworkError); ok {
+		if _, ok := err.(*channel.NetworkError); ok {
 			continue
 		}
 
-		if !self.options.CloseOnChannelError {
-			continue
+		if hangup, ok := err.(*channel.Hangup); ok && !hangup.IsPassive {
+			return
 		}
 
-		return
+		if self.options.CloseOnChannelError {
+			return
+		}
 	}
 }
 
@@ -127,6 +150,11 @@ func (self *Client) getConnectTimeout() time.Duration {
 	return 0
 }
 
+var (
+	ErrNoValidServerURL      = errors.New("gogorpc/client: no valid server url")
+	ErrTooManyConnectRetries = errors.New("gogorpc/client: too many connect retries")
+)
+
 type serverURLManager struct {
 	Options *Options
 
@@ -135,7 +163,7 @@ type serverURLManager struct {
 	connectRetryBackoff time.Duration
 }
 
-func (self *serverURLManager) LoadServerURLs(rawServerURLs []string) bool {
+func (self *serverURLManager) LoadServerURLs(rawServerURLs []string) error {
 	for _, rawServerURL := range rawServerURLs {
 		serverURL, err := url.Parse(rawServerURL)
 
@@ -161,48 +189,39 @@ func (self *serverURLManager) LoadServerURLs(rawServerURLs []string) bool {
 	n := len(self.serverURLs)
 
 	if n == 0 {
-		self.Options.Logger.Warn().Msg("client_no_valid_server_url")
-		return false
+		return ErrNoValidServerURL
 	}
 
 	rand.Shuffle(n, func(i, j int) {
 		self.serverURLs[i], self.serverURLs[j] = self.serverURLs[j], self.serverURLs[i]
 	})
 
-	return true
+	return nil
 }
 
-func (self *serverURLManager) GetNextServerURL(ctx context.Context, connectRetryCount int) (*url.URL, bool) {
-	if self.Options.WithoutConnectRetry {
-		return nil, false
+func (self *serverURLManager) GetNextServerURL(ctx context.Context, connectRetryCount int) (*url.URL, error) {
+	connectRetryOptions := &self.Options.ConnectRetry
+
+	if connectRetryOptions.MaxCount >= 1 && connectRetryCount > connectRetryOptions.MaxCount {
+		return nil, ErrTooManyConnectRetries
 	}
 
-	connectRetryPolicy := &self.Options.ConnectRetry
-
-	if connectRetryPolicy.MaxCount >= 1 && connectRetryCount > connectRetryPolicy.MaxCount {
-		self.Options.Logger.Error().
-			Strs("valid_server_urls", self.getRawServerURLs()).
-			Int("max_connect_retry_count", connectRetryPolicy.MaxCount).
-			Msg("client_too_many_connect_retries")
-		return nil, false
-	}
-
-	if !connectRetryPolicy.WithoutBackoff && connectRetryCount >= 1 {
+	if !connectRetryOptions.WithoutBackoff && connectRetryCount >= 1 {
 		connectRetryBackoff := self.connectRetryBackoff
 
 		if connectRetryCount == 1 {
-			connectRetryBackoff = connectRetryPolicy.MinBackoff
+			connectRetryBackoff = connectRetryOptions.MinBackoff
 		} else {
 			connectRetryBackoff *= 2
 
-			if connectRetryBackoff > connectRetryPolicy.MaxBackoff {
-				connectRetryBackoff = connectRetryPolicy.MaxBackoff
+			if connectRetryBackoff > connectRetryOptions.MaxBackoff {
+				connectRetryBackoff = connectRetryOptions.MaxBackoff
 			}
 		}
 
 		self.connectRetryBackoff = connectRetryBackoff
 
-		if !connectRetryPolicy.WithoutBackoffJitter {
+		if !connectRetryOptions.WithoutBackoffJitter {
 			connectRetryBackoff = time.Duration(float64(connectRetryBackoff) * (0.5 + rand.Float64()))
 		}
 
@@ -211,25 +230,12 @@ func (self *serverURLManager) GetNextServerURL(ctx context.Context, connectRetry
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			self.Options.Logger.Error().Err(ctx.Err()).
-				Strs("valid_server_urls", self.getRawServerURLs()).
-				Msg("client_connect_retry_delay_failed")
-			return nil, false
+			return nil, ctx.Err()
 		case <-timer.C:
 		}
 	}
 
 	serverURL := self.serverURLs[self.nextServerURLIndex]
 	self.nextServerURLIndex = (self.nextServerURLIndex + 1) % len(self.serverURLs)
-	return serverURL, true
-}
-
-func (self *serverURLManager) getRawServerURLs() []string {
-	rawServerURLs := make([]string, len(self.serverURLs))
-
-	for i, serverURL := range self.serverURLs {
-		rawServerURLs[i] = serverURL.String()
-	}
-
-	return rawServerURLs
+	return serverURL, nil
 }

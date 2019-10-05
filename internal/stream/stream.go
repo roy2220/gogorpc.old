@@ -99,12 +99,12 @@ func (self *Stream) Establish(ctx context.Context, connection net.Conn, handshak
 	return ok, nil
 }
 
-func (self *Stream) Process(ctx context.Context, messageProcessor MessageProcessor, messageFilter MessageFilter) error {
+func (self *Stream) Process(ctx context.Context, messageProcessor MessageProcessor) error {
 	errs := make(chan error, 2)
 	ctx, cancel := context.WithCancel(ctx)
 
 	go func() {
-		err := self.sendPackets(ctx, messageProcessor, messageFilter)
+		err := self.sendPackets(ctx, messageProcessor)
 		errs <- err
 
 		if _, ok := err.(*Hangup); ok {
@@ -123,7 +123,7 @@ func (self *Stream) Process(ctx context.Context, messageProcessor MessageProcess
 		cancel()
 	}()
 
-	errs <- self.receivePackets(ctx, messageProcessor, messageFilter)
+	errs <- self.receivePackets(ctx, messageProcessor)
 	cancel()
 	err := <-errs
 	<-errs
@@ -168,8 +168,8 @@ func (self *Stream) SendResponse(responseHeader *protocol.ResponseHeader, respon
 	return nil
 }
 
-func (self *Stream) Abort(metadata Metadata) {
-	self.hangUp(HangupAborted, metadata)
+func (self *Stream) Abort(extraData ExtraData) {
+	self.hangUp(HangupAborted, extraData)
 }
 
 func (self *Stream) adjust() error {
@@ -196,8 +196,8 @@ func (self *Stream) adjust() error {
 	return nil
 }
 
-func (self *Stream) receivePackets(ctx context.Context, messageProcessor MessageProcessor, messageFilter MessageFilter) error {
-	var packet Packet
+func (self *Stream) receivePackets(ctx context.Context, messageProcessor MessageProcessor) error {
+	packet := Packet{direction: Incoming}
 
 	for {
 		if err := self.peek(ctx, self.incomingKeepaliveInterval/2*3, messageProcessor, &packet); err != nil {
@@ -211,7 +211,6 @@ func (self *Stream) receivePackets(ctx context.Context, messageProcessor Message
 		if err := self.handlePacket(
 			ctx,
 			&packet,
-			messageFilter,
 			messageProcessor,
 			&newIncomingConcurrency,
 			&handledResponseCount,
@@ -233,7 +232,6 @@ func (self *Stream) receivePackets(ctx context.Context, messageProcessor Message
 			if err := self.handlePacket(
 				ctx,
 				&packet,
-				messageFilter,
 				messageProcessor,
 				&newIncomingConcurrency,
 				&handledResponseCount,
@@ -278,7 +276,7 @@ func (self *Stream) loadPacket(packet *Packet, transportPacket *transport.Packet
 	packet.messageType = transportPacket.Header.MessageType
 
 	switch packet.messageType {
-	case protocol.MESSAGE_KEEPALIVE:
+	case MessageKeepalive:
 		packet.Message = nil
 		packet.Err = nil
 		messageFactory.NewKeepalive(packet)
@@ -286,7 +284,7 @@ func (self *Stream) loadPacket(packet *Packet, transportPacket *transport.Packet
 		if packet.Err == nil {
 			packet.Err = packet.Message.Unmarshal(transportPacket.Payload)
 		}
-	case protocol.MESSAGE_REQUEST:
+	case MessageRequest:
 		if self.isHungUp() {
 			packet.Err = ErrPacketDropped
 			return
@@ -323,7 +321,7 @@ func (self *Stream) loadPacket(packet *Packet, transportPacket *transport.Packet
 		if packet.Err == nil {
 			packet.Err = packet.Message.Unmarshal(rawPacket[requestOffset:])
 		}
-	case protocol.MESSAGE_RESPONSE:
+	case MessageResponse:
 		rawPacket := transportPacket.Payload
 		packetSize := len(rawPacket)
 
@@ -355,7 +353,7 @@ func (self *Stream) loadPacket(packet *Packet, transportPacket *transport.Packet
 		if packet.Err == nil {
 			packet.Err = packet.Message.Unmarshal(rawPacket[responseOffset:])
 		}
-	case protocol.MESSAGE_HANGUP:
+	case MessageHangup:
 		hangup := &packet.Hangup
 		hangup.Reset()
 
@@ -373,7 +371,6 @@ func (self *Stream) loadPacket(packet *Packet, transportPacket *transport.Packet
 func (self *Stream) handlePacket(
 	ctx context.Context,
 	packet *Packet,
-	incomingMessageFilter IncomingMessageFilter,
 	messageHandler MessageHandler,
 	incomingConcurrency *int,
 	handledResponseCount *int,
@@ -383,30 +380,22 @@ func (self *Stream) handlePacket(
 		return nil
 	}
 
+	if packet.Err == nil {
+		self.filterPacket(packet)
+	}
+
+	if packet.Err == ErrPacketDropped {
+		return nil
+	}
+
 	switch packet.messageType {
-	case protocol.MESSAGE_KEEPALIVE:
-		if packet.Err == nil {
-			incomingMessageFilter.FilterIncomingKeepalive(packet)
-		}
-
-		if packet.Err == ErrPacketDropped {
-			return nil
-		}
-
+	case MessageKeepalive:
 		messageHandler.HandleKeepalive(ctx, packet)
 
 		if packet.Err == nil {
 			self.transport.ShrinkInputBuffer()
 		}
-	case protocol.MESSAGE_REQUEST:
-		if packet.Err == nil {
-			incomingMessageFilter.FilterIncomingRequest(packet)
-		}
-
-		if packet.Err == ErrPacketDropped {
-			return nil
-		}
-
+	case MessageRequest:
 		if *incomingConcurrency == self.incomingConcurrencyLimit {
 			self.hangUp(HangupTooManyIncomingRequests, nil)
 			return nil
@@ -414,24 +403,10 @@ func (self *Stream) handlePacket(
 
 		messageHandler.HandleRequest(ctx, packet)
 		*incomingConcurrency++
-	case protocol.MESSAGE_RESPONSE:
-		if packet.Err == nil {
-			incomingMessageFilter.FilterIncomingResponse(packet)
-		}
-
-		if packet.Err == ErrPacketDropped {
-			return nil
-		}
-
+	case MessageResponse:
 		messageHandler.HandleResponse(ctx, packet)
 		*handledResponseCount++
-	case protocol.MESSAGE_HANGUP:
-		incomingMessageFilter.FilterIncomingHangup(packet)
-
-		if packet.Err == ErrPacketDropped {
-			return nil
-		}
-
+	case MessageHangup:
 		if packet.Err == nil {
 			self.options.Logger.Info().Err(packet.Err).
 				Str("transport_id", self.TransportID().String()).
@@ -441,7 +416,7 @@ func (self *Stream) handlePacket(
 			return &Hangup{
 				IsPassive: true,
 				Code:      hangup.Code,
-				Metadata:  hangup.Metadata,
+				ExtraData: hangup.ExtraData,
 			}
 		}
 	default:
@@ -458,17 +433,17 @@ func (self *Stream) handlePacket(
 	return nil
 }
 
-func (self *Stream) hangUp(hangupCode HangupCode, metadata Metadata) {
+func (self *Stream) hangUp(hangupCode HangupCode, extraData ExtraData) {
 	if atomic.CompareAndSwapInt32(&self.isHungUp_, 0, 1) {
 		self.pendingHangup <- &Hangup{
 			IsPassive: false,
 			Code:      hangupCode,
-			Metadata:  metadata,
+			ExtraData: extraData,
 		}
 	}
 }
 
-func (self *Stream) sendPackets(ctx context.Context, messageProcessor MessageProcessor, messageFilter MessageFilter) error {
+func (self *Stream) sendPackets(ctx context.Context, messageProcessor MessageProcessor) error {
 	errs := make(chan error, 2)
 	ctx, cancel := context.WithCancel(ctx)
 	pendingRequests := self.makePendingRequests(errs, ctx, cancel)
@@ -488,7 +463,7 @@ func (self *Stream) sendPackets(ctx context.Context, messageProcessor MessagePro
 			return err
 		}
 
-		err = self.emitPackets(pendingRequests2, pendingResponses2, pendingHangup, messageProcessor, messageFilter)
+		err = self.emitPackets(pendingRequests2, pendingResponses2, pendingHangup, messageProcessor)
 
 		if err != nil {
 			if pendingRequests2 != nil {
@@ -635,9 +610,8 @@ func (self *Stream) emitPackets(
 	pendingResponses *pendingMessages,
 	pendingHangup *Hangup,
 	messageEmitter MessageEmitter,
-	outgoingMessageFilter OutgoingMessageFilter,
 ) error {
-	var packet Packet
+	packet := Packet{direction: Outgoing}
 	err := error(nil)
 	emittedPacketCount := 0
 
@@ -649,7 +623,7 @@ func (self *Stream) emitPackets(
 
 		for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 			pendingRequest := (*PendingRequest)(listNode.GetContainer(unsafe.Offsetof(PendingRequest{}.ListNode)))
-			packet.messageType = protocol.MESSAGE_REQUEST
+			packet.messageType = MessageRequest
 			packet.RequestHeader = pendingRequest.Header
 			packet.Message = pendingRequest.Payload
 			var ok bool
@@ -663,7 +637,7 @@ func (self *Stream) emitPackets(
 					err = nil
 				}
 			} else {
-				ok, err = self.write(&packet, messageEmitter, outgoingMessageFilter)
+				ok, err = self.write(&packet, messageEmitter)
 			}
 
 			if err != nil {
@@ -696,11 +670,11 @@ func (self *Stream) emitPackets(
 
 		for listNode := getListNode(); listNode != nil; listNode = getListNode() {
 			pendingResponse := (*PendingResponse)(listNode.GetContainer(unsafe.Offsetof(PendingResponse{}.ListNode)))
-			packet.messageType = protocol.MESSAGE_RESPONSE
+			packet.messageType = MessageResponse
 			packet.ResponseHeader = pendingResponse.Header
 			packet.Message = pendingResponse.Payload
 			var ok bool
-			ok, err = self.write(&packet, messageEmitter, outgoingMessageFilter)
+			ok, err = self.write(&packet, messageEmitter)
 
 			if err != nil {
 				self.options.Logger.Error().Err(err).
@@ -730,10 +704,10 @@ func (self *Stream) emitPackets(
 		self.options.Logger.Info().
 			Str("transport_id", self.TransportID().String()).
 			Msg("stream_active_hangup")
-		packet.messageType = protocol.MESSAGE_HANGUP
+		packet.messageType = MessageHangup
 		packet.Hangup.Code = pendingHangup.Code
-		packet.Hangup.Metadata = pendingHangup.Metadata
-		_, err = self.write(&packet, messageEmitter, outgoingMessageFilter)
+		packet.Hangup.ExtraData = pendingHangup.ExtraData
+		_, err = self.write(&packet, messageEmitter)
 
 		if err != nil {
 			return err
@@ -743,8 +717,8 @@ func (self *Stream) emitPackets(
 	}
 
 	if err == nil && emittedPacketCount == 0 {
-		packet.messageType = protocol.MESSAGE_KEEPALIVE
-		_, err = self.write(&packet, messageEmitter, outgoingMessageFilter)
+		packet.messageType = MessageKeepalive
+		_, err = self.write(&packet, messageEmitter)
 	}
 
 	if err != nil {
@@ -758,7 +732,7 @@ func (self *Stream) emitPackets(
 	return nil
 }
 
-func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter, outgoingMessageFilter OutgoingMessageFilter) (bool, error) {
+func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter) (bool, error) {
 	transportPacket := transport.Packet{
 		Header: protocol.PacketHeader{
 			MessageType: packet.messageType,
@@ -768,12 +742,12 @@ func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter, outgoin
 	packet.Err = nil
 
 	switch packet.messageType {
-	case protocol.MESSAGE_KEEPALIVE:
+	case MessageKeepalive:
 		packet.Message = nil
 		messageEmitter.EmitKeepalive(packet)
 
 		if packet.Err == nil {
-			outgoingMessageFilter.FilterOutgoingKeepalive(packet)
+			self.filterPacket(packet)
 
 			if packet.Err == nil {
 				transportPacket.PayloadSize = packet.Message.Size()
@@ -788,46 +762,42 @@ func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter, outgoin
 				}
 			}
 		}
-	case protocol.MESSAGE_REQUEST:
-		outgoingMessageFilter.FilterOutgoingRequest(packet)
+	case MessageRequest:
+		self.filterPacket(packet)
 
 		if packet.Err == nil {
 			requestHeader := &packet.RequestHeader
 			requestHeaderSize := requestHeader.Size()
 			transportPacket.PayloadSize = 4 + requestHeaderSize + packet.Message.Size()
 
-			callback := func(buffer []byte) error {
+			packet.Err = self.transport.Write(&transportPacket, func(buffer []byte) error {
 				binary.BigEndian.PutUint32(buffer, uint32(requestHeaderSize))
 				requestHeader.MarshalTo(buffer[4:])
 				_, err := packet.Message.MarshalTo(buffer[4+requestHeaderSize:])
 				return err
-			}
-
-			packet.Err = self.transport.Write(&transportPacket, callback)
+			})
 		}
 
 		messageEmitter.PostEmitRequest(packet)
-	case protocol.MESSAGE_RESPONSE:
-		outgoingMessageFilter.FilterOutgoingResponse(packet)
+	case MessageResponse:
+		self.filterPacket(packet)
 
 		if packet.Err == nil {
 			responseHeader := &packet.ResponseHeader
 			responseHeaderSize := responseHeader.Size()
 			transportPacket.PayloadSize = 4 + responseHeaderSize + packet.Message.Size()
 
-			callback := func(buffer []byte) error {
+			packet.Err = self.transport.Write(&transportPacket, func(buffer []byte) error {
 				binary.BigEndian.PutUint32(buffer, uint32(responseHeaderSize))
 				responseHeader.MarshalTo(buffer[4:])
 				_, err := packet.Message.MarshalTo(buffer[4+responseHeaderSize:])
 				return err
-			}
-
-			packet.Err = self.transport.Write(&transportPacket, callback)
+			})
 		}
 
 		messageEmitter.PostEmitResponse(packet)
-	case protocol.MESSAGE_HANGUP:
-		outgoingMessageFilter.FilterOutgoingHangup(packet)
+	case MessageHangup:
+		self.filterPacket(packet)
 
 		if packet.Err == nil {
 			hangup := &packet.Hangup
@@ -855,6 +825,16 @@ func (self *Stream) write(packet *Packet, messageEmitter MessageEmitter, outgoin
 
 func (self *Stream) flush(ctx context.Context, timeout time.Duration) error {
 	return self.transport.Flush(ctx, timeout)
+}
+
+func (self *Stream) filterPacket(packet *Packet) {
+	packetFilters := self.options.DoGetPacketFilters(packet.direction, packet.messageType)
+
+	for _, packetFilter := range packetFilters {
+		if !packetFilter(packet) {
+			break
+		}
+	}
 }
 
 func (self *Stream) isHungUp() bool {

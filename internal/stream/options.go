@@ -1,9 +1,11 @@
 package stream
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/let-z-go/toolkit/utils"
 	"github.com/rs/zerolog"
 
 	"github.com/let-z-go/gogorpc/internal/transport"
@@ -12,6 +14,7 @@ import (
 type Options struct {
 	Transport                 *transport.Options
 	Logger                    *zerolog.Logger
+	PacketFilters             [1 + NumberOfDirections + NumberOfDirections*NumberOfMessageTypes][]PacketFilter
 	ActiveHangupTimeout       time.Duration
 	IncomingKeepaliveInterval time.Duration
 	OutgoingKeepaliveInterval time.Duration
@@ -43,6 +46,64 @@ func (self *Options) Normalize() *Options {
 	return self
 }
 
+func (self *Options) AddPacketFilter(direction Direction, messageType MessageType, packetFilter PacketFilter) *Options {
+	if direction < 0 {
+		utils.Assert(messageType < 0, func() string {
+			return fmt.Sprintf("gogorpc/channel: invalid argument: messageType=%#v, direction=%#v", messageType, direction)
+		})
+
+		packetFilters := &self.PacketFilters[0]
+		i := len(*packetFilters)
+		insertPacketFilter(packetFilter, packetFilters, i)
+
+		for d, j := 0, 1; d < NumberOfDirections; d, j = d+1, j+1 {
+			insertPacketFilter(packetFilter, &self.PacketFilters[j], i)
+
+			for mt, k := 0, 1+NumberOfDirections+d*NumberOfMessageTypes; mt < NumberOfMessageTypes; mt, k = mt+1, k+1 {
+				insertPacketFilter(packetFilter, &self.PacketFilters[k], i)
+			}
+		}
+	} else {
+		d := int(direction)
+
+		if messageType < 0 {
+			packetFilters := &self.PacketFilters[1+d]
+			i := len(*packetFilters)
+			insertPacketFilter(packetFilter, packetFilters, i)
+
+			for mt, j := 0, 1+NumberOfDirections+d*NumberOfMessageTypes; mt < NumberOfMessageTypes; mt, j = mt+1, j+1 {
+				insertPacketFilter(packetFilter, &self.PacketFilters[j], i)
+			}
+		} else {
+			mt := int(messageType)
+			packetFilters := &self.PacketFilters[1+NumberOfDirections+d*NumberOfMessageTypes+mt]
+			insertPacketFilter(packetFilter, packetFilters, len(*packetFilters))
+		}
+	}
+
+	return self
+}
+
+func (self *Options) GetPacketFilters(direction Direction, messageType MessageType) []PacketFilter {
+	if direction < 0 {
+		utils.Assert(messageType < 0, func() string {
+			return fmt.Sprintf("gogorpc/channel: invalid argument: messageType=%#v, direction=%#v", messageType, direction)
+		})
+
+		return self.PacketFilters[0]
+	}
+
+	if messageType < 0 {
+		return self.PacketFilters[1+int(direction)]
+	}
+
+	return self.DoGetPacketFilters(direction, messageType)
+}
+
+func (self *Options) DoGetPacketFilters(direction Direction, messageType MessageType) []PacketFilter {
+	return self.PacketFilters[1+NumberOfDirections+int(direction)*NumberOfMessageTypes+int(messageType)]
+}
+
 const (
 	defaultActiveHangupTimeout = 3 * time.Second
 	minActiveHangupTimeout     = 1 * time.Second
@@ -62,6 +123,14 @@ const (
 )
 
 var defaultTransportOptions transport.Options
+
+func insertPacketFilter(packetFilter PacketFilter, packetFilters *[]PacketFilter, i int) {
+	newPacketFlters := make([]PacketFilter, len(*packetFilters)+1)
+	copy(newPacketFlters[:i], (*packetFilters)[:i])
+	newPacketFlters[i] = packetFilter
+	copy(newPacketFlters[i+1:], (*packetFilters)[i:])
+	*packetFilters = newPacketFlters
+}
 
 func normalizeDurValue(value *time.Duration, defaultValue, minValue, maxValue time.Duration) {
 	if *value == 0 {

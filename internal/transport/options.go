@@ -11,6 +11,7 @@ import (
 type Options struct {
 	Logger                *zerolog.Logger
 	HandshakeTimeout      time.Duration
+	MaxHandshakeSize      int
 	MinInputBufferSize    int
 	MaxInputBufferSize    int
 	MaxIncomingPacketSize int
@@ -26,6 +27,7 @@ func (self *Options) Normalize() *Options {
 		}
 
 		normalizeDurValue(&self.HandshakeTimeout, defaultHandshakeTimeout, minHandshakeTimeout, maxHandshakeTimeout)
+		normalizeIntValue(&self.MaxHandshakeSize, defaultMaxHandshakeSize, minMaxHandshakeSize, maxMaxHandshakeSize)
 		normalizeIntValue(&self.MinInputBufferSize, defaultMinInputBufferSize, minInputBufferSize, maxInputBufferSize)
 		self.MinInputBufferSize = int(utils.NextPowerOfTwo(int64(self.MinInputBufferSize)))
 		normalizeIntValue(&self.MaxInputBufferSize, defaultMaxInputBufferSize, minInputBufferSize, maxInputBufferSize)
@@ -54,9 +56,9 @@ const (
 )
 
 const (
-	defaultMaxPacketSize = 1 << 20
-	minMaxPacketSize     = 1 << 10
-	maxMaxPacketSize     = 1 << 30
+	defaultMaxHandshakeSize = 1 << 16
+	minMaxHandshakeSize     = 1 << 12
+	maxMaxHandshakeSize     = 1 << 20
 )
 
 const (
@@ -64,6 +66,12 @@ const (
 	defaultMaxInputBufferSize = 1 << 24
 	minInputBufferSize        = 1 << 10
 	maxInputBufferSize        = 1 << 30
+)
+
+const (
+	defaultMaxPacketSize = 1 << 20
+	minMaxPacketSize     = 1 << 10
+	maxMaxPacketSize     = 1 << 30
 )
 
 var dummyLogger = zerolog.Nop()

@@ -17,7 +17,7 @@ const (
 type Hangup struct {
 	IsPassive bool
 	Code      HangupCode
-	Metadata  Metadata
+	ExtraData ExtraData
 }
 
 func (self *Hangup) Error() string {

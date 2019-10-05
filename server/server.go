@@ -43,66 +43,54 @@ func (self *Server) Run() (err error) {
 	atomic.AddInt32(&self.activity.Counter, 1)
 
 	defer func() {
-		self.options.Logger.Info().
-			Str("server_url", self.rawURL).
-			Msg("server_closed")
-
-		if self.activity.IsClosed() {
-			err = ErrClosed
+		if err == ErrClosed {
+			err = nil
 		} else {
-			self.cancel()
+			self.Close()
 		}
 
+		self.options.Logger.Error().Err(err).
+			Str("server_url", self.rawURL).
+			Msg("server_closed")
 		atomic.AddInt32(&self.activity.Counter, -1)
 	}()
 
 	if self.activity.IsClosed() {
+		err = ErrClosed
 		return
 	}
 
-	url_, err := url.Parse(self.rawURL)
+	var url_ *url.URL
+	url_, err = url.Parse(self.rawURL)
 
 	if err != nil {
-		self.options.Logger.Error().
-			Err(err).
+		self.options.Logger.Error().Err(err).
 			Str("server_url", self.rawURL).
 			Msg("server_invalid_url")
 		return err
 	}
 
-	acceptor, err := GetAcceptor(url_.Scheme)
+	var acceptor Acceptor
+	acceptor, err = GetAcceptor(url_.Scheme)
 
 	if err != nil {
-		self.options.Logger.Error().
-			Err(err).
-			Str("server_url", self.rawURL).
-			Msg("server_bad_scheme")
-		return err
+		return
 	}
 
 	err = acceptor(self.ctx, url_, &self.activity.Counter, func(connection net.Conn) {
 		channel_ := new(channel.Channel).Init(true, self.options.Channel)
 		defer channel_.Close()
-
-		if err := channel_.Establish(self.activity.Ctx, url_, connection); err != nil {
-			self.options.Logger.Warn().Err(err).
-				Str("server_url", self.rawURL).
-				Str("transport_id", channel_.TransportID().String()).
-				Msg("server_channel_establish_failed")
-			return
-		}
-
-		err := channel_.Process(self.activity.Ctx)
+		err := channel_.Run(self.activity.Ctx, url_, connection)
 		self.options.Logger.Warn().Err(err).
 			Str("server_url", self.rawURL).
 			Str("transport_id", channel_.TransportID().String()).
-			Msg("server_channel_process_failed")
+			Msg("server_channel_run_failed")
 	})
 
 	self.options.Logger.Error().Err(err).
 		Str("server_url", self.rawURL).
 		Msg("server_accept_failed")
-	return err
+	return
 }
 
 func (self *Server) WaitForShutdown() bool {

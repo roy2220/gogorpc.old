@@ -616,7 +616,7 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Process(ctx, mp1, DummyMessageFilter{})
+				err := st.Process(ctx, mp1)
 				t.Log(err)
 			}()
 			defer wg.Wait()
@@ -637,7 +637,7 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Process(ctx, mp2, DummyMessageFilter{})
+				err := st.Process(ctx, mp2)
 				t.Log(err)
 			}()
 			defer wg.Wait()

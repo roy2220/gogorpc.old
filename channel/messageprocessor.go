@@ -3,7 +3,6 @@ package channel
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/let-z-go/gogorpc/internal/protocol"
@@ -11,13 +10,11 @@ import (
 	"github.com/let-z-go/toolkit/uuid"
 )
 
-var ErrFastResponse = errors.New("gogorpc/channel: fast response")
+var ErrDirectResponse = errors.New("gogorpc/channel: direct response")
 
 type messageProcessor struct {
-	Keepaliver   Keepaliver
-	Options      *Options
-	Stream       *stream.Stream
-	InflightRPCs *sync.Map
+	Channel *Channel
+	Stream  *stream.Stream
 
 	methodOptionsCache *MethodOptions
 	inflightRPCCache   *inflightRPC
@@ -26,19 +23,19 @@ type messageProcessor struct {
 var _ = stream.MessageProcessor((*messageProcessor)(nil))
 
 func (self *messageProcessor) NewKeepalive(packet *Packet) {
-	packet.Message = self.Keepaliver.NewKeepalive()
+	packet.Message = self.Channel.extension.NewKeepalive()
 }
 
 func (self *messageProcessor) HandleKeepalive(ctx context.Context, packet *Packet) {
-	packet.Err = self.Keepaliver.HandleKeepalive(ctx, packet.Message)
+	packet.Err = self.Channel.extension.HandleKeepalive(ctx, packet.Message)
 }
 
 func (self *messageProcessor) EmitKeepalive(packet *Packet) {
-	packet.Message, packet.Err = self.Keepaliver.EmitKeepalive()
+	packet.Message, packet.Err = self.Channel.extension.EmitKeepalive()
 }
 
 func (self *messageProcessor) NewRequest(packet *Packet) {
-	methodOptions := self.Options.GetMethod(packet.RequestHeader.ServiceId, packet.RequestHeader.MethodName)
+	methodOptions := self.Channel.options.GetMethod(packet.RequestHeader.ServiceId, packet.RequestHeader.MethodName)
 	packet.Message = methodOptions.RequestFactory()
 	self.methodOptionsCache = methodOptions
 }
@@ -48,8 +45,8 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 	traceID := uuid.UUID{requestHeader.TraceId.Low, requestHeader.TraceId.High}
 
 	if packet.Err != nil {
-		if packet.Err == ErrFastResponse {
-			// fast response by MessageFilter.FilterIncomingRequest
+		if packet.Err == ErrDirectResponse {
+			// direct response by packet filter
 			responseHeader := &packet.ResponseHeader
 			responseHeader.SequenceNumber = requestHeader.SequenceNumber
 
@@ -59,7 +56,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 				self.Stream.SendResponse(responseHeader, NullMessage)
 			}
 		} else {
-			self.Options.Logger.Info().Err(packet.Err).
+			self.Channel.options.Logger.Info().Err(packet.Err).
 				Str("transport_id", self.Stream.TransportID().String()).
 				Str("trace_id", traceID.String()).
 				Str("service_id", requestHeader.ServiceId).
@@ -78,7 +75,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 	}
 
 	if self.methodOptionsCache.IncomingRPCHandler == nil {
-		self.Options.Logger.Info().
+		self.Channel.options.Logger.Info().
 			Str("transport_id", self.Stream.TransportID().String()).
 			Str("trace_id", traceID.String()).
 			Str("service_id", requestHeader.ServiceId).
@@ -97,13 +94,14 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 	rpc := GetPooledRPC()
 
 	*rpc = RPC{
-		Ctx:             ctx,
-		ServiceID:       requestHeader.ServiceId,
-		MethodName:      requestHeader.MethodName,
-		RequestMetadata: requestHeader.Metadata,
-		Request:         packet.Message,
+		Ctx:              ctx,
+		ServiceID:        requestHeader.ServiceId,
+		MethodName:       requestHeader.MethodName,
+		RequestExtraData: ExtraData(requestHeader.ExtraData).Ref(false),
+		Request:          packet.Message,
 
 		internals: rpcInternals{
+			Channel:        self.Channel,
 			SequenceNumber: requestHeader.SequenceNumber,
 			Deadline:       requestHeader.Deadline,
 			TraceID:        traceID,
@@ -127,7 +125,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 
 		responseHeader := protocol.ResponseHeader{
 			SequenceNumber: rpc.internals.SequenceNumber,
-			Metadata:       rpc.ResponseMetadata,
+			ExtraData:      rpc.ResponseExtraData.Value(),
 		}
 
 		var response Message
@@ -140,7 +138,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 			if rpcErr2, ok := rpc.Err.(*RPCError); ok {
 				rpcErr = rpcErr2
 			} else {
-				self.Options.Logger.Error().Err(rpc.Err).
+				self.Channel.options.Logger.Error().Err(rpc.Err).
 					Str("transport_id", self.Stream.TransportID().String()).
 					Str("trace_id", rpc.internals.TraceID.String()).
 					Str("service_id", rpc.ServiceID).
@@ -161,22 +159,22 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 
 func (self *messageProcessor) PostEmitRequest(packet *Packet) {
 	requestHeader := &packet.RequestHeader
-	value, _ := self.InflightRPCs.Load(requestHeader.SequenceNumber)
+	value, _ := self.Channel.inflightRPCs.Load(requestHeader.SequenceNumber)
 	inflightRPC_ := value.(*inflightRPC)
 
 	if packet.Err == nil {
 		inflightRPC_.IsEmitted = true
 	} else {
-		self.InflightRPCs.Delete(requestHeader.SequenceNumber)
+		self.Channel.inflightRPCs.Delete(requestHeader.SequenceNumber)
 
-		if packet.Err == ErrFastResponse {
-			// fast response by MessageFilter.FilterOutgoingRequest
+		if packet.Err == ErrDirectResponse {
+			// direct response by packet filter
 			responseHeader := &packet.ResponseHeader
 
 			if responseHeader.ErrorType == 0 {
-				self.inflightRPCCache.Succeed(responseHeader.Metadata, packet.Message)
+				self.inflightRPCCache.Succeed(responseHeader.ExtraData, packet.Message)
 			} else {
-				inflightRPC_.Fail(responseHeader.Metadata, &RPCError{
+				inflightRPC_.Fail(responseHeader.ExtraData, &RPCError{
 					Type: responseHeader.ErrorType,
 					Code: responseHeader.ErrorCode,
 				})
@@ -191,9 +189,13 @@ func (self *messageProcessor) PostEmitRequest(packet *Packet) {
 
 func (self *messageProcessor) NewResponse(packet *Packet) {
 	responseHeader := &packet.ResponseHeader
-	value, ok := self.InflightRPCs.Load(responseHeader.SequenceNumber)
+	value, ok := self.Channel.inflightRPCs.Load(responseHeader.SequenceNumber)
 
 	if !ok {
+		self.Channel.options.Logger.Warn().
+			Str("transport_id", self.Stream.TransportID().String()).
+			Int("sequence_number", int(responseHeader.SequenceNumber)).
+			Msg("channel_ignored_response")
 		packet.Err = ErrPacketDropped
 		return
 	}
@@ -201,11 +203,15 @@ func (self *messageProcessor) NewResponse(packet *Packet) {
 	inflightRPC_ := value.(*inflightRPC)
 
 	if !inflightRPC_.IsEmitted {
+		self.Channel.options.Logger.Warn().
+			Str("transport_id", self.Stream.TransportID().String()).
+			Int("sequence_number", int(responseHeader.SequenceNumber)).
+			Msg("channel_ignored_response")
 		packet.Err = ErrPacketDropped
 		return
 	}
 
-	self.InflightRPCs.Delete(responseHeader.SequenceNumber)
+	self.Channel.inflightRPCs.Delete(responseHeader.SequenceNumber)
 
 	if responseHeader.ErrorType == 0 {
 		packet.Message = inflightRPC_.NewResponse()
@@ -221,15 +227,15 @@ func (self *messageProcessor) HandleResponse(ctx context.Context, packet *Packet
 
 	if packet.Err == nil {
 		if responseHeader.ErrorType == 0 {
-			self.inflightRPCCache.Succeed(responseHeader.Metadata, packet.Message)
+			self.inflightRPCCache.Succeed(responseHeader.ExtraData, packet.Message)
 		} else {
-			self.inflightRPCCache.Fail(responseHeader.Metadata, &RPCError{
+			self.inflightRPCCache.Fail(responseHeader.ExtraData, &RPCError{
 				Type: responseHeader.ErrorType,
 				Code: responseHeader.ErrorCode,
 			})
 		}
 	} else {
-		self.inflightRPCCache.Fail(responseHeader.Metadata, packet.Err)
+		self.inflightRPCCache.Fail(responseHeader.ExtraData, packet.Err)
 		packet.Err = nil
 	}
 }

@@ -140,7 +140,7 @@ func TestBadHandshake(t *testing.T) {
 func TestBroken(t *testing.T) {
 	opts2 := &Options{}
 	opts2.BuildMethod("1", "2").SetIncomingRPCHandler(func(rpc *RPC) {
-		if rpc.RequestMetadata["I"][0]%2 == 0 {
+		if rpc.RequestExtraData.Get("I", []byte{99})[0]%2 == 0 {
 			<-rpc.Ctx.Done()
 			rpc.Response = NullMessage
 		} else {
@@ -158,11 +158,11 @@ func TestBroken(t *testing.T) {
 				go func(i int) {
 					defer wg.Done()
 					rpc := RPC{
-						Ctx:             ctx,
-						ServiceID:       "1",
-						MethodName:      "2",
-						Request:         NullMessage,
-						RequestMetadata: Metadata{"I": []byte{byte(i)}},
+						Ctx:              ctx,
+						ServiceID:        "1",
+						MethodName:       "2",
+						Request:          NullMessage,
+						RequestExtraData: ExtraData{"I": []byte{byte(i)}}.Ref(false),
 					}
 					cn.InvokeRPC(&rpc, NewRawMessage)
 					if i%2 == 0 {
@@ -184,11 +184,16 @@ func TestBroken(t *testing.T) {
 
 func TestReconnection1(t *testing.T) {
 	opts := Options{
-		Stream: &StreamOptions{
+		Stream: (&StreamOptions{
 			Transport: &TransportOptions{
 				Logger: &logger,
 			},
-		},
+		}).AddPacketFilter(Incoming, MessageRequest, func(pk *Packet) bool {
+			pk.ResponseHeader.ErrorType = 0
+			pk.Message = NullMessage
+			pk.Err = ErrDirectResponse
+			return true
+		}),
 	}
 	f := false
 	testSetup2(
@@ -214,7 +219,7 @@ func TestReconnection1(t *testing.T) {
 					} else {
 						time.Sleep(time.Second / 2)
 						cn.InvokeRPC(&rpc, GetNullMessage)
-						assert.EqualError(t, rpc.Err, "gogorpc/channel: rpc error: 404 - NotFound")
+						assert.NoError(t, rpc.Err)
 					}
 				}(i)
 			}
@@ -288,30 +293,30 @@ func TestInterception(t *testing.T) {
 	opts2.BuildMethod("foo", "bar").
 		SetIncomingRPCHandler(func(rpc *RPC) {
 			rpc.Response = NullMessage
-			assert.Equal(t, "v4", string(rpc.RequestMetadata["k"]))
+			assert.Equal(t, "v4", string(rpc.RequestExtraData.Get("k", nil)))
 		}).
 		AddIncomingRPCInterceptor(func(rpc *RPC) {
-			assert.Equal(t, "v2", string(rpc.RequestMetadata["k"]))
-			rpc.RequestMetadata["k"] = []byte("v3")
+			assert.Equal(t, "v2", string(rpc.RequestExtraData.Get("k", nil)))
+			rpc.RequestExtraData.Set("k", []byte("v3"))
 			rpc.Handle()
 		}).
 		AddIncomingRPCInterceptor(func(rpc *RPC) {
-			assert.Equal(t, "v3", string(rpc.RequestMetadata["k"]))
-			rpc.RequestMetadata["k"] = []byte("v4")
+			assert.Equal(t, "v3", string(rpc.RequestExtraData.Get("k", nil)))
+			rpc.RequestExtraData.Set("k", []byte("v4"))
 			rpc.Handle()
 		})
 
 	opts2.BuildMethod("foo", "").
 		AddIncomingRPCInterceptor(func(rpc *RPC) {
-			assert.Equal(t, "v1", string(rpc.RequestMetadata["k"]))
-			rpc.RequestMetadata["k"] = []byte("v2")
+			assert.Equal(t, "v1", string(rpc.RequestExtraData.Get("k", nil)))
+			rpc.RequestExtraData.Set("k", []byte("v2"))
 			rpc.Handle()
 		})
 	opts2.BuildMethod("", "").
 		AddIncomingRPCInterceptor(func(rpc *RPC) {
-			assert.Nil(t, rpc.RequestMetadata)
-			rpc.RequestMetadata = Metadata{}
-			rpc.RequestMetadata["k"] = []byte("v1")
+			assert.Nil(t, rpc.RequestExtraData.Value())
+			rpc.RequestExtraData = ExtraDataRef{}
+			rpc.RequestExtraData.Set("k", []byte("v1"))
 			rpc.Handle()
 		})
 	testSetup2(
@@ -394,15 +399,8 @@ func testSetup2(
 					if i >= 0 {
 						conn = makeConn()
 					}
-					if err := cn.Establish(ctx, nil, conn); err != nil {
-						t.Log(err)
-						continue
-					}
-
-					if err := cn.Process(ctx); err != nil {
-						t.Log(err)
-						continue
-					}
+					err := cn.Run(ctx, nil, conn)
+					t.Log(err)
 				}
 			}(conn)
 			defer wg.Wait()
@@ -415,14 +413,8 @@ func testSetup2(
 			go func() {
 				defer wg.Done()
 				defer cn.Close()
-				if err := cn.Establish(ctx, nil, conn); err != nil {
-					t.Log(err)
-					return
-				}
-				if err := cn.Process(ctx); err != nil {
-					t.Log(err)
-					return
-				}
+				err := cn.Run(ctx, nil, conn)
+				t.Log(err)
 			}()
 			defer wg.Wait()
 			return cb2(ctx, cn, conn)
@@ -475,7 +467,6 @@ type testExtension struct {
 	Listener
 	Handshaker
 	Keepaliver
-	MessageFilter
 }
 
 func (s testExtension) Factory() func(bool) Extension {
@@ -488,9 +479,6 @@ func (s testExtension) Factory() func(bool) Extension {
 		}
 		if s.Keepaliver == nil {
 			s.Keepaliver = DummyKeepaliver{}
-		}
-		if s.MessageFilter == nil {
-			s.MessageFilter = DummyMessageFilter{}
 		}
 		return s
 	}
