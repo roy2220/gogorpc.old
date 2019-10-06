@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/let-z-go/toolkit/timerpool"
+
 	"github.com/let-z-go/gogorpc/channel"
 )
 
@@ -225,13 +227,14 @@ func (self *serverURLManager) GetNextServerURL(ctx context.Context, connectRetry
 			connectRetryBackoff = time.Duration(float64(connectRetryBackoff) * (0.5 + rand.Float64()))
 		}
 
-		timer := time.NewTimer(connectRetryBackoff)
+		timer := timerpool.GetTimer(connectRetryBackoff)
 
 		select {
 		case <-ctx.Done():
-			timer.Stop()
+			timerpool.StopAndPutTimer(timer)
 			return nil, ctx.Err()
 		case <-timer.C:
+			timerpool.PutTimer(timer)
 		}
 	}
 

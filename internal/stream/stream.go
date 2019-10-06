@@ -12,6 +12,7 @@ import (
 
 	"github.com/let-z-go/intrusives/list"
 	"github.com/let-z-go/toolkit/deque"
+	"github.com/let-z-go/toolkit/timerpool"
 	"github.com/let-z-go/toolkit/uuid"
 
 	"github.com/let-z-go/gogorpc/internal/protocol"
@@ -108,15 +109,15 @@ func (self *Stream) Process(ctx context.Context, messageProcessor MessageProcess
 		errs <- err
 
 		if _, ok := err.(*Hangup); ok {
-			timer := time.NewTimer(self.options.ActiveHangupTimeout)
+			timer := timerpool.GetTimer(self.options.ActiveHangupTimeout)
 
 			select {
 			case <-ctx.Done():
-				timer.Stop()
+				timerpool.StopAndPutTimer(timer)
 				errs <- ctx.Err()
 				return
-			case <-timer.C:
-				// wait for receivePackets returning EOF
+			case <-timer.C: // wait for receivePackets returning EOF
+				timerpool.PutTimer(timer)
 			}
 		}
 
@@ -586,19 +587,20 @@ func (self *Stream) checkPendingMessages(
 	}
 
 	if n == 0 {
-		timer := time.NewTimer(timeout)
+		timer := timerpool.GetTimer(timeout)
 
 		select {
 		case err := <-errs:
-			timer.Stop()
+			timerpool.StopAndPutTimer(timer)
 			return nil, nil, nil, err
 		case pendingRequests2 = <-pendingRequests:
-			timer.Stop()
+			timerpool.StopAndPutTimer(timer)
 		case pendingResponses2 = <-pendingResponses:
-			timer.Stop()
+			timerpool.StopAndPutTimer(timer)
 		case pendingHangup = <-self.pendingHangup:
-			timer.Stop()
+			timerpool.StopAndPutTimer(timer)
 		case <-timer.C:
+			timerpool.PutTimer(timer)
 		}
 	}
 
