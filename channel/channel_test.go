@@ -51,7 +51,7 @@ func TestPingAndPong(t *testing.T) {
 						MethodName: "method2",
 						Request:    &msg,
 					}
-					cn.InvokeRPC(&rpc, NewRawMessage)
+					cn.DoRPC(&rpc, NewRawMessage)
 					if !assert.NoError(t, rpc.Err) {
 						t.FailNow()
 					}
@@ -76,7 +76,7 @@ func TestPingAndPong(t *testing.T) {
 						MethodName: "method1",
 						Request:    &msg,
 					}
-					cn.InvokeRPC(&rpc, NewRawMessage)
+					cn.DoRPC(&rpc, NewRawMessage)
 					if !assert.NoError(t, rpc.Err) {
 						t.FailNow()
 					}
@@ -124,7 +124,7 @@ func TestBadHandshake(t *testing.T) {
 					MethodName: "method2",
 					Request:    NullMessage,
 				}
-				cn.InvokeRPC(&rpc, GetNullMessage)
+				cn.DoRPC(&rpc, GetNullMessage)
 				assert.EqualError(t, rpc.Err, "gogorpc/channel: closed")
 			}
 			cn.Abort(nil)
@@ -164,7 +164,7 @@ func TestBroken(t *testing.T) {
 						Request:          NullMessage,
 						RequestExtraData: ExtraData{"I": []byte{byte(i)}}.Ref(false),
 					}
-					cn.InvokeRPC(&rpc, NewRawMessage)
+					cn.DoRPC(&rpc, NewRawMessage)
 					if i%2 == 0 {
 						assert.EqualError(t, rpc.Err, "gogorpc/channel: broken")
 					}
@@ -214,11 +214,11 @@ func TestReconnection1(t *testing.T) {
 					}
 					if i == 0 {
 						rpc.Request = testBlockMessage{time.Second / 2 * 3}
-						cn.InvokeRPC(&rpc, GetNullMessage)
+						cn.DoRPC(&rpc, GetNullMessage)
 						assert.EqualError(t, rpc.Err, "gogorpc/channel: broken")
 					} else {
 						time.Sleep(time.Second / 2)
-						cn.InvokeRPC(&rpc, GetNullMessage)
+						cn.DoRPC(&rpc, GetNullMessage)
 						assert.NoError(t, rpc.Err)
 					}
 				}(i)
@@ -266,11 +266,11 @@ func TestReconnection2(t *testing.T) {
 					}
 					if i == 0 {
 						rpc.Request = testBlockMessage{time.Second / 2 * 3}
-						cn.InvokeRPC(&rpc, GetNullMessage)
+						cn.DoRPC(&rpc, GetNullMessage)
 						assert.EqualError(t, rpc.Err, "gogorpc/channel: broken")
 					} else {
 						time.Sleep(time.Second / 2)
-						cn.InvokeRPC(&rpc, GetNullMessage)
+						cn.DoRPC(&rpc, GetNullMessage)
 						assert.EqualError(t, rpc.Err, "gogorpc/channel: closed")
 					}
 				}(i)
@@ -330,7 +330,7 @@ func TestInterception(t *testing.T) {
 				MethodName: "bar",
 				Request:    NullMessage,
 			}
-			cn.InvokeRPC(&rpc, GetNullMessage)
+			cn.DoRPC(&rpc, GetNullMessage)
 			cn.Abort(nil)
 			return false
 		},
@@ -364,7 +364,7 @@ func TestDeadline(t *testing.T) {
 				MethodName: "bar",
 				Request:    NullMessage,
 			}
-			cn.InvokeRPC(&rpc, GetNullMessage)
+			cn.DoRPC(&rpc, GetNullMessage)
 			assert.EqualError(t, rpc.Err, "context deadline exceeded")
 			cn.Abort(nil)
 			return false

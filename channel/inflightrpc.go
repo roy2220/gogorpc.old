@@ -15,9 +15,19 @@ type inflightRPC struct {
 	completion      chan struct{}
 }
 
-func (self *inflightRPC) Init(responseFactory MessageFactory) {
+func (self *inflightRPC) Init(responseFactory MessageFactory) *inflightRPC {
 	self.responseFactory = responseFactory
-	self.completion = make(chan struct{})
+	self.completion = make(chan struct{}, 1)
+	return self
+}
+
+func (self *inflightRPC) Reset(responseFactory MessageFactory) *inflightRPC {
+	self.IsEmitted = false
+	self.ResponseExtraData = nil
+	self.Response = nil
+	self.Err = nil
+	self.responseFactory = responseFactory
+	return self
 }
 
 func (self *inflightRPC) NewResponse() Message {
@@ -27,14 +37,14 @@ func (self *inflightRPC) NewResponse() Message {
 func (self *inflightRPC) Succeed(extraData ExtraData, response Message) {
 	self.ResponseExtraData = extraData
 	self.Response = response
-	close(self.completion)
+	self.completion <- struct{}{}
 }
 
 func (self *inflightRPC) Fail(extraData ExtraData, err error) {
 	self.ResponseExtraData = extraData
 	self.Response = NullMessage
 	self.Err = err
-	close(self.completion)
+	self.completion <- struct{}{}
 }
 
 func (self *inflightRPC) WaitFor(ctx context.Context) error {
@@ -48,14 +58,13 @@ func (self *inflightRPC) WaitFor(ctx context.Context) error {
 
 var inflightRPCPool = sync.Pool{}
 
-func newPooledInflightRPC() *inflightRPC {
+func getPooledInflightRPC(responseFactory MessageFactory) *inflightRPC {
 	var inflightRPC_ *inflightRPC
 
 	if value := inflightRPCPool.Get(); value == nil {
-		inflightRPC_ = new(inflightRPC)
+		inflightRPC_ = new(inflightRPC).Init(responseFactory)
 	} else {
-		inflightRPC_ = value.(*inflightRPC)
-		*inflightRPC_ = inflightRPC{}
+		inflightRPC_ = value.(*inflightRPC).Reset(responseFactory)
 	}
 
 	return inflightRPC_

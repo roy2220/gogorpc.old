@@ -33,7 +33,7 @@ func TestServerShutdown(t *testing.T) {
 			<-c.Shutdown()
 			t.Log(c.LastError())
 		}()
-		c.InvokeRPC(&channel.RPC{
+		c.DoRPC(&channel.RPC{
 			Ctx:     context.Background(),
 			Request: channel.NullMessage,
 		}, channel.GetNullMessage)

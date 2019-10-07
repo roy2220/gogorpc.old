@@ -49,7 +49,7 @@ func ExampleServer() {
 		Request:    &req,
 	}
 
-	cli.InvokeRPC(&rpc, channel.NewRawMessage)
+	cli.DoRPC(&rpc, channel.NewRawMessage)
 	resp := rpc.Response.(*channel.RawMessage)
 	fmt.Println(string(*resp))
 	// Output:

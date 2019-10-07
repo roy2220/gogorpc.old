@@ -36,7 +36,7 @@ func (self *RPC) IsHandled() bool {
 }
 
 func (self *RPC) Channel() interface {
-	InvokeRPC(rpc *RPC, responseFactory MessageFactory)
+	DoRPC(rpc *RPC, responseFactory MessageFactory)
 	PrepareRPC(rpc *RPC, responseFactory MessageFactory)
 	Abort(extraData ExtraData)
 	TransportID() uuid.UUID

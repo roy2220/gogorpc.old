@@ -84,18 +84,19 @@ func (self *Channel) Run(ctx context.Context, serverURL *url.URL, connection net
 	return err
 }
 
-func (self *Channel) InvokeRPC(rpc *RPC, responseFactory MessageFactory) {
+func (self *Channel) DoRPC(rpc *RPC, responseFactory MessageFactory) {
 	self.PrepareRPC(rpc, responseFactory)
 	rpc.Handle()
 }
 
 func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 	rpc.internals.Channel = self
+	rpcParent, rpcHasParent := GetRPC(rpc.Ctx)
 
-	if parentRPC, ok := GetRPC(rpc.Ctx); ok {
-		rpc.internals.TraceID = parentRPC.internals.TraceID
+	if rpcHasParent {
+		rpc.internals.TraceID = rpcParent.internals.TraceID
 
-		for key, value := range parentRPC.RequestExtraData.Value() {
+		for key, value := range rpcParent.RequestExtraData.Value() {
 			if !(len(key) >= 1 && key[0] == '_') {
 				continue
 			}
@@ -126,48 +127,7 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 		}
 
 		rpcHandler = func(rpc *RPC) {
-			inflightRPC_ := newPooledInflightRPC()
-			inflightRPC_.Init(responseFactory)
-			self.inflightRPCs.Store(rpc.internals.SequenceNumber, inflightRPC_)
-
-			if err := self.stream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
-				SequenceNumber: rpc.internals.SequenceNumber,
-				ServiceId:      rpc.ServiceID,
-				MethodName:     rpc.MethodName,
-				ExtraData:      rpc.RequestExtraData.Value(),
-				Deadline:       rpc.internals.Deadline,
-
-				TraceId: protocol.UUID{
-					Low:  rpc.internals.TraceID[0],
-					High: rpc.internals.TraceID[1],
-				},
-			}, rpc.Request); err != nil {
-				self.inflightRPCs.Delete(rpc.internals.SequenceNumber)
-
-				switch err {
-				case stream.ErrClosed:
-					rpc.Err = ErrClosed
-				default:
-					rpc.Err = err
-				}
-
-				return
-			}
-
-			if err := inflightRPC_.WaitFor(rpc.Ctx); err != nil {
-				rpc.Err = err
-				return
-			}
-
-			if inflightRPC_.Err == stream.ErrRequestExpired {
-				<-rpc.Ctx.Done()
-				inflightRPC_.Err = rpc.Ctx.Err()
-			}
-
-			rpc.ResponseExtraData = inflightRPC_.ResponseExtraData.Ref(false)
-			rpc.Response = inflightRPC_.Response
-			rpc.Err = inflightRPC_.Err
-			putPooledInflightRPC(inflightRPC_)
+			handleOutgoingRPC(rpc, rpcHasParent, rpcParent, responseFactory)
 		}
 	}
 
@@ -328,4 +288,57 @@ func (self state) GoString() string {
 	}
 }
 
-var noExtraData = make(ExtraData)
+func handleOutgoingRPC(rpc *RPC, rpcHasParent bool, rpcParent *RPC, responseFactory MessageFactory) {
+	channel := rpc.internals.Channel
+	inflightRPC_ := getPooledInflightRPC(responseFactory)
+	channel.inflightRPCs.Store(rpc.internals.SequenceNumber, inflightRPC_)
+
+	if err := channel.stream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
+		SequenceNumber: rpc.internals.SequenceNumber,
+		ServiceId:      rpc.ServiceID,
+		MethodName:     rpc.MethodName,
+		ExtraData:      rpc.RequestExtraData.Value(),
+		Deadline:       rpc.internals.Deadline,
+
+		TraceId: protocol.UUID{
+			Low:  rpc.internals.TraceID[0],
+			High: rpc.internals.TraceID[1],
+		},
+	}, rpc.Request); err != nil {
+		channel.inflightRPCs.Delete(rpc.internals.SequenceNumber)
+
+		switch err {
+		case stream.ErrClosed:
+			rpc.Err = ErrClosed
+		default:
+			rpc.Err = err
+		}
+
+		return
+	}
+
+	if err := inflightRPC_.WaitFor(rpc.Ctx); err != nil {
+		rpc.Err = err
+		return
+	}
+
+	if inflightRPC_.Err == stream.ErrRequestExpired {
+		<-rpc.Ctx.Done()
+		inflightRPC_.Err = rpc.Ctx.Err()
+	}
+
+	rpc.ResponseExtraData = inflightRPC_.ResponseExtraData.Ref(false)
+	rpc.Response = inflightRPC_.Response
+	rpc.Err = inflightRPC_.Err
+	putPooledInflightRPC(inflightRPC_)
+
+	if rpcHasParent {
+		for key, value := range rpc.ResponseExtraData.Value() {
+			if !(len(key) >= 1 && key[0] == '_') {
+				continue
+			}
+
+			rpcParent.ResponseExtraData.Set(key, value)
+		}
+	}
+}

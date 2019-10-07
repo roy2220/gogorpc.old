@@ -87,29 +87,10 @@ func (self *GreeterStub) WithRequestExtraData(extraData channel.ExtraData) *Gree
 }
 
 func (self GreeterStub) SayHello(ctx context.Context, request *SayHelloReq) (*SayHelloResp, error) {
-	rpc := channel.GetPooledRPC()
-
-	*rpc = channel.RPC{
-		Ctx:              ctx,
-		ServiceID:        Greeter,
-		MethodName:       Greeter_SayHello,
-		RequestExtraData: self.requestExtraData.Ref(true),
-		Request:          request,
-	}
-
-	self.rpcPreparer.PrepareRPC(rpc, func() channel.Message {
-		return new(SayHelloResp)
-	})
-
-	rpc.Handle()
-	response, err := rpc.Response, rpc.Err
-	channel.PutPooledRPC(rpc)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return response.(*SayHelloResp), nil
+	rpc := self.MakeSayHello(ctx, request).Do()
+	response, err := rpc.Result()
+	rpc.Close()
+	return response, err
 }
 
 func (self GreeterStub) MakeSayHello(ctx context.Context, request *SayHelloReq) GreeterStub_SayHello {
@@ -131,20 +112,9 @@ func (self GreeterStub) MakeSayHello(ctx context.Context, request *SayHelloReq) 
 }
 
 func (self GreeterStub) SayHello2(ctx context.Context, request *SayHelloReq) error {
-	rpc := channel.GetPooledRPC()
-
-	*rpc = channel.RPC{
-		Ctx:              ctx,
-		ServiceID:        Greeter,
-		MethodName:       Greeter_SayHello2,
-		RequestExtraData: self.requestExtraData.Ref(true),
-		Request:          request,
-	}
-
-	self.rpcPreparer.PrepareRPC(rpc, channel.GetNullMessage)
-	rpc.Handle()
-	err := rpc.Err
-	channel.PutPooledRPC(rpc)
+	rpc := self.MakeSayHello2(ctx, request).Do()
+	err := rpc.Result()
+	rpc.Close()
 	return err
 }
 
@@ -164,28 +134,10 @@ func (self GreeterStub) MakeSayHello2(ctx context.Context, request *SayHelloReq)
 }
 
 func (self GreeterStub) SayHello3(ctx context.Context) (*SayHelloResp, error) {
-	rpc := channel.GetPooledRPC()
-
-	*rpc = channel.RPC{
-		Ctx:              ctx,
-		ServiceID:        Greeter,
-		MethodName:       Greeter_SayHello3,
-		RequestExtraData: self.requestExtraData.Ref(true),
-	}
-
-	self.rpcPreparer.PrepareRPC(rpc, func() channel.Message {
-		return new(SayHelloResp)
-	})
-
-	rpc.Handle()
-	response, err := rpc.Response, rpc.Err
-	channel.PutPooledRPC(rpc)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return response.(*SayHelloResp), nil
+	rpc := self.MakeSayHello3(ctx).Do()
+	response, err := rpc.Result()
+	rpc.Close()
+	return response, err
 }
 
 func (self GreeterStub) MakeSayHello3(ctx context.Context) GreeterStub_SayHello3 {
@@ -214,13 +166,16 @@ func (self GreeterStub_SayHello) WithRequestExtraData(extraData channel.ExtraDat
 	return self
 }
 
-func (self GreeterStub_SayHello) Invoke() (*SayHelloResp, error) {
+func (self GreeterStub_SayHello) Do() GreeterStub_SayHello {
 	if self.rpc.IsHandled() {
 		self.rpc.Reprepare()
 	}
 
 	self.rpc.Handle()
+	return self
+}
 
+func (self GreeterStub_SayHello) Result() (*SayHelloResp, error) {
 	if self.rpc.Err != nil {
 		return nil, self.rpc.Err
 	}
@@ -228,13 +183,17 @@ func (self GreeterStub_SayHello) Invoke() (*SayHelloResp, error) {
 	return self.rpc.Response.(*SayHelloResp), nil
 }
 
-func (self GreeterStub_SayHello) ResponseExtraData() channel.ExtraDataRef {
-	return self.rpc.ResponseExtraData
-}
-
 func (self GreeterStub_SayHello) Close() {
 	channel.PutPooledRPC(self.rpc)
 	self.rpc = nil
+}
+
+func (self GreeterStub_SayHello) RequestExtraData() channel.ExtraDataRef {
+	return self.rpc.RequestExtraData
+}
+
+func (self GreeterStub_SayHello) ResponseExtraData() channel.ExtraDataRef {
+	return self.rpc.ResponseExtraData
 }
 
 type GreeterStub_SayHello2 struct {
@@ -246,22 +205,30 @@ func (self GreeterStub_SayHello2) WithRequestExtraData(extraData channel.ExtraDa
 	return self
 }
 
-func (self GreeterStub_SayHello2) Invoke() error {
+func (self GreeterStub_SayHello2) Do() GreeterStub_SayHello2 {
 	if self.rpc.IsHandled() {
 		self.rpc.Reprepare()
 	}
 
 	self.rpc.Handle()
-	return self.rpc.Err
+	return self
 }
 
-func (self GreeterStub_SayHello2) ResponseExtraData() channel.ExtraDataRef {
-	return self.rpc.ResponseExtraData
+func (self GreeterStub_SayHello2) Result() error {
+	return self.rpc.Err
 }
 
 func (self GreeterStub_SayHello2) Close() {
 	channel.PutPooledRPC(self.rpc)
 	self.rpc = nil
+}
+
+func (self GreeterStub_SayHello2) RequestExtraData() channel.ExtraDataRef {
+	return self.rpc.RequestExtraData
+}
+
+func (self GreeterStub_SayHello2) ResponseExtraData() channel.ExtraDataRef {
+	return self.rpc.ResponseExtraData
 }
 
 type GreeterStub_SayHello3 struct {
@@ -273,13 +240,16 @@ func (self GreeterStub_SayHello3) WithRequestExtraData(extraData channel.ExtraDa
 	return self
 }
 
-func (self GreeterStub_SayHello3) Invoke() (*SayHelloResp, error) {
+func (self GreeterStub_SayHello3) Do() GreeterStub_SayHello3 {
 	if self.rpc.IsHandled() {
 		self.rpc.Reprepare()
 	}
 
 	self.rpc.Handle()
+	return self
+}
 
+func (self GreeterStub_SayHello3) Result() (*SayHelloResp, error) {
 	if self.rpc.Err != nil {
 		return nil, self.rpc.Err
 	}
@@ -287,11 +257,15 @@ func (self GreeterStub_SayHello3) Invoke() (*SayHelloResp, error) {
 	return self.rpc.Response.(*SayHelloResp), nil
 }
 
-func (self GreeterStub_SayHello3) ResponseExtraData() channel.ExtraDataRef {
-	return self.rpc.ResponseExtraData
-}
-
 func (self GreeterStub_SayHello3) Close() {
 	channel.PutPooledRPC(self.rpc)
 	self.rpc = nil
+}
+
+func (self GreeterStub_SayHello3) RequestExtraData() channel.ExtraDataRef {
+	return self.rpc.RequestExtraData
+}
+
+func (self GreeterStub_SayHello3) ResponseExtraData() channel.ExtraDataRef {
+	return self.rpc.ResponseExtraData
 }

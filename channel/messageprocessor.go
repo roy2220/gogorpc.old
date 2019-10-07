@@ -109,51 +109,10 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 	}
 
 	rpc.internals.Init(self.methodOptionsCache.IncomingRPCHandler, self.methodOptionsCache.IncomingRPCInterceptors)
+	stream_ := self.Stream
 
 	go func() {
-		var cancel context.CancelFunc
-
-		if rpc.internals.Deadline == 0 {
-			rpc.Ctx, cancel = context.WithCancel(rpc.Ctx)
-		} else {
-			rpc.Ctx, cancel = context.WithDeadline(rpc.Ctx, time.Unix(0, rpc.internals.Deadline))
-		}
-
-		defer cancel()
-		rpc.Ctx = BindRPC(rpc.Ctx, rpc)
-		rpc.Handle()
-
-		responseHeader := protocol.ResponseHeader{
-			SequenceNumber: rpc.internals.SequenceNumber,
-			ExtraData:      rpc.ResponseExtraData.Value(),
-		}
-
-		var response Message
-
-		if rpc.Err == nil {
-			response = rpc.Response
-		} else {
-			var rpcErr *RPCError
-
-			if rpcErr2, ok := rpc.Err.(*RPCError); ok {
-				rpcErr = rpcErr2
-			} else {
-				self.Channel.options.Logger.Error().Err(rpc.Err).
-					Str("transport_id", self.Stream.TransportID().String()).
-					Str("trace_id", rpc.internals.TraceID.String()).
-					Str("service_id", rpc.ServiceID).
-					Str("method_name", rpc.MethodName).
-					Msg("rpc_internal_server_error")
-				rpcErr = RPCErrInternalServer
-			}
-
-			responseHeader.ErrorType = rpcErr.Type
-			responseHeader.ErrorCode = rpcErr.Code
-			response = NullMessage
-		}
-
-		PutPooledRPC(rpc)
-		self.Stream.SendResponse(&responseHeader, response)
+		handleIncomingRPC(rpc, stream_)
 	}()
 }
 
@@ -241,4 +200,50 @@ func (self *messageProcessor) HandleResponse(ctx context.Context, packet *Packet
 }
 
 func (self *messageProcessor) PostEmitResponse(packet *Packet) {
+}
+
+func handleIncomingRPC(rpc *RPC, stream_ *stream.Stream) {
+	var cancel context.CancelFunc
+
+	if rpc.internals.Deadline == 0 {
+		rpc.Ctx, cancel = context.WithCancel(rpc.Ctx)
+	} else {
+		rpc.Ctx, cancel = context.WithDeadline(rpc.Ctx, time.Unix(0, rpc.internals.Deadline))
+	}
+
+	defer cancel()
+	rpc.Ctx = BindRPC(rpc.Ctx, rpc)
+	rpc.Handle()
+
+	responseHeader := protocol.ResponseHeader{
+		SequenceNumber: rpc.internals.SequenceNumber,
+		ExtraData:      rpc.ResponseExtraData.Value(),
+	}
+
+	var response Message
+
+	if rpc.Err == nil {
+		response = rpc.Response
+	} else {
+		var rpcErr *RPCError
+
+		if rpcErr2, ok := rpc.Err.(*RPCError); ok {
+			rpcErr = rpcErr2
+		} else {
+			rpc.internals.Channel.options.Logger.Error().Err(rpc.Err).
+				Str("transport_id", stream_.TransportID().String()).
+				Str("trace_id", rpc.internals.TraceID.String()).
+				Str("service_id", rpc.ServiceID).
+				Str("method_name", rpc.MethodName).
+				Msg("rpc_internal_server_error")
+			rpcErr = RPCErrInternalServer
+		}
+
+		responseHeader.ErrorType = rpcErr.Type
+		responseHeader.ErrorCode = rpcErr.Code
+		response = NullMessage
+	}
+
+	PutPooledRPC(rpc)
+	stream_.SendResponse(&responseHeader, response)
 }

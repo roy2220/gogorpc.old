@@ -449,6 +449,7 @@ func (self *Stream) sendPackets(ctx context.Context, messageProcessor MessagePro
 	ctx, cancel := context.WithCancel(ctx)
 	pendingRequests := self.makePendingRequests(errs, ctx, cancel)
 	pendingResponses := self.makePendingResponses(errs, ctx, cancel)
+	packet := Packet{direction: Outgoing}
 
 	for {
 		pendingRequests2, pendingResponses2, pendingHangup, err := self.checkPendingMessages(
@@ -464,7 +465,7 @@ func (self *Stream) sendPackets(ctx context.Context, messageProcessor MessagePro
 			return err
 		}
 
-		err = self.emitPackets(pendingRequests2, pendingResponses2, pendingHangup, messageProcessor)
+		err = self.emitPackets(pendingRequests2, pendingResponses2, pendingHangup, &packet, messageProcessor)
 
 		if err != nil {
 			if pendingRequests2 != nil {
@@ -611,9 +612,9 @@ func (self *Stream) emitPackets(
 	pendingRequests *pendingMessages,
 	pendingResponses *pendingMessages,
 	pendingHangup *Hangup,
+	packet *Packet,
 	messageEmitter MessageEmitter,
 ) error {
-	packet := Packet{direction: Outgoing}
 	err := error(nil)
 	emittedPacketCount := 0
 
@@ -632,14 +633,14 @@ func (self *Stream) emitPackets(
 
 			if deadline := pendingRequest.Header.Deadline; deadline != 0 && deadline <= now {
 				packet.Err = ErrRequestExpired
-				messageEmitter.PostEmitRequest(&packet)
+				messageEmitter.PostEmitRequest(packet)
 				ok, err = packet.Err == nil, packet.Err
 
 				if err == ErrPacketDropped {
 					err = nil
 				}
 			} else {
-				ok, err = self.write(&packet, messageEmitter)
+				ok, err = self.write(packet, messageEmitter)
 			}
 
 			if err != nil {
@@ -676,7 +677,7 @@ func (self *Stream) emitPackets(
 			packet.ResponseHeader = pendingResponse.Header
 			packet.Message = pendingResponse.Payload
 			var ok bool
-			ok, err = self.write(&packet, messageEmitter)
+			ok, err = self.write(packet, messageEmitter)
 
 			if err != nil {
 				self.options.Logger.Error().Err(err).
@@ -709,7 +710,7 @@ func (self *Stream) emitPackets(
 		packet.messageType = MessageHangup
 		packet.Hangup.Code = pendingHangup.Code
 		packet.Hangup.ExtraData = pendingHangup.ExtraData
-		_, err = self.write(&packet, messageEmitter)
+		_, err = self.write(packet, messageEmitter)
 
 		if err != nil {
 			return err
@@ -720,7 +721,7 @@ func (self *Stream) emitPackets(
 
 	if err == nil && emittedPacketCount == 0 {
 		packet.messageType = MessageKeepalive
-		_, err = self.write(&packet, messageEmitter)
+		_, err = self.write(packet, messageEmitter)
 	}
 
 	if err != nil {

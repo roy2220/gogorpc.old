@@ -537,40 +537,18 @@ func (self {{$.Name}}Stub) {{.Name}}(ctx context.Context
 		{{- "error"}}
 	{{- end}}
 	{{- " {"}}
-	rpc := channel.GetPooledRPC()
-
-	*rpc = channel.RPC{
-		Ctx: ctx,
-		ServiceID: {{$.Name}},
-		MethodName: {{$.Name}}_{{.Name}},
-		RequestExtraData: self.requestExtraData.Ref(true),
+	rpc := self.Make{{.Name}}(ctx
 	{{- if .Request}}
-		Request: request,
+		{{- ", request"}}
 	{{- end}}
-	}
-
-	self.rpcPreparer.PrepareRPC(rpc,{{" "}}
+	{{- ").Do()"}}
 	{{- if .Response}}
-		{{- "func() channel.Message {"}}
-		return new({{.Response.GoMessagePath}})
-	})
-{{""}}
+	response, err := rpc.Result()
+	rpc.Close()
+	return response, err
 	{{- else}}
-		{{- "channel.GetNullMessage"}})
-	{{- end}}
-	rpc.Handle()
-	{{- if .Response}}
-	response, err := rpc.Response, rpc.Err
-	channel.PutPooledRPC(rpc)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return response.(*{{.Response.GoMessagePath}}), nil
-	{{- else}}
-	err := rpc.Err
-	channel.PutPooledRPC(rpc)
+	err := rpc.Result()
+	rpc.Close()
 	return err
 	{{- end}}
 }
@@ -615,20 +593,23 @@ func (self {{$.Name}}Stub_{{.Name}}) WithRequestExtraData(extraData channel.Extr
 	return self
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) Invoke(){{" "}}
+func (self {{$.Name}}Stub_{{.Name}}) Do() {{$.Name}}Stub_{{.Name}} {
+	if self.rpc.IsHandled() {
+		self.rpc.Reprepare()
+	}
+
+	self.rpc.Handle()
+	return self
+}
+
+func (self {{$.Name}}Stub_{{.Name}}) Result(){{" "}}
 	{{- if .Response}}
 		{{- "(*"}}{{.Response.GoMessagePath}}, error)
 	{{- else}}
 		{{- "error"}}
 	{{- end}}
 	{{- " {"}}
-	if self.rpc.IsHandled() {
-		self.rpc.Reprepare()
-	}
-
-	self.rpc.Handle()
 	{{- if .Response}}
-
 	if self.rpc.Err != nil {
 		return nil, self.rpc.Err
 	}
@@ -639,13 +620,17 @@ func (self {{$.Name}}Stub_{{.Name}}) Invoke(){{" "}}
 	{{- end}}
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) ResponseExtraData() channel.ExtraDataRef {
-	return self.rpc.ResponseExtraData
-}
-
 func (self {{$.Name}}Stub_{{.Name}}) Close() {
 	channel.PutPooledRPC(self.rpc)
 	self.rpc = nil
+}
+
+func (self {{$.Name}}Stub_{{.Name}}) RequestExtraData() channel.ExtraDataRef {
+	return self.rpc.RequestExtraData
+}
+
+func (self {{$.Name}}Stub_{{.Name}}) ResponseExtraData() channel.ExtraDataRef {
+	return self.rpc.ResponseExtraData
 }
 {{- end}}
 `)).Execute(&context_.Code, self); err != nil {

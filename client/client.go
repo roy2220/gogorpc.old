@@ -38,8 +38,8 @@ func (self *Client) Close() {
 	self.cancel()
 }
 
-func (self *Client) InvokeRPC(rpc *channel.RPC, responseFactory channel.MessageFactory) {
-	self.channel.InvokeRPC(rpc, responseFactory)
+func (self *Client) DoRPC(rpc *channel.RPC, responseFactory channel.MessageFactory) {
+	self.channel.DoRPC(rpc, responseFactory)
 }
 
 func (self *Client) PrepareRPC(rpc *channel.RPC, responseFactory channel.MessageFactory) {
