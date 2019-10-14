@@ -201,7 +201,7 @@ func (self *Stream) receivePackets(ctx context.Context, messageProcessor Message
 	packet := Packet{direction: Incoming}
 
 	for {
-		if err := self.peek(ctx, self.incomingKeepaliveInterval/2*3, messageProcessor, &packet); err != nil {
+		if err := self.peek(ctx, self.incomingKeepaliveInterval*4/3, messageProcessor, &packet); err != nil {
 			return err
 		}
 
@@ -477,7 +477,7 @@ func (self *Stream) sendPackets(ctx context.Context, messageProcessor MessagePro
 			}
 		}
 
-		if err2 := self.flush(ctx, self.outgoingKeepaliveInterval/2*3); err2 != nil {
+		if err2 := self.flush(ctx, self.outgoingKeepaliveInterval*4/3); err2 != nil {
 			err = err2
 		}
 

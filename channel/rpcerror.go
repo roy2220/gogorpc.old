@@ -22,11 +22,11 @@ const (
 
 type RPCError struct {
 	Type RPCErrorType
-	Code string
+	Name string
 }
 
 func (self *RPCError) Error() string {
-	return fmt.Sprintf("gogorpc/channel: rpc error: %d - %s", self.Type, self.Code)
+	return fmt.Sprintf("gogorpc/channel: rpc error: %d - %s", self.Type, self.Name)
 }
 
 func (self *RPCError) Equals(err error) bool {
@@ -53,6 +53,6 @@ var (
 	RPCErrGatewayTimeout     = NewRPCError(RPCErrorGatewayTimeout, "GatewayTimeout")
 )
 
-func NewRPCError(rpcErrorType RPCErrorType, rpcErrorCode string) *RPCError {
-	return &RPCError{rpcErrorType, rpcErrorCode}
+func NewRPCError(rpcErrorType RPCErrorType, rpcErrorName string) *RPCError {
+	return &RPCError{rpcErrorType, rpcErrorName}
 }

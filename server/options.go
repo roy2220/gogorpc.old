@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"net/url"
 	"sync"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 type Options struct {
 	Channel         *channel.Options
 	Logger          *zerolog.Logger
+	Hooks           []*Hook
 	ShutdownTimeout time.Duration
 
 	normalizeOnce sync.Once
@@ -30,6 +33,16 @@ func (self *Options) Normalize() *Options {
 	})
 
 	return self
+}
+
+func (self *Options) Do(doer func(*Options)) *Options {
+	doer(self)
+	return self
+}
+
+type Hook struct {
+	BeforeRun func(ctx context.Context, url_ *url.URL) error
+	AfterRun  func(url_ *url.URL)
 }
 
 var defaultChannelOptions channel.Options

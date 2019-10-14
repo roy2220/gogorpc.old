@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-type Acceptor func(ctx context.Context, serverURL *url.URL, activityCounter *int32, connectionHandler ConnectionHandler) error
+type Acceptor func(ctx context.Context, url_ *url.URL, activityCounter *int32, connectionHandler ConnectionHandler) error
 type ConnectionHandler func(connection net.Conn)
 
 func RegisterAcceptor(schemeName string, acceptor Acceptor) error {
@@ -77,8 +77,8 @@ func (self AcceptorNotFoundError) Error() string {
 
 var acceptors = map[string]Acceptor{}
 
-func tcpAcceptor(ctx context.Context, serverURL *url.URL, activityCounter *int32, connectionHandler ConnectionHandler) error {
-	listener, err := net.Listen("tcp", serverURL.Host)
+func tcpAcceptor(ctx context.Context, url_ *url.URL, activityCounter *int32, connectionHandler ConnectionHandler) error {
+	listener, err := net.Listen("tcp", url_.Host)
 
 	if err != nil {
 		return err

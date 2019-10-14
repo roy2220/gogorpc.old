@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/let-z-go/gogorpc/client"
-	"github.com/let-z-go/gogorpc/examples/helloworld/protocol"
+	"github.com/let-z-go/gogorpc/examples/helloworld/proto"
 )
 
 func main() {
@@ -17,16 +17,17 @@ func main() {
 
 	cli := new(client.Client).Init(&opts, "tcp://127.0.0.1:8888")
 	defer cli.Close()
+	stub := new(proto.GreeterStub).Init(cli)
 
 	for _, name := range []string{"tom", "jerry", "spike"} {
-		req := protocol.SayHelloReq{Name: name}
-		stub := new(protocol.GreeterStub).Init(cli)
-		resp, err := stub.SayHello(context.Background(), &req)
+		resp, err := stub.SayHello(context.Background(), &proto.SayHelloReq{
+			Name: name,
+		})
 
 		if err == nil {
 			fmt.Println("resp:", resp)
 		} else {
-			if protocol.RPCErrForbiddenName.Equals(err) {
+			if proto.RPCErrForbiddenName.Equals(err) {
 				fmt.Println("forbidden name:", name)
 			} else {
 				fmt.Println("err:", err)

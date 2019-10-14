@@ -59,15 +59,11 @@ func (self *inflightRPC) WaitFor(ctx context.Context) error {
 var inflightRPCPool = sync.Pool{}
 
 func getPooledInflightRPC(responseFactory MessageFactory) *inflightRPC {
-	var inflightRPC_ *inflightRPC
-
-	if value := inflightRPCPool.Get(); value == nil {
-		inflightRPC_ = new(inflightRPC).Init(responseFactory)
-	} else {
-		inflightRPC_ = value.(*inflightRPC).Reset(responseFactory)
+	if value := inflightRPCPool.Get(); value != nil {
+		return value.(*inflightRPC).Reset(responseFactory)
 	}
 
-	return inflightRPC_
+	return new(inflightRPC).Init(responseFactory)
 }
 
 func putPooledInflightRPC(inflightRPC_ *inflightRPC) {

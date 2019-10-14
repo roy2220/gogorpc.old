@@ -8,7 +8,7 @@ import (
 
 type RPC struct {
 	Ctx              context.Context
-	ServiceID        string
+	ServiceName      string
 	MethodName       string
 	RequestExtraData ExtraDataRef
 	Request          Message

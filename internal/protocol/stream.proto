@@ -41,7 +41,7 @@ message StreamHandshakeHeader {
 
 message RequestHeader {
     int32 sequence_number = 1;
-    string service_id = 2;
+    string service_name = 2;
     string method_name = 3;
     map<string, bytes> extra_data = 4;
     int64 deadline = 5;
@@ -52,7 +52,7 @@ message ResponseHeader {
     int32 sequence_number = 1;
     map<string, bytes> extra_data = 2;
     RPCErrorType error_type = 3;
-    string error_code = 4;
+    string error_name = 4;
 }
 
 message Hangup {

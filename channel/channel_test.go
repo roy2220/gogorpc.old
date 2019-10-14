@@ -46,10 +46,10 @@ func TestPingAndPong(t *testing.T) {
 					defer wg.Done()
 					msg := RawMessage(fmt.Sprintf("req2:%d", i))
 					rpc := RPC{
-						Ctx:        ctx,
-						ServiceID:  "service2",
-						MethodName: "method2",
-						Request:    &msg,
+						Ctx:         ctx,
+						ServiceName: "service2",
+						MethodName:  "method2",
+						Request:     &msg,
 					}
 					cn.DoRPC(&rpc, NewRawMessage)
 					if !assert.NoError(t, rpc.Err) {
@@ -71,10 +71,10 @@ func TestPingAndPong(t *testing.T) {
 					defer wg.Done()
 					msg := RawMessage(fmt.Sprintf("req1:%d", i))
 					rpc := RPC{
-						Ctx:        ctx,
-						ServiceID:  "service1",
-						MethodName: "method1",
-						Request:    &msg,
+						Ctx:         ctx,
+						ServiceName: "service1",
+						MethodName:  "method1",
+						Request:     &msg,
 					}
 					cn.DoRPC(&rpc, NewRawMessage)
 					if !assert.NoError(t, rpc.Err) {
@@ -119,10 +119,10 @@ func TestBadHandshake(t *testing.T) {
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			for i := 0; i < 10; i++ {
 				rpc := RPC{
-					Ctx:        ctx,
-					ServiceID:  "service2",
-					MethodName: "method2",
-					Request:    NullMessage,
+					Ctx:         ctx,
+					ServiceName: "service2",
+					MethodName:  "method2",
+					Request:     NullMessage,
 				}
 				cn.DoRPC(&rpc, GetNullMessage)
 				assert.EqualError(t, rpc.Err, "gogorpc/channel: closed")
@@ -159,7 +159,7 @@ func TestBroken(t *testing.T) {
 					defer wg.Done()
 					rpc := RPC{
 						Ctx:              ctx,
-						ServiceID:        "1",
+						ServiceName:      "1",
 						MethodName:       "2",
 						Request:          NullMessage,
 						RequestExtraData: ExtraData{"I": []byte{byte(i)}}.Ref(false),
@@ -207,10 +207,10 @@ func TestReconnection1(t *testing.T) {
 				go func(i int) {
 					defer wg.Done()
 					rpc := RPC{
-						Ctx:        ctx,
-						ServiceID:  "1",
-						MethodName: "2",
-						Request:    NullMessage,
+						Ctx:         ctx,
+						ServiceName: "1",
+						MethodName:  "2",
+						Request:     NullMessage,
 					}
 					if i == 0 {
 						rpc.Request = testBlockMessage{time.Second / 2 * 3}
@@ -259,10 +259,10 @@ func TestReconnection2(t *testing.T) {
 				go func(i int) {
 					defer wg.Done()
 					rpc := RPC{
-						Ctx:        ctx,
-						ServiceID:  "1",
-						MethodName: "2",
-						Request:    NullMessage,
+						Ctx:         ctx,
+						ServiceName: "1",
+						MethodName:  "2",
+						Request:     NullMessage,
 					}
 					if i == 0 {
 						rpc.Request = testBlockMessage{time.Second / 2 * 3}
@@ -325,10 +325,10 @@ func TestInterception(t *testing.T) {
 		opts2,
 		func(ctx context.Context, cn *Channel, conn net.Conn) bool {
 			rpc := RPC{
-				Ctx:        ctx,
-				ServiceID:  "foo",
-				MethodName: "bar",
-				Request:    NullMessage,
+				Ctx:         ctx,
+				ServiceName: "foo",
+				MethodName:  "bar",
+				Request:     NullMessage,
 			}
 			cn.DoRPC(&rpc, GetNullMessage)
 			cn.Abort(nil)
@@ -359,10 +359,10 @@ func TestDeadline(t *testing.T) {
 			ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 			defer cancel()
 			rpc := RPC{
-				Ctx:        ctx,
-				ServiceID:  "foo",
-				MethodName: "bar",
-				Request:    NullMessage,
+				Ctx:         ctx,
+				ServiceName: "foo",
+				MethodName:  "bar",
+				Request:     NullMessage,
 			}
 			cn.DoRPC(&rpc, GetNullMessage)
 			assert.EqualError(t, rpc.Err, "context deadline exceeded")

@@ -164,12 +164,12 @@ func (self *file) Load(context_ *context, raw *descriptor.FileDescriptorProto) {
 	} else {
 		goPackageOption := *options.GoPackage
 
-		if i := strings.LastIndexByte(goPackageOption, ';'); i < 0 {
-			self.GoImportPath = goPackageOption
-			_, self.GoPackageName = filepath.Split(self.GoImportPath)
-		} else {
+		if i := strings.LastIndexByte(goPackageOption, ';'); i >= 0 {
 			self.GoImportPath = goPackageOption[:i]
 			self.GoPackageName = goPackageOption[i+1:]
+		} else {
+			self.GoImportPath = goPackageOption
+			_, self.GoPackageName = filepath.Split(self.GoImportPath)
 		}
 
 		if self.GoImportPath == "" || self.GoPackageName == "" {
@@ -350,7 +350,7 @@ import (
 		if err := template.Must(template.New("").Parse(`
 var (
 {{- range .Errors}}
-	RPCErr{{.Name}} = channel.NewRPCError(channel.RPCErrorType({{.Type}}), "{{.Code}}")
+	RPCErr{{.Name}} = channel.NewRPCError(channel.RPCErrorType({{.Type}}), "{{.FullName}}")
 {{- end}}
 )
 `)).Execute(&context_.Code, self); err != nil {
@@ -378,12 +378,12 @@ type error1 struct {
 	Type int32
 
 	InputFile *inputFile
-	Code      string
+	FullName  string
 }
 
 func (self *error1) Load(context_ *context, raw *gogorpc.Error) {
 	if raw.Type == 0 {
-		context_.Fatal("invalid option `gogorpc.error`: zero `code`")
+		context_.Fatal("invalid option `gogorpc.error`: zero `type`")
 	}
 
 	self.Type = raw.Type
@@ -391,7 +391,7 @@ func (self *error1) Load(context_ *context, raw *gogorpc.Error) {
 
 func (self *error1) Resolve(context_ *context) {
 	self.InputFile = context_.Nodes[len(context_.Nodes)-2].(*inputFile)
-	self.Code = self.InputFile.PackageName + "." + self.Name
+	self.FullName = self.InputFile.PackageName + "." + self.Name
 	context_.AddError(self)
 	self.InputFile.ImportGoPackage("channel", "github.com/let-z-go/gogorpc/channel")
 }
@@ -409,7 +409,7 @@ type service struct {
 
 	Methods []*method
 
-	ID string
+	FullName string
 }
 
 func (self *service) Load(context_ *context, raw *descriptor.ServiceDescriptorProto) {
@@ -430,7 +430,7 @@ func (self *service) Load(context_ *context, raw *descriptor.ServiceDescriptorPr
 
 func (self *service) Resolve(context_ *context) {
 	inputFile_ := context_.Nodes[len(context_.Nodes)-2].(*inputFile)
-	self.ID = inputFile_.PackageName + "." + self.Name
+	self.FullName = inputFile_.PackageName + "." + self.Name
 	inputFile_.ImportGoPackage("channel", "github.com/let-z-go/gogorpc/channel")
 
 	for _, method_ := range self.Methods {
@@ -442,7 +442,7 @@ func (self *service) Resolve(context_ *context) {
 
 func (self *service) EmitCode(context_ *context) {
 	if err := template.Must(template.New("").Parse(`
-const {{.Name}} = "{{.ID}}"
+const Service{{.Name}} = "{{.FullName}}"
 {{- if .Methods}}
 
 const (
@@ -452,7 +452,7 @@ const (
 )
 {{- end}}
 
-type {{.Name}}Handler interface {
+type {{.Name}} interface {
 {{- range .Methods}}
 	{{.Name}}(ctx context.Context
 	{{- if .Request}}
@@ -466,7 +466,7 @@ type {{.Name}}Handler interface {
 {{- end}}
 }
 
-func Register{{.Name}}Handler(serviceHandler {{.Name}}Handler) func(*channel.Options) {
+func Implement{{.Name}}(service {{.Name}}) func(*channel.Options) {
 	return func(options *channel.Options) {
 {{- if .Methods}}
 		options.
@@ -475,15 +475,13 @@ func Register{{.Name}}Handler(serviceHandler {{.Name}}Handler) func(*channel.Opt
 			{{- if $i}}
 				{{- "."}}
 			{{- end}}
-			BuildMethod({{$.Name}}, {{$.Name}}_{{.Name}}).
+			BuildMethod(Service{{$.Name}}, {{$.Name}}_{{.Name}}).
 	{{- if .Request}}
-			SetRequestFactory(func() channel.Message {
-				return new({{.Request.GoMessagePath}})
-			}).
+			SetRequestFactory({{$.Name}}_New{{.Name}}Request).
 	{{- end}}
 			SetIncomingRPCHandler(func(rpc *channel.RPC) {
 	{{- if .Response}}
-				response, err := serviceHandler.{{.Name}}(rpc.Ctx
+				response, err := service.{{.Name}}(rpc.Ctx
 		{{- if .Request}}
 		{{- ", rpc.Request.(*"}}{{.Request.GoMessagePath}})
 		{{- end}}
@@ -498,7 +496,7 @@ func Register{{.Name}}Handler(serviceHandler {{.Name}}Handler) func(*channel.Opt
 				rpc.Err = err
 	{{- else}}
 				rpc.Response = channel.NullMessage
-				rpc.Err = serviceHandler.{{.Name}}(rpc.Ctx
+				rpc.Err = service.{{.Name}}(rpc.Ctx
 		{{- if .Request}}
 		{{- ", rpc.Request.(*"}}{{.Request.GoMessagePath}})
 		{{- end}}
@@ -514,6 +512,8 @@ type {{.Name}}Stub struct {
 	rpcPreparer channel.RPCPreparer
 	requestExtraData channel.ExtraData
 }
+
+var _ = {{.Name}}({{.Name}}Stub{})
 
 func (self *{{.Name}}Stub) Init(rpcPreparer channel.RPCPreparer) *{{.Name}}Stub {
 	self.rpcPreparer = rpcPreparer
@@ -537,7 +537,7 @@ func (self {{$.Name}}Stub) {{.Name}}(ctx context.Context
 		{{- "error"}}
 	{{- end}}
 	{{- " {"}}
-	rpc := self.Make{{.Name}}(ctx
+	rpc := self.Make{{.Name}}RPC(ctx
 	{{- if .Request}}
 		{{- ", request"}}
 	{{- end}}
@@ -553,16 +553,16 @@ func (self {{$.Name}}Stub) {{.Name}}(ctx context.Context
 	{{- end}}
 }
 
-func (self {{$.Name}}Stub) Make{{.Name}}(ctx context.Context
+func (self {{$.Name}}Stub) Make{{.Name}}RPC(ctx context.Context
 	{{- if .Request}}
 		{{- ", request *"}}{{.Request.GoMessagePath}}
 	{{- end}}
-	{{- ") "}}{{$.Name}}Stub_{{.Name}} {
+	{{- ") "}}{{$.Name}}_{{.Name}}RPC {
 	rpc := channel.GetPooledRPC()
 
 	*rpc = channel.RPC{
 		Ctx: ctx,
-		ServiceID: {{$.Name}},
+		ServiceName: Service{{$.Name}},
 		MethodName: {{$.Name}}_{{.Name}},
 		RequestExtraData: self.requestExtraData.Ref(true),
 	{{- if .Request}}
@@ -572,28 +572,26 @@ func (self {{$.Name}}Stub) Make{{.Name}}(ctx context.Context
 
 	self.rpcPreparer.PrepareRPC(rpc,{{" "}}
 	{{- if .Response}}
-		{{- "func() channel.Message {"}}
-		return new({{.Response.GoMessagePath}})
-	})
-{{""}}
+		{{- $.Name}}_New{{.Name}}Response
 	{{- else}}
-		{{- "channel.GetNullMessage"}})
+		{{- "channel.GetNullMessage"}}
 	{{- end}}
-	return {{$.Name}}Stub_{{.Name}}{rpc}
+	{{- ")"}}
+	return {{$.Name}}_{{.Name}}RPC{rpc}
 }
 {{- end}}
 {{- range .Methods}}
 
-type {{$.Name}}Stub_{{.Name}} struct {
+type {{$.Name}}_{{.Name}}RPC struct {
 	rpc *channel.RPC
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) WithRequestExtraData(extraData channel.ExtraDataRef) {{$.Name}}Stub_{{.Name}} {
+func (self {{$.Name}}_{{.Name}}RPC) WithRequestExtraData(extraData channel.ExtraDataRef) {{$.Name}}_{{.Name}}RPC {
 	self.rpc.RequestExtraData = extraData
 	return self
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) Do() {{$.Name}}Stub_{{.Name}} {
+func (self {{$.Name}}_{{.Name}}RPC) Do() {{$.Name}}_{{.Name}}RPC {
 	if self.rpc.IsHandled() {
 		self.rpc.Reprepare()
 	}
@@ -602,7 +600,7 @@ func (self {{$.Name}}Stub_{{.Name}}) Do() {{$.Name}}Stub_{{.Name}} {
 	return self
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) Result(){{" "}}
+func (self {{$.Name}}_{{.Name}}RPC) Result(){{" "}}
 	{{- if .Response}}
 		{{- "(*"}}{{.Response.GoMessagePath}}, error)
 	{{- else}}
@@ -620,18 +618,32 @@ func (self {{$.Name}}Stub_{{.Name}}) Result(){{" "}}
 	{{- end}}
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) Close() {
+func (self {{$.Name}}_{{.Name}}RPC) Close() {
 	channel.PutPooledRPC(self.rpc)
 	self.rpc = nil
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) RequestExtraData() channel.ExtraDataRef {
+func (self {{$.Name}}_{{.Name}}RPC) RequestExtraData() channel.ExtraDataRef {
 	return self.rpc.RequestExtraData
 }
 
-func (self {{$.Name}}Stub_{{.Name}}) ResponseExtraData() channel.ExtraDataRef {
+func (self {{$.Name}}_{{.Name}}RPC) ResponseExtraData() channel.ExtraDataRef {
 	return self.rpc.ResponseExtraData
 }
+{{- end}}
+{{- range .Methods}}
+{{- if .Request}}
+
+func {{$.Name}}_New{{.Name}}Request() channel.Message {
+	return new({{.Request.GoMessagePath}})
+}
+{{- end}}
+{{- if .Response}}
+
+func {{$.Name}}_New{{.Name}}Response() channel.Message {
+	return new({{.Response.GoMessagePath}})
+}
+{{- end}}
 {{- end}}
 `)).Execute(&context_.Code, self); err != nil {
 		panic(err)
@@ -711,11 +723,11 @@ type reqresp struct {
 }
 
 func (self *reqresp) Load(raw string) {
-	if i := strings.LastIndexByte(raw, '.'); i == 0 {
-		self.MessageName = raw[1:]
-	} else {
+	if i := strings.LastIndexByte(raw, '.'); i >= 1 {
 		self.PackageName = raw[1:i]
 		self.MessageName = raw[i+1:]
+	} else {
+		self.MessageName = raw[1:]
 	}
 }
 

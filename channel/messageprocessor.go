@@ -35,7 +35,7 @@ func (self *messageProcessor) EmitKeepalive(packet *Packet) {
 }
 
 func (self *messageProcessor) NewRequest(packet *Packet) {
-	methodOptions := self.Channel.options.GetMethod(packet.RequestHeader.ServiceId, packet.RequestHeader.MethodName)
+	methodOptions := self.Channel.options.GetMethod(packet.RequestHeader.ServiceName, packet.RequestHeader.MethodName)
 	packet.Message = methodOptions.RequestFactory()
 	self.methodOptionsCache = methodOptions
 }
@@ -59,14 +59,14 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 			self.Channel.options.Logger.Info().Err(packet.Err).
 				Str("transport_id", self.Stream.TransportID().String()).
 				Str("trace_id", traceID.String()).
-				Str("service_id", requestHeader.ServiceId).
+				Str("service_name", requestHeader.ServiceName).
 				Str("method_name", requestHeader.MethodName).
 				Msg("rpc_bad_request")
 
 			self.Stream.SendResponse(&protocol.ResponseHeader{
 				SequenceNumber: requestHeader.SequenceNumber,
 				ErrorType:      RPCErrBadRequest.Type,
-				ErrorCode:      RPCErrBadRequest.Code,
+				ErrorName:      RPCErrBadRequest.Name,
 			}, NullMessage)
 		}
 
@@ -78,14 +78,14 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 		self.Channel.options.Logger.Info().
 			Str("transport_id", self.Stream.TransportID().String()).
 			Str("trace_id", traceID.String()).
-			Str("service_id", requestHeader.ServiceId).
+			Str("service_name", requestHeader.ServiceName).
 			Str("method_name", requestHeader.MethodName).
 			Msg("rpc_not_found")
 
 		self.Stream.SendResponse(&protocol.ResponseHeader{
 			SequenceNumber: requestHeader.SequenceNumber,
 			ErrorType:      RPCErrNotFound.Type,
-			ErrorCode:      RPCErrNotFound.Code,
+			ErrorName:      RPCErrNotFound.Name,
 		}, NullMessage)
 
 		return
@@ -95,7 +95,7 @@ func (self *messageProcessor) HandleRequest(ctx context.Context, packet *Packet)
 
 	*rpc = RPC{
 		Ctx:              ctx,
-		ServiceID:        requestHeader.ServiceId,
+		ServiceName:      requestHeader.ServiceName,
 		MethodName:       requestHeader.MethodName,
 		RequestExtraData: ExtraData(requestHeader.ExtraData).Ref(false),
 		Request:          packet.Message,
@@ -135,7 +135,7 @@ func (self *messageProcessor) PostEmitRequest(packet *Packet) {
 			} else {
 				inflightRPC_.Fail(responseHeader.ExtraData, &RPCError{
 					Type: responseHeader.ErrorType,
-					Code: responseHeader.ErrorCode,
+					Name: responseHeader.ErrorName,
 				})
 			}
 		} else {
@@ -190,7 +190,7 @@ func (self *messageProcessor) HandleResponse(ctx context.Context, packet *Packet
 		} else {
 			self.inflightRPCCache.Fail(responseHeader.ExtraData, &RPCError{
 				Type: responseHeader.ErrorType,
-				Code: responseHeader.ErrorCode,
+				Name: responseHeader.ErrorName,
 			})
 		}
 	} else {
@@ -233,14 +233,14 @@ func handleIncomingRPC(rpc *RPC, stream_ *stream.Stream) {
 			rpc.internals.Channel.options.Logger.Error().Err(rpc.Err).
 				Str("transport_id", stream_.TransportID().String()).
 				Str("trace_id", rpc.internals.TraceID.String()).
-				Str("service_id", rpc.ServiceID).
+				Str("service_name", rpc.ServiceName).
 				Str("method_name", rpc.MethodName).
 				Msg("rpc_internal_server_error")
 			rpcErr = RPCErrInternalServer
 		}
 
 		responseHeader.ErrorType = rpcErr.Type
-		responseHeader.ErrorCode = rpcErr.Code
+		responseHeader.ErrorName = rpcErr.Name
 		response = NullMessage
 	}
 

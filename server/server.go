@@ -56,8 +56,7 @@ func (self *Server) Run() (err error) {
 	}()
 
 	if self.activity.IsClosed() {
-		err = ErrClosed
-		return
+		return ErrClosed
 	}
 
 	var url_ *url.URL
@@ -67,7 +66,7 @@ func (self *Server) Run() (err error) {
 		self.options.Logger.Error().Err(err).
 			Str("server_url", self.rawURL).
 			Msg("server_invalid_url")
-		return err
+		return
 	}
 
 	var acceptor Acceptor
@@ -75,6 +74,28 @@ func (self *Server) Run() (err error) {
 
 	if err != nil {
 		return
+	}
+
+	for i, hook := range self.options.Hooks {
+		if hook.BeforeRun == nil {
+			continue
+		}
+
+		err = hook.BeforeRun(self.ctx, url_)
+
+		if err != nil {
+			for i--; i >= 0; i-- {
+				hook = self.options.Hooks[i]
+
+				if hook.AfterRun == nil {
+					continue
+				}
+
+				hook.AfterRun(url_)
+			}
+
+			return
+		}
 	}
 
 	err = acceptor(self.ctx, url_, &self.activity.Counter, func(connection net.Conn) {
@@ -90,6 +111,15 @@ func (self *Server) Run() (err error) {
 	self.options.Logger.Error().Err(err).
 		Str("server_url", self.rawURL).
 		Msg("server_accept_failed")
+
+	for _, hook := range self.options.Hooks {
+		if hook.AfterRun == nil {
+			continue
+		}
+
+		hook.AfterRun(url_)
+	}
+
 	return
 }
 

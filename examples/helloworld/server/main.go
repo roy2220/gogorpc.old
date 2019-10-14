@@ -4,34 +4,34 @@ import (
 	"context"
 
 	"github.com/let-z-go/gogorpc/channel"
-	"github.com/let-z-go/gogorpc/examples/helloworld/protocol"
+	"github.com/let-z-go/gogorpc/examples/helloworld/proto"
 	"github.com/let-z-go/gogorpc/server"
 )
 
-type GreeterHandler struct{}
+type Greeter struct{}
 
-func (GreeterHandler) SayHello(ctx context.Context, request *protocol.SayHelloReq) (*protocol.SayHelloResp, error) {
+func (Greeter) SayHello(ctx context.Context, request *proto.SayHelloReq) (*proto.SayHelloResp, error) {
 	if request.Name == "spike" {
-		return nil, protocol.RPCErrForbiddenName
+		return nil, proto.RPCErrForbiddenName
 	}
 
-	return &protocol.SayHelloResp{
+	return &proto.SayHelloResp{
 		Message: "Hello " + request.Name,
 	}, nil
 }
 
-func (GreeterHandler) SayHello2(ctx context.Context, request *protocol.SayHelloReq) error {
+func (Greeter) SayHello2(ctx context.Context, request *proto.SayHelloReq) error {
 	return channel.RPCErrNotImplemented
 }
 
-func (GreeterHandler) SayHello3(ctx context.Context) (*protocol.SayHelloResp, error) {
+func (Greeter) SayHello3(ctx context.Context) (*proto.SayHelloResp, error) {
 	return nil, channel.RPCErrNotImplemented
 }
 
 func main() {
 	opts := server.Options{
 		Channel: (&channel.Options{}).
-			Do(protocol.RegisterGreeterHandler(GreeterHandler{})),
+			Do(proto.ImplementGreeter(Greeter{})),
 	}
 
 	svr := new(server.Server).Init(&opts, "tcp://127.0.0.1:8888")

@@ -131,7 +131,7 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 		}
 	}
 
-	methodOptions := self.options.GetMethod(rpc.ServiceID, rpc.MethodName)
+	methodOptions := self.options.GetMethod(rpc.ServiceName, rpc.MethodName)
 	rpc.internals.Init(rpcHandler, methodOptions.OutgoingRPCInterceptors)
 	rpc.Ctx = BindRPC(rpc.Ctx, rpc)
 }
@@ -295,7 +295,7 @@ func handleOutgoingRPC(rpc *RPC, rpcHasParent bool, rpcParent *RPC, responseFact
 
 	if err := channel.stream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
 		SequenceNumber: rpc.internals.SequenceNumber,
-		ServiceId:      rpc.ServiceID,
+		ServiceName:      rpc.ServiceName,
 		MethodName:     rpc.MethodName,
 		ExtraData:      rpc.RequestExtraData.Value(),
 		Deadline:       rpc.internals.Deadline,
