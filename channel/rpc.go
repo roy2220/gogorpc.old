@@ -17,6 +17,11 @@ type RPC struct {
 	Response          Message
 	Err               error
 
+	channel        *Channel
+	sequenceNumber int32
+	deadline       int64
+	traceID        uuid.UUID
+
 	internals rpcInternals
 }
 
@@ -31,22 +36,44 @@ func (self *RPC) Reprepare() {
 	self.internals.Reprepare()
 }
 
+func (self *RPC) Channel() RestrictedChannel {
+	return RestrictedChannel{self.channel}
+}
+
+func (self *RPC) TraceID() uuid.UUID {
+	return self.traceID
+}
+
 func (self *RPC) IsHandled() bool {
 	return self.internals.IsHandled()
 }
 
-func (self *RPC) Channel() interface {
-	DoRPC(rpc *RPC, responseFactory MessageFactory)
-	PrepareRPC(rpc *RPC, responseFactory MessageFactory)
-	Abort(extraData ExtraData)
-	TransportID() uuid.UUID
-	Extension() Extension
-} {
-	return self.internals.Channel
+type RestrictedChannel struct {
+	underlying *Channel
 }
 
-func (self *RPC) TraceID() uuid.UUID {
-	return self.internals.TraceID
+func (self RestrictedChannel) DoRPC(rpc *RPC, responseFactory MessageFactory) {
+	self.underlying.DoRPC(rpc, responseFactory)
+}
+
+func (self RestrictedChannel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
+	self.underlying.PrepareRPC(rpc, responseFactory)
+}
+
+func (self RestrictedChannel) Abort(extraData ExtraData) {
+	self.underlying.Abort(extraData)
+}
+
+func (self RestrictedChannel) IsServerSide() bool {
+	return self.underlying.IsServerSide()
+}
+
+func (self RestrictedChannel) UserData() interface{} {
+	return self.underlying.UserData()
+}
+
+func (self RestrictedChannel) TransportID() uuid.UUID {
+	return self.underlying.TransportID()
 }
 
 type RPCHandler func(rpc *RPC)
@@ -60,13 +87,11 @@ func BindRPC(ctx context.Context, rpc *RPC) context.Context {
 }
 
 func GetRPC(ctx context.Context) (*RPC, bool) {
-	value := ctx.Value(rpcKey{})
-
-	if value == nil {
-		return nil, false
+	if value := ctx.Value(rpcKey{}); value != nil {
+		return value.(*RPC), true
 	}
 
-	return value.(*RPC), true
+	return nil, false
 }
 
 func MustGetRPC(ctx context.Context) *RPC {
@@ -74,11 +99,6 @@ func MustGetRPC(ctx context.Context) *RPC {
 }
 
 type rpcInternals struct {
-	Channel        *Channel
-	SequenceNumber int32
-	Deadline       int64
-	TraceID        uuid.UUID
-
 	handler              RPCHandler
 	interceptors         []RPCHandler
 	nextInterceptorIndex int

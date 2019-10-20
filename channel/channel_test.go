@@ -96,7 +96,7 @@ func TestBadHandshake(t *testing.T) {
 	testSetup2(
 		t,
 		&Options{ExtensionFactory: testExtension{
-			Handshaker: testHandshaker{
+			h: testHandshaker{
 				CbNewHandshake: func() Message {
 					return new(RawMessage)
 				},
@@ -109,7 +109,7 @@ func TestBadHandshake(t *testing.T) {
 			}.Init(),
 		}.Factory()},
 		&Options{ExtensionFactory: testExtension{
-			Handshaker: testHandshaker{
+			h: testHandshaker{
 				CbEmitHandshake: func() (Message, error) {
 					msg := RawMessage("false")
 					return &msg, nil
@@ -188,11 +188,10 @@ func TestReconnection1(t *testing.T) {
 			Transport: &TransportOptions{
 				Logger: &logger,
 			},
-		}).AddPacketFilter(Incoming, MessageRequest, func(pk *Packet) bool {
-			pk.ResponseHeader.ErrorType = 0
-			pk.Message = NullMessage
-			pk.Err = ErrDirectResponse
-			return true
+		}).AddEventFilter(EventIncoming, EventRequest, func(ev *Event) {
+			ev.ResponseHeader.RpcError.Type = 0
+			ev.Message = NullMessage
+			ev.Err = ErrDirectResponse
 		}),
 	}
 	f := false
@@ -464,21 +463,34 @@ func testSetup(
 }
 
 type testExtension struct {
-	Listener
-	Handshaker
-	Keepaliver
+	DummyListener
+
+	l  Listener
+	h  Handshaker
+	tc TrafficCrypter
+	k  Keepaliver
+	ud interface{}
 }
 
-func (s testExtension) Factory() func(bool) Extension {
-	return func(bool) Extension {
-		if s.Listener == nil {
-			s.Listener = DummyListener{}
+func (s testExtension) Listener() Listener                { return s.l }
+func (s testExtension) NewUserData() interface{}          { return s.ud }
+func (s testExtension) NewHandshaker() Handshaker         { return s.h }
+func (s testExtension) NewTrafficCrypter() TrafficCrypter { return s.tc }
+func (s testExtension) NewKeepaliver() Keepaliver         { return s.k }
+
+func (s testExtension) Factory() ExtensionFactory {
+	return func(RestrictedChannel, bool) Extension {
+		if s.l == nil {
+			s.l = DummyListener{}
 		}
-		if s.Handshaker == nil {
-			s.Handshaker = DummyHandshaker{}
+		if s.h == nil {
+			s.h = DummyHandshaker{}
 		}
-		if s.Keepaliver == nil {
-			s.Keepaliver = DummyKeepaliver{}
+		if s.tc == nil {
+			s.tc = DummyTrafficCrypter{}
+		}
+		if s.k == nil {
+			s.k = DummyKeepaliver{}
 		}
 		return s
 	}

@@ -150,116 +150,116 @@ func (self GreeterStub) MakeSayHello3RPC(ctx context.Context) Greeter_SayHello3R
 }
 
 type Greeter_SayHelloRPC struct {
-	rpc *channel.RPC
+	underlying *channel.RPC
 }
 
 func (self Greeter_SayHelloRPC) WithRequestExtraData(extraData channel.ExtraDataRef) Greeter_SayHelloRPC {
-	self.rpc.RequestExtraData = extraData
+	self.underlying.RequestExtraData = extraData
 	return self
 }
 
 func (self Greeter_SayHelloRPC) Do() Greeter_SayHelloRPC {
-	if self.rpc.IsHandled() {
-		self.rpc.Reprepare()
+	if self.underlying.IsHandled() {
+		self.underlying.Reprepare()
 	}
 
-	self.rpc.Handle()
+	self.underlying.Handle()
 	return self
 }
 
 func (self Greeter_SayHelloRPC) Result() (*SayHelloResp, error) {
-	if self.rpc.Err != nil {
-		return nil, self.rpc.Err
+	if self.underlying.Err != nil {
+		return nil, self.underlying.Err
 	}
 
-	return self.rpc.Response.(*SayHelloResp), nil
+	return self.underlying.Response.(*SayHelloResp), nil
 }
 
 func (self Greeter_SayHelloRPC) Close() {
-	channel.PutPooledRPC(self.rpc)
-	self.rpc = nil
+	channel.PutPooledRPC(self.underlying)
+	self.underlying = nil
 }
 
 func (self Greeter_SayHelloRPC) RequestExtraData() channel.ExtraDataRef {
-	return self.rpc.RequestExtraData
+	return self.underlying.RequestExtraData
 }
 
 func (self Greeter_SayHelloRPC) ResponseExtraData() channel.ExtraDataRef {
-	return self.rpc.ResponseExtraData
+	return self.underlying.ResponseExtraData
 }
 
 type Greeter_SayHello2RPC struct {
-	rpc *channel.RPC
+	underlying *channel.RPC
 }
 
 func (self Greeter_SayHello2RPC) WithRequestExtraData(extraData channel.ExtraDataRef) Greeter_SayHello2RPC {
-	self.rpc.RequestExtraData = extraData
+	self.underlying.RequestExtraData = extraData
 	return self
 }
 
 func (self Greeter_SayHello2RPC) Do() Greeter_SayHello2RPC {
-	if self.rpc.IsHandled() {
-		self.rpc.Reprepare()
+	if self.underlying.IsHandled() {
+		self.underlying.Reprepare()
 	}
 
-	self.rpc.Handle()
+	self.underlying.Handle()
 	return self
 }
 
 func (self Greeter_SayHello2RPC) Result() error {
-	return self.rpc.Err
+	return self.underlying.Err
 }
 
 func (self Greeter_SayHello2RPC) Close() {
-	channel.PutPooledRPC(self.rpc)
-	self.rpc = nil
+	channel.PutPooledRPC(self.underlying)
+	self.underlying = nil
 }
 
 func (self Greeter_SayHello2RPC) RequestExtraData() channel.ExtraDataRef {
-	return self.rpc.RequestExtraData
+	return self.underlying.RequestExtraData
 }
 
 func (self Greeter_SayHello2RPC) ResponseExtraData() channel.ExtraDataRef {
-	return self.rpc.ResponseExtraData
+	return self.underlying.ResponseExtraData
 }
 
 type Greeter_SayHello3RPC struct {
-	rpc *channel.RPC
+	underlying *channel.RPC
 }
 
 func (self Greeter_SayHello3RPC) WithRequestExtraData(extraData channel.ExtraDataRef) Greeter_SayHello3RPC {
-	self.rpc.RequestExtraData = extraData
+	self.underlying.RequestExtraData = extraData
 	return self
 }
 
 func (self Greeter_SayHello3RPC) Do() Greeter_SayHello3RPC {
-	if self.rpc.IsHandled() {
-		self.rpc.Reprepare()
+	if self.underlying.IsHandled() {
+		self.underlying.Reprepare()
 	}
 
-	self.rpc.Handle()
+	self.underlying.Handle()
 	return self
 }
 
 func (self Greeter_SayHello3RPC) Result() (*SayHelloResp, error) {
-	if self.rpc.Err != nil {
-		return nil, self.rpc.Err
+	if self.underlying.Err != nil {
+		return nil, self.underlying.Err
 	}
 
-	return self.rpc.Response.(*SayHelloResp), nil
+	return self.underlying.Response.(*SayHelloResp), nil
 }
 
 func (self Greeter_SayHello3RPC) Close() {
-	channel.PutPooledRPC(self.rpc)
-	self.rpc = nil
+	channel.PutPooledRPC(self.underlying)
+	self.underlying = nil
 }
 
 func (self Greeter_SayHello3RPC) RequestExtraData() channel.ExtraDataRef {
-	return self.rpc.RequestExtraData
+	return self.underlying.RequestExtraData
 }
 
 func (self Greeter_SayHello3RPC) ResponseExtraData() channel.ExtraDataRef {
-	return self.rpc.ResponseExtraData
+	return self.underlying.ResponseExtraData
 }
 
 func Greeter_NewSayHelloRequest() channel.Message {

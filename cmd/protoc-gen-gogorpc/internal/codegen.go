@@ -245,11 +245,11 @@ func (self *inputFile) Load(context_ *context, raw *descriptor.FileDescriptorPro
 		if err == nil {
 			for _, rawError := range extension.([]*gogorpc.Error) {
 				error_ := error1{
-					Name: rawError.Name,
+					Code: rawError.Code,
 				}
 
-				if error_.Name == "" {
-					context_.Fatal("invalid option `gogorpc.error`: empty `name`")
+				if error_.Code == "" {
+					context_.Fatal("invalid option `gogorpc.error`: empty `code`")
 				}
 
 				context_.EnterNode(&error_, func() {
@@ -350,7 +350,7 @@ import (
 		if err := template.Must(template.New("").Parse(`
 var (
 {{- range .Errors}}
-	RPCErr{{.Name}} = channel.NewRPCError(channel.RPCErrorType({{.Type}}), "{{.FullName}}")
+	RPCErr{{.Code}} = channel.NewRPCError(channel.RPCErrorType({{.Type}}), "{{.FullCode}}")
 {{- end}}
 )
 `)).Execute(&context_.Code, self); err != nil {
@@ -374,11 +374,11 @@ func (self *inputFile) GetNodeNameDelimiter() string {
 }
 
 type error1 struct {
-	Name string
+	Code string
 	Type int32
 
 	InputFile *inputFile
-	FullName  string
+	FullCode  string
 }
 
 func (self *error1) Load(context_ *context, raw *gogorpc.Error) {
@@ -391,13 +391,13 @@ func (self *error1) Load(context_ *context, raw *gogorpc.Error) {
 
 func (self *error1) Resolve(context_ *context) {
 	self.InputFile = context_.Nodes[len(context_.Nodes)-2].(*inputFile)
-	self.FullName = self.InputFile.PackageName + "." + self.Name
+	self.FullCode = self.InputFile.PackageName + "." + self.Code
 	context_.AddError(self)
 	self.InputFile.ImportGoPackage("channel", "github.com/let-z-go/gogorpc/channel")
 }
 
 func (self *error1) GetNodeName() string {
-	return "<gogorpc.error>:" + self.Name
+	return "<gogorpc.error>:" + self.Code
 }
 
 func (self *error1) GetNodeNameDelimiter() string {
@@ -583,20 +583,20 @@ func (self {{$.Name}}Stub) Make{{.Name}}RPC(ctx context.Context
 {{- range .Methods}}
 
 type {{$.Name}}_{{.Name}}RPC struct {
-	rpc *channel.RPC
+	underlying *channel.RPC
 }
 
 func (self {{$.Name}}_{{.Name}}RPC) WithRequestExtraData(extraData channel.ExtraDataRef) {{$.Name}}_{{.Name}}RPC {
-	self.rpc.RequestExtraData = extraData
+	self.underlying.RequestExtraData = extraData
 	return self
 }
 
 func (self {{$.Name}}_{{.Name}}RPC) Do() {{$.Name}}_{{.Name}}RPC {
-	if self.rpc.IsHandled() {
-		self.rpc.Reprepare()
+	if self.underlying.IsHandled() {
+		self.underlying.Reprepare()
 	}
 
-	self.rpc.Handle()
+	self.underlying.Handle()
 	return self
 }
 
@@ -608,27 +608,27 @@ func (self {{$.Name}}_{{.Name}}RPC) Result(){{" "}}
 	{{- end}}
 	{{- " {"}}
 	{{- if .Response}}
-	if self.rpc.Err != nil {
-		return nil, self.rpc.Err
+	if self.underlying.Err != nil {
+		return nil, self.underlying.Err
 	}
 
-	return self.rpc.Response.(*{{.Response.GoMessagePath}}), nil
+	return self.underlying.Response.(*{{.Response.GoMessagePath}}), nil
 	{{- else}}
-	return self.rpc.Err
+	return self.underlying.Err
 	{{- end}}
 }
 
 func (self {{$.Name}}_{{.Name}}RPC) Close() {
-	channel.PutPooledRPC(self.rpc)
-	self.rpc = nil
+	channel.PutPooledRPC(self.underlying)
+	self.underlying = nil
 }
 
 func (self {{$.Name}}_{{.Name}}RPC) RequestExtraData() channel.ExtraDataRef {
-	return self.rpc.RequestExtraData
+	return self.underlying.RequestExtraData
 }
 
 func (self {{$.Name}}_{{.Name}}RPC) ResponseExtraData() channel.ExtraDataRef {
-	return self.rpc.ResponseExtraData
+	return self.underlying.ResponseExtraData
 }
 {{- end}}
 {{- range .Methods}}
@@ -753,11 +753,11 @@ func (self *context) AddMessage(message_ *message) {
 func (self *context) AddError(error_ *error1) {
 	package_ := self.getOrSetPackage(error_.InputFile.PackageName)
 
-	if prevError, ok := package_.Errors[error_.Name]; ok {
+	if prevError, ok := package_.Errors[error_.Code]; ok {
 		self.Fatalf("redefinition: prevFileName=%#v", prevError.InputFile.Name)
 	}
 
-	package_.Errors[error_.Name] = error_
+	package_.Errors[error_.Code] = error_
 }
 
 func (self *context) Fatal(message string) {

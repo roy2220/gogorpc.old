@@ -31,9 +31,7 @@ func (self *Options) Normalize() *Options {
 		}
 
 		if self.ExtensionFactory == nil {
-			self.ExtensionFactory = func(bool) Extension {
-				return DummyExtension{}
-			}
+			self.ExtensionFactory = DummyExtensionFactory
 		}
 
 		if !self.GeneralMethod.requestFactoryIsSet {
@@ -52,8 +50,6 @@ func (self *Options) Do(doer func(*Options)) *Options {
 	doer(self)
 	return self
 }
-
-type ExtensionFactory func(extensionIsServerSide bool) (extension Extension)
 
 type MethodOptionsBuilder struct {
 	options *Options

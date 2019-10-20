@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package gogorpc.proto;
+
+option go_package = "github.com/let-z-go/gogorpc/internal/proto";
+
+message UUID {
+    fixed64 low = 1;
+    fixed64 high = 2;
+}

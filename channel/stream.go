@@ -5,15 +5,15 @@ import (
 )
 
 const (
-	Incoming         = stream.Incoming
-	Outgoing         = stream.Outgoing
-	MessageKeepalive = stream.MessageKeepalive
-	MessageRequest   = stream.MessageRequest
-	MessageResponse  = stream.MessageResponse
-	MessageHangup    = stream.MessageHangup
+	EventIncoming  = stream.EventIncoming
+	EventOutgoing  = stream.EventOutgoing
+	EventKeepalive = stream.EventKeepalive
+	EventRequest   = stream.EventRequest
+	EventResponse  = stream.EventResponse
+	EventHangup    = stream.EventHangup
 
 	HangupAborted                 = stream.HangupAborted
-	HangupBadIncomingPacket       = stream.HangupBadIncomingPacket
+	HangupBadIncomingEvent        = stream.HangupBadIncomingEvent
 	HangupTooManyIncomingRequests = stream.HangupTooManyIncomingRequests
 	HangupOutgoingPacketTooLarge  = stream.HangupOutgoingPacketTooLarge
 	HangupSystem                  = stream.HangupSystem
@@ -22,15 +22,15 @@ const (
 type (
 	StreamOptions = stream.Options
 
-	Packet       = stream.Packet
-	Direction    = stream.Direction
-	MessageType  = stream.MessageType
-	PacketFilter = stream.PacketFilter
-	Message      = stream.Message
-	RawMessage   = stream.RawMessage
-
 	Handshaker      = stream.Handshaker
 	DummyHandshaker = stream.DummyHandshaker
+
+	Event          = stream.Event
+	EventDirection = stream.EventDirection
+	EventType      = stream.EventType
+	EventFilter    = stream.EventFilter
+	Message        = stream.Message
+	RawMessage     = stream.RawMessage
 
 	Hangup     = stream.Hangup
 	HangupCode = stream.HangupCode
@@ -40,8 +40,8 @@ type (
 )
 
 var (
-	ErrPacketDropped = stream.ErrPacketDropped
-	NullMessage      = stream.NullMessage
-
 	ErrBadHandshake = stream.ErrBadHandshake
+
+	ErrEventDropped = stream.ErrEventDropped
+	NullMessage     = stream.NullMessage
 )

@@ -3,15 +3,15 @@ package stream
 import (
 	"fmt"
 
-	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/proto"
 )
 
 const (
-	HangupAborted                 = protocol.HANGUP_ABORTED
-	HangupBadIncomingPacket       = protocol.HANGUP_BAD_INCOMING_PACKET
-	HangupTooManyIncomingRequests = protocol.HANGUP_TOO_MANY_INCOMING_REQUESTS
-	HangupOutgoingPacketTooLarge  = protocol.HANGUP_OUTGOING_PACKET_TOO_LARGE
-	HangupSystem                  = protocol.HANGUP_SYSTEM
+	HangupAborted                 = proto.HANGUP_ABORTED
+	HangupBadIncomingEvent        = proto.HANGUP_BAD_INCOMING_EVENT
+	HangupTooManyIncomingRequests = proto.HANGUP_TOO_MANY_INCOMING_REQUESTS
+	HangupOutgoingPacketTooLarge  = proto.HANGUP_OUTGOING_PACKET_TOO_LARGE
+	HangupSystem                  = proto.HANGUP_SYSTEM
 )
 
 type Hangup struct {
@@ -32,8 +32,8 @@ func (self *Hangup) Error() string {
 	switch self.Code {
 	case HangupAborted:
 		message += "aborted"
-	case HangupBadIncomingPacket:
-		message += "bad incoming packet"
+	case HangupBadIncomingEvent:
+		message += "bad incoming event"
 	case HangupTooManyIncomingRequests:
 		message += "too many incoming requests"
 	case HangupOutgoingPacketTooLarge:
@@ -47,4 +47,4 @@ func (self *Hangup) Error() string {
 	return message
 }
 
-type HangupCode = protocol.HangupCode
+type HangupCode = proto.HangupCode

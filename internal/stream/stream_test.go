@@ -15,7 +15,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/proto"
 	"github.com/let-z-go/gogorpc/internal/transport"
 )
 
@@ -78,7 +78,7 @@ func TestHandshake1(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(false, &Options{Transport: &transport.Options{Logger: &logger}}, uuid.UUID{}, nil, nil)
+			st := new(Stream).Init(false, &Options{Transport: &transport.Options{Logger: &logger}}, nil, uuid.UUID{}, nil, nil)
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbEmitHandshake: func() (Message, error) {
@@ -102,7 +102,7 @@ func TestHandshake1(t *testing.T) {
 			assert.True(t, ok)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(true, &Options{Transport: &transport.Options{Logger: &logger}}, uuid.UUID{}, nil, nil)
+			st := new(Stream).Init(true, &Options{Transport: &transport.Options{Logger: &logger}}, nil, uuid.UUID{}, nil, nil)
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbNewHandshake: func() Message {
@@ -132,7 +132,7 @@ func TestHandshake2(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(false, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, uuid.UUID{}, nil, nil)
+			st := new(Stream).Init(false, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, uuid.UUID{}, nil, nil)
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.Regexp(t, "i/o timeout", err) {
@@ -141,7 +141,7 @@ func TestHandshake2(t *testing.T) {
 			assert.False(t, ok)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(true, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, uuid.UUID{}, nil, nil)
+			st := new(Stream).Init(true, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, uuid.UUID{}, nil, nil)
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, h Message) (bool, error) {
@@ -162,7 +162,7 @@ func TestHandshake3(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(false, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, uuid.UUID{}, nil, nil)
+			st := new(Stream).Init(false, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, uuid.UUID{}, nil, nil)
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, h Message) (bool, error) {
@@ -177,7 +177,7 @@ func TestHandshake3(t *testing.T) {
 			assert.False(t, ok)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(true, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, uuid.UUID{}, nil, nil)
+			st := new(Stream).Init(true, &Options{Transport: &transport.Options{HandshakeTimeout: -1}}, nil, uuid.UUID{}, nil, nil)
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
@@ -335,44 +335,46 @@ func TestHandshake4(t *testing.T) {
 }
 
 func TestPingAndPong1(t *testing.T) {
-	const N = 1000
+	const N = 1
 	opts1 := Options{}
 	opts2 := Options{}
 	sn1 := int32(0)
 	var mp1 testMessageProcessor
 	mp1 = testMessageProcessor{
-		CbPostEmitRequest: func(pk *Packet) {
+		CbPostEmitRequest: func(ev *Event) {
 			sn1++
 			if sn1 == N {
 				mp1.Stream.Abort(nil)
 			}
 		},
-		CbNewRequest: func(pk *Packet) {
-			pk.Message = new(RawMessage)
+		CbNewRequest: func(ev *Event) {
+			ev.Message = new(RawMessage)
 		},
-		CbHandleRequest: func(ctx context.Context, pk *Packet) {
-			assert.Equal(t, "ping", string(*pk.Message.(*RawMessage)))
+		CbHandleRequest: func(ctx context.Context, ev *Event) {
+			assert.Equal(t, "ping", string(*ev.Message.(*RawMessage)))
 			resp := RawMessage("pong")
-			pk.Err = mp1.Stream.SendResponse(&protocol.ResponseHeader{
-				SequenceNumber: pk.RequestHeader.SequenceNumber,
-				ErrorType:      protocol.RPC_ERROR_NOT_IMPLEMENTED,
+			ev.Err = mp1.Stream.SendResponse(&proto.ResponseHeader{
+				SequenceNumber: ev.RequestHeader.SequenceNumber,
+				RpcError: proto.RPCError{
+					Type: proto.RPC_ERROR_NOT_IMPLEMENTED,
+				},
 			}, &resp)
 		},
-		CbNewResponse: func(pk *Packet) {
-			pk.Message = new(RawMessage)
+		CbNewResponse: func(ev *Event) {
+			ev.Message = new(RawMessage)
 		},
-		CbHandleResponse: func(ctx context.Context, pk *Packet) {
-			assert.Equal(t, sn1-1, pk.ResponseHeader.SequenceNumber)
-			assert.Equal(t, "pong", string(*pk.Message.(*RawMessage)))
+		CbHandleResponse: func(ctx context.Context, ev *Event) {
+			assert.Equal(t, sn1-1, ev.ResponseHeader.SequenceNumber)
+			assert.Equal(t, "pong", string(*ev.Message.(*RawMessage)))
 			req := RawMessage("ping")
-			pk.Err = mp1.Stream.SendRequest(ctx, &protocol.RequestHeader{
+			ev.Err = mp1.Stream.SendRequest(ctx, &proto.RequestHeader{
 				SequenceNumber: sn1,
 			}, &req)
 		},
 	}.Init()
 	cb1 := func(ctx context.Context, st *Stream) {
 		req := RawMessage("ping")
-		err := st.SendRequest(ctx, &protocol.RequestHeader{}, &req)
+		err := st.SendRequest(ctx, &proto.RequestHeader{}, &req)
 		if !assert.NoError(t, err) {
 			t.FailNow()
 		}
@@ -380,35 +382,37 @@ func TestPingAndPong1(t *testing.T) {
 	sn2 := int32(0)
 	var mp2 testMessageProcessor
 	mp2 = testMessageProcessor{
-		CbPostEmitRequest: func(pk *Packet) {
+		CbPostEmitRequest: func(ev *Event) {
 			sn2++
 		},
-		CbNewRequest: func(pk *Packet) {
-			pk.Message = new(RawMessage)
+		CbNewRequest: func(ev *Event) {
+			ev.Message = new(RawMessage)
 		},
-		CbHandleRequest: func(ctx context.Context, pk *Packet) {
-			assert.Equal(t, "ping", string(*pk.Message.(*RawMessage)))
+		CbHandleRequest: func(ctx context.Context, ev *Event) {
+			assert.Equal(t, "ping", string(*ev.Message.(*RawMessage)))
 			resp := RawMessage("pong")
-			pk.Err = mp2.Stream.SendResponse(&protocol.ResponseHeader{
-				SequenceNumber: pk.RequestHeader.SequenceNumber,
-				ErrorType:      protocol.RPC_ERROR_NOT_IMPLEMENTED,
+			ev.Err = mp2.Stream.SendResponse(&proto.ResponseHeader{
+				SequenceNumber: ev.RequestHeader.SequenceNumber,
+				RpcError: proto.RPCError{
+					Type: proto.RPC_ERROR_NOT_IMPLEMENTED,
+				},
 			}, &resp)
 		},
-		CbNewResponse: func(pk *Packet) {
-			pk.Message = new(RawMessage)
+		CbNewResponse: func(ev *Event) {
+			ev.Message = new(RawMessage)
 		},
-		CbHandleResponse: func(ctx context.Context, pk *Packet) {
-			assert.Equal(t, sn2-1, pk.ResponseHeader.SequenceNumber)
-			assert.Equal(t, "pong", string(*pk.Message.(*RawMessage)))
+		CbHandleResponse: func(ctx context.Context, ev *Event) {
+			assert.Equal(t, sn2-1, ev.ResponseHeader.SequenceNumber)
+			assert.Equal(t, "pong", string(*ev.Message.(*RawMessage)))
 			req := RawMessage("ping")
-			pk.Err = mp2.Stream.SendRequest(ctx, &protocol.RequestHeader{
+			ev.Err = mp2.Stream.SendRequest(ctx, &proto.RequestHeader{
 				SequenceNumber: sn2,
 			}, &req)
 		},
 	}.Init()
 	cb2 := func(ctx context.Context, st *Stream) {
 		req := RawMessage("ping")
-		err := st.SendRequest(ctx, &protocol.RequestHeader{}, &req)
+		err := st.SendRequest(ctx, &proto.RequestHeader{}, &req)
 		if !assert.NoError(t, err) {
 			t.FailNow()
 		}
@@ -418,34 +422,34 @@ func TestPingAndPong1(t *testing.T) {
 
 func TestPingAndPong2(t *testing.T) {
 	const N = 1000
-	opts1 := Options{IncomingConcurrencyLimit: 10}
-	opts2 := Options{}
+	opts1 := Options{IncomingConcurrencyLimit: 10, Transport: &transport.Options{Logger: &logger}}
+	opts2 := Options{Transport: &transport.Options{Logger: &logger}}
 	sns1 := map[int32]struct{}{}
 	sns2 := map[int32]struct{}{}
 	cnt1 := int32(N)
 	cnt2 := int32(N)
 	var mp1 testMessageProcessor
 	mp1 = testMessageProcessor{
-		CbHandleRequest: func(ctx context.Context, pk *Packet) {
+		CbHandleRequest: func(ctx context.Context, ev *Event) {
 			select {
 			case <-ctx.Done():
-				pk.Err = ctx.Err()
+				ev.Err = ctx.Err()
 				return
-			case <-time.After(time.Duration(pk.RequestHeader.SequenceNumber%3) * time.Millisecond):
+			case <-time.After(time.Duration(ev.RequestHeader.SequenceNumber%3) * time.Millisecond):
 			}
-			resp := RawMessage(fmt.Sprintf("pong%d", pk.RequestHeader.SequenceNumber))
-			pk.Err = mp1.Stream.SendResponse(&protocol.ResponseHeader{
-				SequenceNumber: pk.RequestHeader.SequenceNumber,
+			resp := RawMessage(fmt.Sprintf("pong%d", ev.RequestHeader.SequenceNumber))
+			ev.Err = mp1.Stream.SendResponse(&proto.ResponseHeader{
+				SequenceNumber: ev.RequestHeader.SequenceNumber,
 			}, &resp)
 		},
-		CbNewResponse: func(pk *Packet) {
-			pk.Message = new(RawMessage)
+		CbNewResponse: func(ev *Event) {
+			ev.Message = new(RawMessage)
 		},
-		CbHandleResponse: func(ctx context.Context, pk *Packet) {
-			if assert.Equal(t, fmt.Sprintf("pong%d", pk.ResponseHeader.SequenceNumber), string(*pk.Message.(*RawMessage))) {
-				_, ok := sns1[pk.ResponseHeader.SequenceNumber]
+		CbHandleResponse: func(ctx context.Context, ev *Event) {
+			if assert.Equal(t, fmt.Sprintf("pong%d", ev.ResponseHeader.SequenceNumber), string(*ev.Message.(*RawMessage))) {
+				_, ok := sns1[ev.ResponseHeader.SequenceNumber]
 				if assert.False(t, ok) {
-					sns1[pk.ResponseHeader.SequenceNumber] = struct{}{}
+					sns1[ev.ResponseHeader.SequenceNumber] = struct{}{}
 					if atomic.AddInt32(&cnt1, -1) == 0 && atomic.LoadInt32(&cnt2) == 0 {
 						mp1.Stream.Abort(nil)
 					}
@@ -460,7 +464,7 @@ func TestPingAndPong2(t *testing.T) {
 			go func(i int) {
 				defer wg.Done()
 				req := RawMessage(fmt.Sprintf("ping%d", i))
-				err := st.SendRequest(ctx, &protocol.RequestHeader{SequenceNumber: int32(i)}, &req)
+				err := st.SendRequest(ctx, &proto.RequestHeader{SequenceNumber: int32(i)}, &req)
 				if !assert.NoError(t, err) {
 					t.FailNow()
 				}
@@ -470,26 +474,26 @@ func TestPingAndPong2(t *testing.T) {
 	}
 	var mp2 testMessageProcessor
 	mp2 = testMessageProcessor{
-		CbHandleRequest: func(ctx context.Context, pk *Packet) {
+		CbHandleRequest: func(ctx context.Context, ev *Event) {
 			select {
 			case <-ctx.Done():
-				pk.Err = ctx.Err()
+				ev.Err = ctx.Err()
 				return
-			case <-time.After(time.Duration(pk.RequestHeader.SequenceNumber%3) * time.Millisecond):
+			case <-time.After(time.Duration(ev.RequestHeader.SequenceNumber%3) * time.Millisecond):
 			}
-			resp := RawMessage(fmt.Sprintf("pong%d", pk.RequestHeader.SequenceNumber))
-			pk.Err = mp2.Stream.SendResponse(&protocol.ResponseHeader{
-				SequenceNumber: pk.RequestHeader.SequenceNumber,
+			resp := RawMessage(fmt.Sprintf("pong%d", ev.RequestHeader.SequenceNumber))
+			ev.Err = mp2.Stream.SendResponse(&proto.ResponseHeader{
+				SequenceNumber: ev.RequestHeader.SequenceNumber,
 			}, &resp)
 		},
-		CbNewResponse: func(pk *Packet) {
-			pk.Message = new(RawMessage)
+		CbNewResponse: func(ev *Event) {
+			ev.Message = new(RawMessage)
 		},
-		CbHandleResponse: func(ctx context.Context, pk *Packet) {
-			if assert.Equal(t, fmt.Sprintf("pong%d", pk.ResponseHeader.SequenceNumber), string(*pk.Message.(*RawMessage))) {
-				_, ok := sns2[pk.ResponseHeader.SequenceNumber]
+		CbHandleResponse: func(ctx context.Context, ev *Event) {
+			if assert.Equal(t, fmt.Sprintf("pong%d", ev.ResponseHeader.SequenceNumber), string(*ev.Message.(*RawMessage))) {
+				_, ok := sns2[ev.ResponseHeader.SequenceNumber]
 				if assert.False(t, ok) {
-					sns2[pk.ResponseHeader.SequenceNumber] = struct{}{}
+					sns2[ev.ResponseHeader.SequenceNumber] = struct{}{}
 					if atomic.AddInt32(&cnt2, -1) == 0 && atomic.LoadInt32(&cnt1) == 0 {
 						mp1.Stream.Abort(nil)
 					}
@@ -504,7 +508,7 @@ func TestPingAndPong2(t *testing.T) {
 			go func(i int) {
 				defer wg.Done()
 				req := RawMessage(fmt.Sprintf("ping%d", i))
-				err := st.SendRequest(ctx, &protocol.RequestHeader{SequenceNumber: int32(i)}, &req)
+				err := st.SendRequest(ctx, &proto.RequestHeader{SequenceNumber: int32(i)}, &req)
 				if !assert.NoError(t, err) {
 					t.FailNow()
 				}
@@ -522,18 +526,18 @@ func TestKeepalive(t *testing.T) {
 	j := 0
 	var mp1 testMessageProcessor
 	mp1 = testMessageProcessor{
-		CbNewKeepalive: func(pk *Packet) {
-			pk.Message = NullMessage
+		CbNewKeepalive: func(ev *Event) {
+			ev.Message = NullMessage
 		},
-		CbHandleKeepalive: func(ctx context.Context, pk *Packet) {
+		CbHandleKeepalive: func(ctx context.Context, ev *Event) {
 			i++
 			if i == 2 {
 				mp1.Stream.Abort(nil)
 			}
 		},
-		CbEmitKeepalive: func(pk *Packet) {
+		CbEmitKeepalive: func(ev *Event) {
 			j++
-			pk.Message = NullMessage
+			ev.Message = NullMessage
 			if j == 2 {
 				mp1.Stream.Abort(nil)
 			}
@@ -543,14 +547,14 @@ func TestKeepalive(t *testing.T) {
 	}
 	var mp2 testMessageProcessor
 	mp2 = testMessageProcessor{
-		CbNewKeepalive: func(pk *Packet) {
-			pk.Message = NullMessage
+		CbNewKeepalive: func(ev *Event) {
+			ev.Message = NullMessage
 		},
-		CbHandleKeepalive: func(ctx context.Context, pk *Packet) {
-			pk.Message = NullMessage
+		CbHandleKeepalive: func(ctx context.Context, ev *Event) {
+			ev.Message = NullMessage
 		},
-		CbEmitKeepalive: func(pk *Packet) {
-			pk.Message = NullMessage
+		CbEmitKeepalive: func(ev *Event) {
+			ev.Message = NullMessage
 		},
 	}.Init()
 	cb2 := func(ctx context.Context, st *Stream) {
@@ -602,7 +606,7 @@ func testSetup2(
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(false, opts1, uuid.UUID{}, nil, nil)
+			st := new(Stream).Init(false, opts1, nil, uuid.UUID{}, nil, nil)
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
@@ -616,14 +620,14 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Process(ctx, mp1)
+				err := st.Process(ctx, &testTrafficCrypter{"admin", 0}, mp1)
 				t.Log(err)
 			}()
 			defer wg.Wait()
 			cb1(ctx, st)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(true, opts2, uuid.UUID{}, nil, nil)
+			st := new(Stream).Init(true, opts2, nil, uuid.UUID{}, nil, nil)
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
@@ -637,7 +641,7 @@ func testSetup2(
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := st.Process(ctx, mp2)
+				err := st.Process(ctx, &testTrafficCrypter{"admin", 0}, mp2)
 				t.Log(err)
 			}()
 			defer wg.Wait()
@@ -677,84 +681,101 @@ func (s testHandshaker) EmitHandshake() (Message, error) {
 	return s.CbEmitHandshake()
 }
 
+type testTrafficCrypter struct {
+	key  string
+	keyi int
+}
+
+func (s *testTrafficCrypter) EncryptTraffic(traffic []byte) {
+	for i := range traffic {
+		traffic[i] ^= s.key[s.keyi%len(s.key)]
+	}
+}
+
+func (s *testTrafficCrypter) DecryptTraffic(traffic []byte) {
+	for i := range traffic {
+		traffic[i] ^= s.key[s.keyi%len(s.key)]
+	}
+}
+
 type testMessageProcessor struct {
-	CbNewKeepalive     func(*Packet)
-	CbHandleKeepalive  func(context.Context, *Packet)
-	CbEmitKeepalive    func(*Packet)
-	CbNewRequest       func(*Packet)
-	CbHandleRequest    func(context.Context, *Packet)
-	CbPostEmitRequest  func(*Packet)
-	CbNewResponse      func(*Packet)
-	CbHandleResponse   func(context.Context, *Packet)
-	CbPostEmitResponse func(*Packet)
+	CbNewKeepalive     func(*Event)
+	CbHandleKeepalive  func(context.Context, *Event)
+	CbEmitKeepalive    func(*Event)
+	CbNewRequest       func(*Event)
+	CbHandleRequest    func(context.Context, *Event)
+	CbPostEmitRequest  func(*Event)
+	CbNewResponse      func(*Event)
+	CbHandleResponse   func(context.Context, *Event)
+	CbPostEmitResponse func(*Event)
 	Stream             *Stream
 }
 
 func (s testMessageProcessor) Init() testMessageProcessor {
 	if s.CbNewKeepalive == nil {
-		s.CbNewKeepalive = func(pk *Packet) { pk.Message = NullMessage }
+		s.CbNewKeepalive = func(ev *Event) { ev.Message = NullMessage }
 	}
 	if s.CbHandleKeepalive == nil {
-		s.CbHandleKeepalive = func(context.Context, *Packet) {}
+		s.CbHandleKeepalive = func(context.Context, *Event) {}
 	}
 	if s.CbEmitKeepalive == nil {
-		s.CbEmitKeepalive = func(pk *Packet) { pk.Message = NullMessage }
+		s.CbEmitKeepalive = func(ev *Event) { ev.Message = NullMessage }
 	}
 	if s.CbNewRequest == nil {
-		s.CbNewRequest = func(pk *Packet) { pk.Message = NullMessage }
+		s.CbNewRequest = func(ev *Event) { ev.Message = NullMessage }
 	}
 	if s.CbHandleRequest == nil {
-		s.CbHandleRequest = func(context.Context, *Packet) {}
+		s.CbHandleRequest = func(context.Context, *Event) {}
 	}
 	if s.CbPostEmitRequest == nil {
-		s.CbPostEmitRequest = func(*Packet) {}
+		s.CbPostEmitRequest = func(*Event) {}
 	}
 	if s.CbNewResponse == nil {
-		s.CbNewResponse = func(pk *Packet) { pk.Message = NullMessage }
+		s.CbNewResponse = func(ev *Event) { ev.Message = NullMessage }
 	}
 	if s.CbHandleResponse == nil {
-		s.CbHandleResponse = func(context.Context, *Packet) {}
+		s.CbHandleResponse = func(context.Context, *Event) {}
 	}
 	if s.CbPostEmitResponse == nil {
-		s.CbPostEmitResponse = func(*Packet) {}
+		s.CbPostEmitResponse = func(*Event) {}
 	}
 	return s
 }
 
-func (s testMessageProcessor) NewKeepalive(pk *Packet) {
-	s.CbNewKeepalive(pk)
+func (s testMessageProcessor) NewKeepalive(ev *Event) {
+	s.CbNewKeepalive(ev)
 }
 
-func (s testMessageProcessor) HandleKeepalive(ctx context.Context, pk *Packet) {
-	s.CbHandleKeepalive(ctx, pk)
+func (s testMessageProcessor) HandleKeepalive(ctx context.Context, ev *Event) {
+	s.CbHandleKeepalive(ctx, ev)
 }
 
-func (s testMessageProcessor) EmitKeepalive(pk *Packet) {
-	s.CbEmitKeepalive(pk)
+func (s testMessageProcessor) EmitKeepalive(ev *Event) {
+	s.CbEmitKeepalive(ev)
 }
 
-func (s testMessageProcessor) NewRequest(pk *Packet) {
-	s.CbNewRequest(pk)
+func (s testMessageProcessor) NewRequest(ev *Event) {
+	s.CbNewRequest(ev)
 }
 
-func (s testMessageProcessor) HandleRequest(ctx context.Context, pk *Packet) {
-	s.CbHandleRequest(ctx, pk)
+func (s testMessageProcessor) HandleRequest(ctx context.Context, ev *Event) {
+	s.CbHandleRequest(ctx, ev)
 }
 
-func (s testMessageProcessor) PostEmitRequest(pk *Packet) {
-	s.CbPostEmitRequest(pk)
+func (s testMessageProcessor) PostEmitRequest(ev *Event) {
+	s.CbPostEmitRequest(ev)
 }
 
-func (s testMessageProcessor) NewResponse(pk *Packet) {
-	s.CbNewResponse(pk)
+func (s testMessageProcessor) NewResponse(ev *Event) {
+	s.CbNewResponse(ev)
 }
 
-func (s testMessageProcessor) HandleResponse(ctx context.Context, pk *Packet) {
-	s.CbHandleResponse(ctx, pk)
+func (s testMessageProcessor) HandleResponse(ctx context.Context, ev *Event) {
+	s.CbHandleResponse(ctx, ev)
 }
 
-func (s testMessageProcessor) PostEmitResponse(pk *Packet) {
-	s.CbPostEmitResponse(pk)
+func (s testMessageProcessor) PostEmitResponse(ev *Event) {
+	s.CbPostEmitResponse(ev)
 }
 
 var logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()

@@ -1,11 +1,11 @@
 syntax = "proto3";
 
-package gogorpc.protocol;
+package gogorpc.proto;
 
 import "github.com/gogo/protobuf/gogoproto/gogo.proto";
-import "github.com/let-z-go/gogorpc/internal/protocol/uuid.proto";
+import "github.com/let-z-go/gogorpc/internal/proto/uuid.proto";
 
-option go_package = "github.com/let-z-go/gogorpc/internal/protocol";
+option go_package = "github.com/let-z-go/gogorpc/internal/proto";
 option (gogoproto.goproto_enum_prefix_all) = false;
 
 enum RPCErrorType {
@@ -26,7 +26,7 @@ enum RPCErrorType {
 
 enum HangupCode {
     HANGUP_ABORTED = 0;
-    HANGUP_BAD_INCOMING_PACKET = 1;
+    HANGUP_BAD_INCOMING_EVENT = 1;
     HANGUP_TOO_MANY_INCOMING_REQUESTS = 2;
     HANGUP_OUTGOING_PACKET_TOO_LARGE = 3;
     HANGUP_SYSTEM = 4;
@@ -51,8 +51,13 @@ message RequestHeader {
 message ResponseHeader {
     int32 sequence_number = 1;
     map<string, bytes> extra_data = 2;
-    RPCErrorType error_type = 3;
-    string error_name = 4;
+    RPCError rpc_error = 3 [ (gogoproto.nullable) = false ];
+}
+
+message RPCError {
+    RPCErrorType type = 1;
+    string code = 2;
+    string desc = 3;
 }
 
 message Hangup {

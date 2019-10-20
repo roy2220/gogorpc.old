@@ -1,5 +1,9 @@
 package stream
 
+import (
+	"fmt"
+)
+
 type ExtraData map[string][]byte
 
 func (self ExtraData) TryGet(key string) ([]byte, bool) {
@@ -12,6 +16,16 @@ func (self ExtraData) Get(key string, defaultValue []byte) []byte {
 
 	if !ok {
 		value = defaultValue
+	}
+
+	return value
+}
+
+func (self ExtraData) MustGet(key string) []byte {
+	value, ok := self[key]
+
+	if !ok {
+		panic(fmt.Errorf("gogorpc/stream: extra data key not found: key=%#v", key))
 	}
 
 	return value
@@ -61,6 +75,10 @@ func (self ExtraDataRef) TryGet(key string) ([]byte, bool) {
 
 func (self ExtraDataRef) Get(key string, defaultValue []byte) []byte {
 	return self.value.Get(key, defaultValue)
+}
+
+func (self ExtraDataRef) MustGet(key string) []byte {
+	return self.value.MustGet(key)
 }
 
 func (self *ExtraDataRef) Set(key string, value []byte) {

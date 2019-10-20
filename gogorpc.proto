@@ -9,7 +9,7 @@ option go_package = "github.com/let-z-go/gogorpc";
 message Void {}
 
 message Error {
-    required string name = 1;
+    required string code = 1;
     required int32 type = 2;
 }
 

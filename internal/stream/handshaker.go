@@ -8,7 +8,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/proto"
 	"github.com/let-z-go/gogorpc/internal/transport"
 )
 
@@ -29,11 +29,10 @@ func (DummyHandshaker) EmitHandshake() (Message, error)                        {
 var ErrBadHandshake = errors.New("gogorpc/stream: bad handshake")
 
 type transportHandshaker struct {
-	Inner Handshaker
+	Underlying Handshaker
 
-	*stream
-
-	handshakeHeader     protocol.StreamHandshakeHeader
+	stream              *Stream
+	handshakeHeader     proto.StreamHandshakeHeader
 	handshakeHeaderSize int
 	handshakePayload    Message
 	err                 error
@@ -63,42 +62,44 @@ func (self *transportHandshaker) HandleHandshake(ctx context.Context, rawHandsha
 
 	var logEvent *zerolog.Event
 
-	if self.isServerSide {
-		logEvent = self.options.Logger.Info().Str("side", "server-side")
+	if self.stream.isServerSide {
+		logEvent = self.stream.options.Logger.Info().Str("side", "server-side")
 	} else {
-		logEvent = self.options.Logger.Info().Str("side", "client-side")
+		logEvent = self.stream.options.Logger.Info().Str("side", "client-side")
 	}
 
 	logEvent.Int("size", handshakeSize).
 		Int("header_size", handshakeHeaderSize).
-		Str("transport_id", self.TransportID().String()).
+		Str("transport_id", self.stream.TransportID().String()).
 		Int32("incoming_keepalive_interval", self.handshakeHeader.IncomingKeepaliveInterval).
 		Int32("outgoing_keepalive_interval", self.handshakeHeader.OutgoingKeepaliveInterval).
 		Int32("incoming_concurrency_limit", self.handshakeHeader.IncomingConcurrencyLimit).
 		Int32("outgoing_concurrency_limit", self.handshakeHeader.OutgoingConcurrencyLimit).
 		Msg("stream_incoming_handshake")
-	handshakePayload := self.Inner.NewHandshake()
+	handshakePayload := self.Underlying.NewHandshake()
 
 	if err := handshakePayload.Unmarshal(rawHandshake[handshakePayloadOffset:]); err != nil {
 		return false, err
 	}
 
-	ok, err := self.Inner.HandleHandshake(ctx, handshakePayload)
+	ok, err := self.Underlying.HandleHandshake(ctx, handshakePayload)
 
 	if err != nil {
 		return false, err
 	}
 
-	if self.isServerSide {
+	if self.stream.isServerSide {
 		maxKeepaliveIntervalMs := int32(maxKeepaliveInterval / time.Millisecond)
 
-		if keepaliveIntervalMs := int32(self.options.OutgoingKeepaliveInterval / time.Millisecond); self.handshakeHeader.IncomingKeepaliveInterval < keepaliveIntervalMs {
+		if keepaliveIntervalMs := int32(self.stream.options.OutgoingKeepaliveInterval / time.Millisecond);
+		/*   */ self.handshakeHeader.IncomingKeepaliveInterval < keepaliveIntervalMs {
 			self.handshakeHeader.IncomingKeepaliveInterval = keepaliveIntervalMs
 		} else if self.handshakeHeader.IncomingKeepaliveInterval > maxKeepaliveIntervalMs {
 			self.handshakeHeader.IncomingKeepaliveInterval = maxKeepaliveIntervalMs
 		}
 
-		if keepaliveIntervalMs := int32(self.options.IncomingKeepaliveInterval / time.Millisecond); self.handshakeHeader.OutgoingKeepaliveInterval < keepaliveIntervalMs {
+		if keepaliveIntervalMs := int32(self.stream.options.IncomingKeepaliveInterval / time.Millisecond);
+		/*   */ self.handshakeHeader.OutgoingKeepaliveInterval < keepaliveIntervalMs {
 			self.handshakeHeader.OutgoingKeepaliveInterval = keepaliveIntervalMs
 		} else if self.handshakeHeader.OutgoingKeepaliveInterval > maxKeepaliveIntervalMs {
 			self.handshakeHeader.OutgoingKeepaliveInterval = maxKeepaliveIntervalMs
@@ -106,42 +107,42 @@ func (self *transportHandshaker) HandleHandshake(ctx context.Context, rawHandsha
 
 		if int(self.handshakeHeader.IncomingConcurrencyLimit) < minConcurrencyLimit {
 			self.handshakeHeader.IncomingConcurrencyLimit = minConcurrencyLimit
-		} else if int(self.handshakeHeader.IncomingConcurrencyLimit) > self.options.OutgoingConcurrencyLimit {
-			self.handshakeHeader.IncomingConcurrencyLimit = int32(self.options.OutgoingConcurrencyLimit)
+		} else if int(self.handshakeHeader.IncomingConcurrencyLimit) > self.stream.options.OutgoingConcurrencyLimit {
+			self.handshakeHeader.IncomingConcurrencyLimit = int32(self.stream.options.OutgoingConcurrencyLimit)
 		}
 
 		if int(self.handshakeHeader.OutgoingConcurrencyLimit) < minConcurrencyLimit {
 			self.handshakeHeader.OutgoingConcurrencyLimit = minConcurrencyLimit
-		} else if int(self.handshakeHeader.OutgoingConcurrencyLimit) > self.options.IncomingConcurrencyLimit {
-			self.handshakeHeader.OutgoingConcurrencyLimit = int32(self.options.IncomingConcurrencyLimit)
+		} else if int(self.handshakeHeader.OutgoingConcurrencyLimit) > self.stream.options.IncomingConcurrencyLimit {
+			self.handshakeHeader.OutgoingConcurrencyLimit = int32(self.stream.options.IncomingConcurrencyLimit)
 		}
 
-		self.incomingKeepaliveInterval = time.Duration(self.handshakeHeader.OutgoingKeepaliveInterval) * time.Millisecond
-		self.outgoingKeepaliveInterval = time.Duration(self.handshakeHeader.IncomingKeepaliveInterval) * time.Millisecond
-		self.incomingConcurrencyLimit = int(self.handshakeHeader.OutgoingConcurrencyLimit)
-		self.outgoingConcurrencyLimit = int(self.handshakeHeader.IncomingConcurrencyLimit)
+		self.stream.incomingKeepaliveInterval = time.Duration(self.handshakeHeader.OutgoingKeepaliveInterval) * time.Millisecond
+		self.stream.outgoingKeepaliveInterval = time.Duration(self.handshakeHeader.IncomingKeepaliveInterval) * time.Millisecond
+		self.stream.incomingConcurrencyLimit = int(self.handshakeHeader.OutgoingConcurrencyLimit)
+		self.stream.outgoingConcurrencyLimit = int(self.handshakeHeader.IncomingConcurrencyLimit)
 	} else {
-		self.incomingKeepaliveInterval = time.Duration(self.handshakeHeader.IncomingKeepaliveInterval) * time.Millisecond
-		self.outgoingKeepaliveInterval = time.Duration(self.handshakeHeader.OutgoingKeepaliveInterval) * time.Millisecond
-		self.incomingConcurrencyLimit = int(self.handshakeHeader.IncomingConcurrencyLimit)
-		self.outgoingConcurrencyLimit = int(self.handshakeHeader.OutgoingConcurrencyLimit)
+		self.stream.incomingKeepaliveInterval = time.Duration(self.handshakeHeader.IncomingKeepaliveInterval) * time.Millisecond
+		self.stream.outgoingKeepaliveInterval = time.Duration(self.handshakeHeader.OutgoingKeepaliveInterval) * time.Millisecond
+		self.stream.incomingConcurrencyLimit = int(self.handshakeHeader.IncomingConcurrencyLimit)
+		self.stream.outgoingConcurrencyLimit = int(self.handshakeHeader.OutgoingConcurrencyLimit)
 	}
 
 	return ok, nil
 }
 
 func (self *transportHandshaker) SizeHandshake() int {
-	if !self.isServerSide {
-		self.handshakeHeader = protocol.StreamHandshakeHeader{
-			IncomingKeepaliveInterval: int32(self.options.IncomingKeepaliveInterval / time.Millisecond),
-			OutgoingKeepaliveInterval: int32(self.options.OutgoingKeepaliveInterval / time.Millisecond),
-			IncomingConcurrencyLimit:  int32(self.options.IncomingConcurrencyLimit),
-			OutgoingConcurrencyLimit:  int32(self.options.OutgoingConcurrencyLimit),
+	if !self.stream.isServerSide {
+		self.handshakeHeader = proto.StreamHandshakeHeader{
+			IncomingKeepaliveInterval: int32(self.stream.options.IncomingKeepaliveInterval / time.Millisecond),
+			OutgoingKeepaliveInterval: int32(self.stream.options.OutgoingKeepaliveInterval / time.Millisecond),
+			IncomingConcurrencyLimit:  int32(self.stream.options.IncomingConcurrencyLimit),
+			OutgoingConcurrencyLimit:  int32(self.stream.options.OutgoingConcurrencyLimit),
 		}
 	}
 
 	self.handshakeHeaderSize = self.handshakeHeader.Size()
-	self.handshakePayload, self.err = self.Inner.EmitHandshake()
+	self.handshakePayload, self.err = self.Underlying.EmitHandshake()
 
 	if self.err != nil {
 		return 0
@@ -157,15 +158,15 @@ func (self *transportHandshaker) EmitHandshake(buffer []byte) error {
 
 	var logEvent *zerolog.Event
 
-	if self.isServerSide {
-		logEvent = self.options.Logger.Info().Str("side", "server-side")
+	if self.stream.isServerSide {
+		logEvent = self.stream.options.Logger.Info().Str("side", "server-side")
 	} else {
-		logEvent = self.options.Logger.Info().Str("side", "client-side")
+		logEvent = self.stream.options.Logger.Info().Str("side", "client-side")
 	}
 
 	logEvent.Int("size", len(buffer)).
 		Int("header_size", self.handshakeHeaderSize).
-		Str("transport_id", self.TransportID().String()).
+		Str("transport_id", self.stream.TransportID().String()).
 		Int32("incoming_keepalive_interval", self.handshakeHeader.IncomingKeepaliveInterval).
 		Int32("outgoing_keepalive_interval", self.handshakeHeader.OutgoingKeepaliveInterval).
 		Int32("incoming_concurrency_limit", self.handshakeHeader.IncomingConcurrencyLimit).

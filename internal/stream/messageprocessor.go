@@ -12,74 +12,74 @@ type MessageProcessor interface {
 
 type MessageFactory interface {
 	// Output:
-	//   packet.Message
-	//   packet.Err
-	NewKeepalive(packet *Packet)
+	//   event.Message
+	//   event.Err
+	NewKeepalive(event *Event)
 
 	// Input:
-	//   packet.RequestHeader
+	//   event.RequestHeader
 	// Output:
-	//   packet.Message
-	//   packet.Err
-	NewRequest(packet *Packet)
+	//   event.Message
+	//   event.Err
+	NewRequest(event *Event)
 
 	// Input:
-	//   packet.ResponseHeader
+	//   event.ResponseHeader
 	// Output:
-	//   packet.Message
-	//   packet.Err
-	NewResponse(packet *Packet)
+	//   event.Message
+	//   event.Err
+	NewResponse(event *Event)
 }
 
 type MessageHandler interface {
 	// Input:
-	//   packet.KeepaliveHeader
-	//   packet.Message
-	//   packet.Err
+	//   event.KeepaliveHeader
+	//   event.Message
+	//   event.Err
 	// Output:
-	//   packet.Err
-	HandleKeepalive(ctx context.Context, packet *Packet)
+	//   event.Err
+	HandleKeepalive(ctx context.Context, event *Event)
 
 	// Input:
-	//   packet.RequestHeader
-	//   packet.Message
-	//   packet.Err
+	//   event.RequestHeader
+	//   event.Message
+	//   event.Err
 	// Output:
-	//   packet.Err
-	HandleRequest(ctx context.Context, packet *Packet)
+	//   event.Err
+	HandleRequest(ctx context.Context, event *Event)
 
 	// Input:
-	//   packet.ResponseHeader
-	//   packet.Message
-	//   packet.Err
+	//   event.ResponseHeader
+	//   event.Message
+	//   event.Err
 	// Output:
-	//   packet.Err
-	HandleResponse(ctx context.Context, packet *Packet)
+	//   event.Err
+	HandleResponse(ctx context.Context, event *Event)
 }
 
 type MessageEmitter interface {
 	// Output:
-	//   packet.Message
-	//   packet.Err
-	EmitKeepalive(packet *Packet)
+	//   event.Message
+	//   event.Err
+	EmitKeepalive(event *Event)
 
 	// Input:
-	//   packet.RequestHeader
-	//   packet.Message
-	//   packet.Err
+	//   event.RequestHeader
+	//   event.Message
+	//   event.Err
 	// Output:
-	//   packet.RequestHeader
-	//   packet.Message
-	//   packet.Err
-	PostEmitRequest(packet *Packet)
+	//   event.RequestHeader
+	//   event.Message
+	//   event.Err
+	PostEmitRequest(event *Event)
 
 	// Input:
-	//   packet.ResponseHeader
-	//   packet.Message
-	//   packet.Err
+	//   event.ResponseHeader
+	//   event.Message
+	//   event.Err
 	// Output:
-	//   packet.ResponseHeader
-	//   packet.Message
-	//   packet.Err
-	PostEmitResponse(packet *Packet)
+	//   event.ResponseHeader
+	//   event.Message
+	//   event.Err
+	PostEmitResponse(event *Event)
 }

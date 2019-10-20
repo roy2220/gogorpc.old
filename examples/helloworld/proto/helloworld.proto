@@ -7,7 +7,7 @@ import "github.com/let-z-go/gogorpc/gogorpc.proto";
 option go_package = "github.com/let-z-go/gogorpc/examples/helloworld/proto";
 
 option (gogorpc.error) = {
-    name: "ForbiddenName"
+    code: "ForbiddenName"
     type: 403
 };
 

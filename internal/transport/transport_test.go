@@ -15,7 +15,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/proto"
 )
 
 func TestOptions(t *testing.T) {
@@ -117,6 +117,7 @@ func TestHandshake1(t *testing.T) {
 				t.FailNow()
 			}
 			assert.True(t, ok)
+			tp.Prepare(DummyTrafficDecrypter{})
 		},
 		func(ctx context.Context, conn net.Conn) {
 			tp := new(Transport).Init(&Options{Logger: &logger}, uuid.UUID{})
@@ -140,6 +141,7 @@ func TestHandshake1(t *testing.T) {
 				t.FailNow()
 			}
 			assert.True(t, ok)
+			tp.Prepare(DummyTrafficDecrypter{})
 		},
 	)
 }
@@ -155,6 +157,7 @@ func TestHandshake2(t *testing.T) {
 				t.FailNow()
 			}
 			assert.False(t, ok)
+			tp.Prepare(DummyTrafficDecrypter{})
 		},
 		func(ctx context.Context, conn net.Conn) {
 			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, uuid.UUID{})
@@ -170,6 +173,7 @@ func TestHandshake2(t *testing.T) {
 				t.FailNow()
 			}
 			assert.False(t, ok)
+			tp.Prepare(DummyTrafficDecrypter{})
 		},
 	)
 }
@@ -191,6 +195,7 @@ func TestHandshake3(t *testing.T) {
 				t.FailNow()
 			}
 			assert.False(t, ok)
+			tp.Prepare(DummyTrafficDecrypter{})
 		},
 		func(ctx context.Context, conn net.Conn) {
 			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, uuid.UUID{})
@@ -200,6 +205,7 @@ func TestHandshake3(t *testing.T) {
 				t.FailNow()
 			}
 			assert.True(t, ok)
+			tp.Prepare(DummyTrafficDecrypter{})
 		},
 	)
 }
@@ -282,16 +288,16 @@ func TestHandshake4(t *testing.T) {
 
 func TestSendAndReceivePackets(t *testing.T) {
 	const N = 1000
-	makeMessageType := func(i int) protocol.MessageType {
+	makeEventType := func(i int) proto.EventType {
 		switch i % 4 {
 		case 0:
-			return protocol.MESSAGE_RESPONSE
+			return proto.EVENT_RESPONSE
 		case 1:
-			return protocol.MESSAGE_REQUEST
+			return proto.EVENT_REQUEST
 		case 2:
-			return protocol.MESSAGE_HANGUP
+			return proto.EVENT_HANGUP
 		default:
-			return protocol.MESSAGE_KEEPALIVE
+			return proto.EVENT_KEEPALIVE
 		}
 	}
 	opts1 := Options{}
@@ -301,8 +307,8 @@ func TestSendAndReceivePackets(t *testing.T) {
 		for i := 0; i < N; i++ {
 			msg := fmt.Sprintf("this packet %d", i)
 			err := tp.Write(&Packet{
-				Header: protocol.PacketHeader{
-					MessageType: makeMessageType(i),
+				Header: proto.PacketHeader{
+					EventType: makeEventType(i),
 				},
 				PayloadSize: len(msg),
 			}, func(buf []byte) error {
@@ -313,14 +319,14 @@ func TestSendAndReceivePackets(t *testing.T) {
 				t.FailNow()
 			}
 			if i%m == 0 {
-				err = tp.Flush(ctx, 0)
+				err = tp.Flush(ctx, 0, DummyTrafficEncrypter{})
 				if !assert.NoError(t, err, i) {
 					t.FailNow()
 				}
 				m = (m+1)%13 + 1
 			}
 		}
-		err := tp.Flush(ctx, 0)
+		err := tp.Flush(ctx, 0, DummyTrafficEncrypter{})
 		if !assert.NoError(t, err) {
 			t.FailNow()
 		}
@@ -330,7 +336,7 @@ func TestSendAndReceivePackets(t *testing.T) {
 		pk := Packet{}
 		i := 0
 		for {
-			err := tp.Peek(ctx, 0, &pk)
+			err := tp.Peek(ctx, 0, DummyTrafficDecrypter{}, &pk)
 			if err != nil {
 				if !assert.EqualError(t, err, "gogorpc/transport: network: EOF", i) {
 					t.FailNow()
@@ -340,7 +346,7 @@ func TestSendAndReceivePackets(t *testing.T) {
 				}
 				break
 			}
-			if !assert.Equal(t, makeMessageType(i), pk.Header.MessageType, i) {
+			if !assert.Equal(t, makeEventType(i), pk.Header.EventType, i) {
 				t.FailNow()
 			}
 			if !assert.Equal(t, fmt.Sprintf("this packet %d", i), string(pk.Payload)) {
@@ -355,7 +361,7 @@ func TestSendAndReceivePackets(t *testing.T) {
 				if !ok {
 					break
 				}
-				if !assert.Equal(t, makeMessageType(i), pk.Header.MessageType, i) {
+				if !assert.Equal(t, makeEventType(i), pk.Header.EventType, i) {
 					t.FailNow()
 				}
 				if !assert.Equal(t, fmt.Sprintf("this packet %d", i), string(pk.Payload)) {
@@ -374,8 +380,8 @@ func TestSendBadPacket1(t *testing.T) {
 	opts2 := Options{MaxOutgoingPacketSize: -1}
 	cb1 := func(ctx context.Context, tp *Transport) {
 		err := tp.Write(&Packet{
-			Header: protocol.PacketHeader{
-				MessageType: protocol.MESSAGE_REQUEST,
+			Header: proto.PacketHeader{
+				EventType: proto.EVENT_REQUEST,
 			},
 			PayloadSize: minMaxPacketSize,
 		}, func([]byte) error { return nil })
@@ -395,8 +401,8 @@ func TestSendBadPacket2(t *testing.T) {
 	opts2 := Options{MaxOutgoingPacketSize: -1}
 	cb1 := func(ctx context.Context, tp *Transport) {
 		err := tp.Write(&Packet{
-			Header: protocol.PacketHeader{
-				MessageType: protocol.MESSAGE_REQUEST,
+			Header: proto.PacketHeader{
+				EventType: proto.EVENT_REQUEST,
 			},
 			PayloadSize: 0,
 		}, func([]byte) error { return errTest })
@@ -493,13 +499,14 @@ func testSetup2(
 				CbHandleHandshake: func(ctx context.Context, rh []byte) (bool, error) {
 					return true, nil
 				},
-			})
+			}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
 			if !assert.True(t, ok) {
 				t.FailNow()
 			}
+			tp.Prepare(DummyTrafficDecrypter{})
 			cb1(ctx, tp)
 		},
 		func(ctx context.Context, conn net.Conn) {
@@ -515,13 +522,14 @@ func testSetup2(
 				CbEmitHandshake: func(buf []byte) error {
 					return nil
 				},
-			})
+			}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
 			if !assert.True(t, ok) {
 				t.FailNow()
 			}
+			tp.Prepare(DummyTrafficDecrypter{})
 			cb2(ctx, tp)
 		},
 	)

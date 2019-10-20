@@ -5,6 +5,10 @@ import (
 )
 
 type (
+	NetworkError = transport.NetworkError
+
 	TransportOptions = transport.Options
-	NetworkError     = transport.NetworkError
+
+	TrafficCrypter      = transport.TrafficCrypter
+	DummyTrafficCrypter = transport.DummyTrafficCrypter
 )

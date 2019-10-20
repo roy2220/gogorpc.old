@@ -13,7 +13,7 @@ import (
 	"github.com/let-z-go/toolkit/uuid"
 	"github.com/rs/zerolog"
 
-	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/proto"
 )
 
 type Transport struct {
@@ -24,7 +24,7 @@ type Transport struct {
 	outputByteStream      bytestream.ByteStream
 	maxIncomingPacketSize int
 	maxOutgoingPacketSize int
-	peekedInputDataSize   int
+	peekedTrafficSize     int
 }
 
 func (self *Transport) Init(options *Options, id uuid.UUID) *Transport {
@@ -41,18 +41,18 @@ func (self *Transport) Close() error {
 	return self.connection.Close()
 }
 
-func (self *Transport) PostAccept(ctx context.Context, rawConnection net.Conn, handshaker Handshaker) (bool, error) {
-	clientAddress := rawConnection.RemoteAddr().String()
+func (self *Transport) PostAccept(ctx context.Context, connection net.Conn, handshaker Handshaker) (bool, error) {
+	clientAddress := connection.RemoteAddr().String()
 	self.options.Logger.Info().
 		Str("client_address", clientAddress).
 		Dur("handshake_timeout", self.options.HandshakeTimeout).
 		Int("min_input_buffer_size", self.options.MinInputBufferSize).
 		Int("max_input_buffer_size", self.options.MaxInputBufferSize).
 		Msg("transport_post_accepting")
-	self.connection.Init(rawConnection)
+	self.connection.Init(connection)
 	self.inputByteStream.ReserveBuffer(self.options.MinInputBufferSize)
 	deadline := makeDeadline(self.options.HandshakeTimeout)
-	var handshakeHeader protocol.TransportHandshakeHeader
+	var handshakeHeader proto.TransportHandshakeHeader
 
 	ok, err := self.receiveHandshake(
 		true,
@@ -99,20 +99,20 @@ func (self *Transport) PostAccept(ctx context.Context, rawConnection net.Conn, h
 	return ok, nil
 }
 
-func (self *Transport) PostConnect(ctx context.Context, rawConnection net.Conn, handshaker Handshaker) (bool, error) {
-	serverAddress := rawConnection.RemoteAddr().String()
+func (self *Transport) PostConnect(ctx context.Context, connection net.Conn, handshaker Handshaker) (bool, error) {
+	serverAddress := connection.RemoteAddr().String()
 	self.options.Logger.Info().
 		Str("server_address", serverAddress).
 		Dur("handshake_timeout", self.options.HandshakeTimeout).
 		Int("min_input_buffer_size", self.options.MinInputBufferSize).
 		Int("max_input_buffer_size", self.options.MaxInputBufferSize).
 		Msg("transport_post_connecting")
-	self.connection.Init(rawConnection)
+	self.connection.Init(connection)
 	self.inputByteStream.ReserveBuffer(self.options.MinInputBufferSize)
 	deadline := makeDeadline(self.options.HandshakeTimeout)
 
-	handshakeHeader := protocol.TransportHandshakeHeader{
-		Id: protocol.UUID{
+	handshakeHeader := proto.TransportHandshakeHeader{
+		Id: proto.UUID{
 			Low:  self.id[0],
 			High: self.id[1],
 		},
@@ -153,29 +153,39 @@ func (self *Transport) PostConnect(ctx context.Context, rawConnection net.Conn, 
 	return ok, nil
 }
 
-func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *Packet) error {
+func (self *Transport) Prepare(trafficDecrypter TrafficDecrypter) {
+	if traffic := self.inputByteStream.GetData(); len(traffic) >= 1 {
+		trafficDecrypter.DecryptTraffic(traffic)
+	}
+}
+
+func (self *Transport) Peek(ctx context.Context, timeout time.Duration, trafficDecrypter TrafficDecrypter, packet *Packet) error {
+	traffic := self.inputByteStream.GetData()
 	connectionIsPreRead := false
 
-	if self.inputByteStream.GetDataSize() < 8 {
+	if trafficSize := len(traffic); trafficSize < 8 {
 		self.connection.PreRead(ctx, makeDeadline(timeout))
 		connectionIsPreRead = true
 
 		for {
-			dataSize, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
+			n, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
 
 			if err != nil {
 				return &NetworkError{err}
 			}
 
-			self.inputByteStream.CommitBuffer(dataSize)
+			self.inputByteStream.CommitBuffer(n)
 
 			if self.inputByteStream.GetDataSize() >= 8 {
 				break
 			}
 		}
+
+		traffic = self.inputByteStream.GetData()
+		trafficDecrypter.DecryptTraffic(traffic[trafficSize:])
 	}
 
-	packetSize := int(int32(binary.BigEndian.Uint32(self.inputByteStream.GetData())))
+	packetSize := int(int32(binary.BigEndian.Uint32(traffic)))
 
 	if packetSize < 8 {
 		return ErrBadPacket
@@ -185,29 +195,32 @@ func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *
 		return ErrPacketTooLarge
 	}
 
-	if bufferSize := packetSize - self.inputByteStream.GetDataSize(); bufferSize >= 1 {
-		self.inputByteStream.ReserveBuffer(bufferSize)
+	if trafficSize := len(traffic); trafficSize < packetSize {
+		self.inputByteStream.ReserveBuffer(packetSize - trafficSize)
 
 		if !connectionIsPreRead {
 			self.connection.PreRead(ctx, makeDeadline(timeout))
 		}
 
 		for {
-			dataSize, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
+			n, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
 
 			if err != nil {
 				return &NetworkError{err}
 			}
 
-			self.inputByteStream.CommitBuffer(dataSize)
+			self.inputByteStream.CommitBuffer(n)
 
 			if self.inputByteStream.GetDataSize() >= packetSize {
 				break
 			}
 		}
+
+		traffic = self.inputByteStream.GetData()
+		trafficDecrypter.DecryptTraffic(traffic[trafficSize:])
 	}
 
-	rawPacket := self.inputByteStream.GetData()[:packetSize]
+	rawPacket := traffic[:packetSize]
 	packetHeaderSize := int(int32(binary.BigEndian.Uint32(rawPacket[4:])))
 	packetPayloadOffset := 8 + packetHeaderSize
 
@@ -222,20 +235,20 @@ func (self *Transport) Peek(ctx context.Context, timeout time.Duration, packet *
 	}
 
 	packet.Payload = rawPacket[packetPayloadOffset:]
-	self.peekedInputDataSize += packetSize
+	self.peekedTrafficSize += packetSize
 	return nil
 }
 
 func (self *Transport) PeekNext(packet *Packet) (bool, error) {
-	data := self.inputByteStream.GetData()[self.peekedInputDataSize:]
-	dataSize := len(data)
+	traffic := self.inputByteStream.GetData()[self.peekedTrafficSize:]
+	trafficSize := len(traffic)
 
-	if dataSize < 8 {
+	if trafficSize < 8 {
 		self.skip()
 		return false, nil
 	}
 
-	packetSize := int(int32(binary.BigEndian.Uint32(data)))
+	packetSize := int(int32(binary.BigEndian.Uint32(traffic)))
 
 	if packetSize < 8 {
 		return false, ErrBadPacket
@@ -245,12 +258,12 @@ func (self *Transport) PeekNext(packet *Packet) (bool, error) {
 		return false, ErrPacketTooLarge
 	}
 
-	if packetSize > dataSize {
+	if packetSize > trafficSize {
 		self.skip()
 		return false, nil
 	}
 
-	rawPacket := data[:packetSize]
+	rawPacket := traffic[:packetSize]
 	packetHeaderSize := int(int32(binary.BigEndian.Uint32(rawPacket[4:])))
 	packetPayloadOffset := 8 + packetHeaderSize
 
@@ -265,7 +278,7 @@ func (self *Transport) PeekNext(packet *Packet) (bool, error) {
 	}
 
 	packet.Payload = rawPacket[packetPayloadOffset:]
-	self.peekedInputDataSize += packetSize
+	self.peekedTrafficSize += packetSize
 	return true, nil
 }
 
@@ -293,10 +306,11 @@ func (self *Transport) Write(packet *Packet, callback func([]byte) error) error 
 	return nil
 }
 
-func (self *Transport) Flush(ctx context.Context, timeout time.Duration) error {
-	data := self.outputByteStream.GetData()
-	_, err := self.connection.Write(ctx, makeDeadline(timeout), data)
-	self.outputByteStream.Skip(len(data))
+func (self *Transport) Flush(ctx context.Context, timeout time.Duration, trafficEncrypter TrafficEncrypter) error {
+	traffic := self.outputByteStream.GetData()
+	trafficEncrypter.EncryptTraffic(traffic)
+	_, err := self.connection.Write(ctx, makeDeadline(timeout), traffic)
+	self.outputByteStream.Skip(len(traffic))
 
 	if err != nil {
 		return &NetworkError{err}
@@ -317,27 +331,28 @@ func (self *Transport) receiveHandshake(
 	isServerSide bool,
 	ctx context.Context,
 	deadline time.Time,
-	handshakeHeader *protocol.TransportHandshakeHeader,
+	handshakeHeader *proto.TransportHandshakeHeader,
 	handshakeHandler func(context.Context, []byte) (bool, error),
 	peerAddress string,
 ) (bool, error) {
 	self.connection.PreRead(ctx, deadline)
 
 	for {
-		dataSize, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
+		n, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
 
 		if err != nil {
 			return false, &NetworkError{err}
 		}
 
-		self.inputByteStream.CommitBuffer(dataSize)
+		self.inputByteStream.CommitBuffer(n)
 
 		if self.inputByteStream.GetDataSize() >= 8 {
 			break
 		}
 	}
 
-	handshakeSize := int(int32(binary.BigEndian.Uint32(self.inputByteStream.GetData())))
+	traffic := self.inputByteStream.GetData()
+	handshakeSize := int(int32(binary.BigEndian.Uint32(traffic)))
 
 	if handshakeSize < 8 {
 		return false, ErrBadHandshake
@@ -347,25 +362,27 @@ func (self *Transport) receiveHandshake(
 		return false, ErrHandshakeTooLarge
 	}
 
-	if bufferSize := handshakeSize - self.inputByteStream.GetDataSize(); bufferSize >= 1 {
-		self.inputByteStream.ReserveBuffer(bufferSize)
+	if trafficSize := len(traffic); trafficSize < handshakeSize {
+		self.inputByteStream.ReserveBuffer(handshakeSize - trafficSize)
 
 		for {
-			dataSize, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
+			n, err := self.connection.DoRead(ctx, self.inputByteStream.GetBuffer())
 
 			if err != nil {
 				return false, &NetworkError{err}
 			}
 
-			self.inputByteStream.CommitBuffer(dataSize)
+			self.inputByteStream.CommitBuffer(n)
 
 			if self.inputByteStream.GetDataSize() >= handshakeSize {
 				break
 			}
 		}
+
+		traffic = self.inputByteStream.GetData()
 	}
 
-	rawHandshake := self.inputByteStream.GetData()[:handshakeSize]
+	rawHandshake := traffic[:handshakeSize]
 	handshakeHeaderSize := int(int32(binary.BigEndian.Uint32(rawHandshake[4:])))
 	handshakePayloadOffset := 8 + handshakeHeaderSize
 
@@ -387,7 +404,10 @@ func (self *Transport) receiveHandshake(
 		if self.id.IsZero() {
 			self.id = uuid.UUID{handshakeHeader.Id.Low, handshakeHeader.Id.High}
 		} else {
-			handshakeHeader.Id.Low, handshakeHeader.Id.High = self.id[0], self.id[1]
+			handshakeHeader.Id = proto.UUID{
+				Low:  self.id[0],
+				High: self.id[1],
+			}
 		}
 	} else {
 		logEvent = self.options.Logger.Info().Str("side", "client-side")
@@ -411,7 +431,7 @@ func (self *Transport) sendHandshake(
 	isServerSide bool,
 	ctx context.Context,
 	deadline time.Time,
-	handshakeHeader *protocol.TransportHandshakeHeader,
+	handshakeHeader *proto.TransportHandshakeHeader,
 	handshakePayloadSize int,
 	handshakeEmitter func([]byte) error,
 	peerAddress string,
@@ -425,7 +445,11 @@ func (self *Transport) sendHandshake(
 
 		if self.id.IsZero() {
 			self.id = uuid.GenerateUUID4Fast()
-			handshakeHeader.Id.Low, handshakeHeader.Id.High = self.id[0], self.id[1]
+
+			handshakeHeader.Id = proto.UUID{
+				Low:  self.id[0],
+				High: self.id[1],
+			}
 		}
 	}
 
@@ -464,7 +488,7 @@ func (self *Transport) sendHandshake(
 
 func (self *Transport) skip() {
 	bufferIsInsufficient := self.inputByteStream.GetBufferSize() == 0
-	self.inputByteStream.Skip(self.peekedInputDataSize)
+	self.inputByteStream.Skip(self.peekedTrafficSize)
 
 	if bufferIsInsufficient {
 		if self.inputByteStream.Size() < self.options.MaxInputBufferSize {
@@ -472,27 +496,27 @@ func (self *Transport) skip() {
 		}
 	}
 
-	self.peekedInputDataSize = 0
+	self.peekedTrafficSize = 0
 }
 
 type Handshaker interface {
-	HandleHandshake(ctx context.Context, rawHandshake []byte) (ok bool, err error)
+	HandleHandshake(ctx context.Context, handshakePayload []byte) (ok bool, err error)
 	SizeHandshake() (handshakSize int)
 	EmitHandshake(buffer []byte) (err error)
 }
 
 type Packet struct {
-	Header      protocol.PacketHeader
+	Header      proto.PacketHeader
 	Payload     []byte // only for peeking
 	PayloadSize int    // only for writing
 }
 
 type NetworkError struct {
-	Inner error
+	Underlying error
 }
 
 func (self *NetworkError) Error() string {
-	return fmt.Sprintf("gogorpc/transport: network: %s", self.Inner.Error())
+	return fmt.Sprintf("gogorpc/transport: network: %s", self.Underlying.Error())
 }
 
 var (

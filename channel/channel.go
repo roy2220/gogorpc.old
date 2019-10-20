@@ -14,54 +14,55 @@ import (
 	"github.com/let-z-go/toolkit/deque"
 	"github.com/let-z-go/toolkit/uuid"
 
-	"github.com/let-z-go/gogorpc/internal/protocol"
+	"github.com/let-z-go/gogorpc/internal/proto"
 	"github.com/let-z-go/gogorpc/internal/stream"
 )
 
 type Channel struct {
 	options                *Options
+	extension              Extension
 	dequeOfPendingRequests deque.Deque
 	stream_                unsafe.Pointer
+	pendingAbort           atomic.Value
 	state_                 int32
 	nextSequenceNumber     uint32
 	inflightRPCs           sync.Map
-	pendingAbort           atomic.Value
-	extension              Extension
 }
 
 func (self *Channel) Init(isServerSide bool, options *Options) *Channel {
 	self.options = options.Normalize()
+	self.extension = self.options.ExtensionFactory(RestrictedChannel{self}, isServerSide)
 	self.dequeOfPendingRequests.Init(0)
 
 	self.stream_ = unsafe.Pointer(new(stream.Stream).Init(
 		isServerSide,
 		self.options.Stream,
+		self.extension.NewUserData(),
 		uuid.UUID{},
 		&self.dequeOfPendingRequests,
 		nil,
 	))
 
 	self.state_ = int32(initial)
-	self.extension = self.options.ExtensionFactory(isServerSide)
-	self.extension.OnInitialized(self)
+	self.extension.OnInitialized()
 	return self
 }
 
 func (self *Channel) Close() {
 	self.setState(closed)
-	self.extension.OnClosed(self)
+	self.extension.OnClosed()
 }
 
 func (self *Channel) Run(ctx context.Context, serverURL *url.URL, connection net.Conn) error {
 	if self.state() == initial {
 		self.setState(establishing)
-		self.extension.OnEstablishing(self, serverURL)
+		self.extension.OnEstablishing(serverURL)
 	} else {
 		self.setState(reestablishing)
-		self.extension.OnReestablishing(self, serverURL)
+		self.extension.OnReestablishing(serverURL)
 	}
 
-	ok, err := self.stream().Establish(ctx, connection, self.extension)
+	ok, err := self.stream().Establish(ctx, connection, self.extension.NewHandshaker())
 
 	if err != nil {
 		return err
@@ -72,15 +73,15 @@ func (self *Channel) Run(ctx context.Context, serverURL *url.URL, connection net
 	}
 
 	self.setState(established)
-	self.extension.OnEstablished(self)
+	self.extension.OnEstablished()
 	stream_ := self.stream()
 
-	err = stream_.Process(ctx, &messageProcessor{
-		Channel: self,
-		Stream:  stream_,
+	err = stream_.Process(ctx, self.extension.NewTrafficCrypter(), &messageProcessor{
+		Channel:    self,
+		Keepaliver: self.extension.NewKeepaliver(),
 	})
 
-	self.extension.OnBroken(self, err)
+	self.extension.OnBroken(err)
 	return err
 }
 
@@ -90,11 +91,11 @@ func (self *Channel) DoRPC(rpc *RPC, responseFactory MessageFactory) {
 }
 
 func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
-	rpc.internals.Channel = self
+	rpc.channel = self
 	rpcParent, rpcHasParent := GetRPC(rpc.Ctx)
 
 	if rpcHasParent {
-		rpc.internals.TraceID = rpcParent.internals.TraceID
+		rpc.traceID = rpcParent.traceID
 
 		for key, value := range rpcParent.RequestExtraData.Value() {
 			if !(len(key) >= 1 && key[0] == '_') {
@@ -108,7 +109,7 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 			rpc.RequestExtraData.Set(key, value)
 		}
 	} else {
-		rpc.internals.TraceID = uuid.GenerateUUID4Fast()
+		rpc.traceID = uuid.GenerateUUID4Fast()
 	}
 
 	var rpcHandler RPCHandler
@@ -118,12 +119,12 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 			rpc.Err = ErrClosed
 		}
 	} else {
-		rpc.internals.SequenceNumber = int32(self.getNextSequenceNumber())
+		rpc.sequenceNumber = int32(self.getNextSequenceNumber())
 
 		if deadline, ok := rpc.Ctx.Deadline(); ok {
-			rpc.internals.Deadline = deadline.UnixNano()
+			rpc.deadline = deadline.UnixNano()
 		} else {
-			rpc.internals.Deadline = 0
+			rpc.deadline = 0
 		}
 
 		rpcHandler = func(rpc *RPC) {
@@ -141,12 +142,16 @@ func (self *Channel) Abort(extraData ExtraData) {
 	self.stream().Abort(extraData)
 }
 
-func (self *Channel) TransportID() uuid.UUID {
-	return self.stream().TransportID()
+func (self *Channel) IsServerSide() bool {
+	return self.stream().IsServerSide()
 }
 
-func (self *Channel) Extension() Extension {
-	return self.extension
+func (self *Channel) UserData() interface{} {
+	return self.stream().UserData()
+}
+
+func (self *Channel) TransportID() uuid.UUID {
+	return self.stream().TransportID()
 }
 
 func (self *Channel) setState(newState state) {
@@ -193,6 +198,7 @@ ValidStateTransition:
 		newStream := new(stream.Stream).Init(
 			oldStream.IsServerSide(),
 			self.options.Stream,
+			self.extension.NewUserData(),
 			oldStream.TransportID(),
 			&self.dequeOfPendingRequests,
 			nil,
@@ -289,23 +295,23 @@ func (self state) GoString() string {
 }
 
 func handleOutgoingRPC(rpc *RPC, rpcHasParent bool, rpcParent *RPC, responseFactory MessageFactory) {
-	channel := rpc.internals.Channel
+	channel := rpc.channel
 	inflightRPC_ := getPooledInflightRPC(responseFactory)
-	channel.inflightRPCs.Store(rpc.internals.SequenceNumber, inflightRPC_)
+	channel.inflightRPCs.Store(rpc.sequenceNumber, inflightRPC_)
 
-	if err := channel.stream().SendRequest(rpc.Ctx, &protocol.RequestHeader{
-		SequenceNumber: rpc.internals.SequenceNumber,
-		ServiceName:      rpc.ServiceName,
+	if err := channel.stream().SendRequest(rpc.Ctx, &proto.RequestHeader{
+		SequenceNumber: rpc.sequenceNumber,
+		ServiceName:    rpc.ServiceName,
 		MethodName:     rpc.MethodName,
 		ExtraData:      rpc.RequestExtraData.Value(),
-		Deadline:       rpc.internals.Deadline,
+		Deadline:       rpc.deadline,
 
-		TraceId: protocol.UUID{
-			Low:  rpc.internals.TraceID[0],
-			High: rpc.internals.TraceID[1],
+		TraceId: proto.UUID{
+			Low:  rpc.traceID[0],
+			High: rpc.traceID[1],
 		},
 	}, rpc.Request); err != nil {
-		channel.inflightRPCs.Delete(rpc.internals.SequenceNumber)
+		channel.inflightRPCs.Delete(rpc.sequenceNumber)
 
 		switch err {
 		case stream.ErrClosed:

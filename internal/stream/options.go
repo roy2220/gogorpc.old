@@ -14,7 +14,7 @@ import (
 type Options struct {
 	Transport                 *transport.Options
 	Logger                    *zerolog.Logger
-	PacketFilters             [1 + NumberOfDirections + NumberOfDirections*NumberOfMessageTypes][]PacketFilter
+	EventFilters              [1 + NumberOfEventDirections + NumberOfEventDirections*NumberOfEventTypes][]EventFilter
 	ActiveHangupTimeout       time.Duration
 	IncomingKeepaliveInterval time.Duration
 	OutgoingKeepaliveInterval time.Duration
@@ -46,62 +46,62 @@ func (self *Options) Normalize() *Options {
 	return self
 }
 
-func (self *Options) AddPacketFilter(direction Direction, messageType MessageType, packetFilter PacketFilter) *Options {
-	if direction < 0 {
-		utils.Assert(messageType < 0, func() string {
-			return fmt.Sprintf("gogorpc/channel: invalid argument: messageType=%#v, direction=%#v", messageType, direction)
+func (self *Options) AddEventFilter(eventDirection EventDirection, eventType EventType, eventFilter EventFilter) *Options {
+	if eventDirection < 0 {
+		utils.Assert(eventType < 0, func() string {
+			return fmt.Sprintf("gogorpc/channel: invalid argument: eventType=%#v, eventDirection=%#v", eventType, eventDirection)
 		})
 
-		packetFilters := &self.PacketFilters[0]
-		i := len(*packetFilters)
-		insertPacketFilter(packetFilter, packetFilters, i)
+		eventFilters := &self.EventFilters[0]
+		i := len(*eventFilters)
+		insertEventFilter(eventFilter, eventFilters, i)
 
-		for d, j := 0, 1; d < NumberOfDirections; d, j = d+1, j+1 {
-			insertPacketFilter(packetFilter, &self.PacketFilters[j], i)
+		for ed, j := 0, 1; ed < NumberOfEventDirections; ed, j = ed+1, j+1 {
+			insertEventFilter(eventFilter, &self.EventFilters[j], i)
 
-			for mt, k := 0, 1+NumberOfDirections+d*NumberOfMessageTypes; mt < NumberOfMessageTypes; mt, k = mt+1, k+1 {
-				insertPacketFilter(packetFilter, &self.PacketFilters[k], i)
+			for et, k := 0, 1+NumberOfEventDirections+ed*NumberOfEventTypes; et < NumberOfEventTypes; et, k = et+1, k+1 {
+				insertEventFilter(eventFilter, &self.EventFilters[k], i)
 			}
 		}
 	} else {
-		d := int(direction)
+		ed := int(eventDirection)
 
-		if messageType < 0 {
-			packetFilters := &self.PacketFilters[1+d]
-			i := len(*packetFilters)
-			insertPacketFilter(packetFilter, packetFilters, i)
+		if eventType < 0 {
+			eventFilters := &self.EventFilters[1+ed]
+			i := len(*eventFilters)
+			insertEventFilter(eventFilter, eventFilters, i)
 
-			for mt, j := 0, 1+NumberOfDirections+d*NumberOfMessageTypes; mt < NumberOfMessageTypes; mt, j = mt+1, j+1 {
-				insertPacketFilter(packetFilter, &self.PacketFilters[j], i)
+			for et, j := 0, 1+NumberOfEventDirections+ed*NumberOfEventTypes; et < NumberOfEventTypes; et, j = et+1, j+1 {
+				insertEventFilter(eventFilter, &self.EventFilters[j], i)
 			}
 		} else {
-			mt := int(messageType)
-			packetFilters := &self.PacketFilters[1+NumberOfDirections+d*NumberOfMessageTypes+mt]
-			insertPacketFilter(packetFilter, packetFilters, len(*packetFilters))
+			et := int(eventType)
+			eventFilters := &self.EventFilters[1+NumberOfEventDirections+ed*NumberOfEventTypes+et]
+			insertEventFilter(eventFilter, eventFilters, len(*eventFilters))
 		}
 	}
 
 	return self
 }
 
-func (self *Options) GetPacketFilters(direction Direction, messageType MessageType) []PacketFilter {
-	if direction < 0 {
-		utils.Assert(messageType < 0, func() string {
-			return fmt.Sprintf("gogorpc/channel: invalid argument: messageType=%#v, direction=%#v", messageType, direction)
+func (self *Options) GetEventFilters(eventDirection EventDirection, eventType EventType) []EventFilter {
+	if eventDirection < 0 {
+		utils.Assert(eventType < 0, func() string {
+			return fmt.Sprintf("gogorpc/channel: invalid argument: eventType=%#v, eventDirection=%#v", eventType, eventDirection)
 		})
 
-		return self.PacketFilters[0]
+		return self.EventFilters[0]
 	}
 
-	if messageType < 0 {
-		return self.PacketFilters[1+int(direction)]
+	if eventType < 0 {
+		return self.EventFilters[1+int(eventDirection)]
 	}
 
-	return self.DoGetPacketFilters(direction, messageType)
+	return self.DoGetEventFilters(eventDirection, eventType)
 }
 
-func (self *Options) DoGetPacketFilters(direction Direction, messageType MessageType) []PacketFilter {
-	return self.PacketFilters[1+NumberOfDirections+int(direction)*NumberOfMessageTypes+int(messageType)]
+func (self *Options) DoGetEventFilters(eventDirection EventDirection, eventType EventType) []EventFilter {
+	return self.EventFilters[1+NumberOfEventDirections+int(eventDirection)*NumberOfEventTypes+int(eventType)]
 }
 
 const (
@@ -124,12 +124,12 @@ const (
 
 var defaultTransportOptions transport.Options
 
-func insertPacketFilter(packetFilter PacketFilter, packetFilters *[]PacketFilter, i int) {
-	newPacketFlters := make([]PacketFilter, len(*packetFilters)+1)
-	copy(newPacketFlters[:i], (*packetFilters)[:i])
-	newPacketFlters[i] = packetFilter
-	copy(newPacketFlters[i+1:], (*packetFilters)[i:])
-	*packetFilters = newPacketFlters
+func insertEventFilter(eventFilter EventFilter, eventFilters *[]EventFilter, i int) {
+	newEventFilters := make([]EventFilter, len(*eventFilters)+1)
+	copy(newEventFilters[:i], (*eventFilters)[:i])
+	newEventFilters[i] = eventFilter
+	copy(newEventFilters[i+1:], (*eventFilters)[i:])
+	*eventFilters = newEventFilters
 }
 
 func normalizeDurValue(value *time.Duration, defaultValue, minValue, maxValue time.Duration) {
