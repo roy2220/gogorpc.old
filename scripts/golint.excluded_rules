@@ -1,0 +1,2 @@
+exported .* should have comment.* or be unexported
+don't use underscores in Go names

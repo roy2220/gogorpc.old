@@ -39,56 +39,56 @@ type Event struct {
 	type_     EventType
 }
 
-func (self *Event) Stream() RestrictedStream {
-	return RestrictedStream{self.stream}
+func (e *Event) Stream() RestrictedStream {
+	return RestrictedStream{e.stream}
 }
 
-func (self *Event) Direction() EventDirection {
-	return self.direction
+func (e *Event) Direction() EventDirection {
+	return e.direction
 }
 
-func (self *Event) Type() EventType {
-	return self.type_
+func (e *Event) Type() EventType {
+	return e.type_
 }
 
 type RestrictedStream struct {
 	underlying *Stream
 }
 
-func (self RestrictedStream) SendRequest(ctx context.Context, requestHeader *proto2.RequestHeader, request Message) error {
-	return self.underlying.SendRequest(ctx, requestHeader, request)
+func (rs RestrictedStream) SendRequest(ctx context.Context, requestHeader *proto2.RequestHeader, request Message) error {
+	return rs.underlying.SendRequest(ctx, requestHeader, request)
 }
 
-func (self RestrictedStream) SendResponse(responseHeader *proto2.ResponseHeader, response Message) error {
-	return self.underlying.SendResponse(responseHeader, response)
+func (rs RestrictedStream) SendResponse(responseHeader *proto2.ResponseHeader, response Message) error {
+	return rs.underlying.SendResponse(responseHeader, response)
 }
 
-func (self RestrictedStream) Abort(extraData ExtraData) {
-	self.underlying.Abort(extraData)
+func (rs RestrictedStream) Abort(extraData ExtraData) {
+	rs.underlying.Abort(extraData)
 }
 
-func (self RestrictedStream) IsServerSide() bool {
-	return self.underlying.IsServerSide()
+func (rs RestrictedStream) IsServerSide() bool {
+	return rs.underlying.IsServerSide()
 }
 
-func (self RestrictedStream) UserData() interface{} {
-	return self.underlying.UserData()
+func (rs RestrictedStream) TransportID() uuid.UUID {
+	return rs.underlying.TransportID()
 }
 
-func (self RestrictedStream) TransportID() uuid.UUID {
-	return self.underlying.TransportID()
+func (rs RestrictedStream) UserData() interface{} {
+	return rs.underlying.UserData()
 }
 
 type EventDirection int
 
-func (self EventDirection) String() string {
-	switch self {
+func (ed EventDirection) String() string {
+	switch ed {
 	case EventIncoming:
 		return "EVENT_INCOMING"
 	case EventOutgoing:
 		return "EVENT_OUTGOING"
 	default:
-		return strconv.Itoa(int(self))
+		return strconv.Itoa(int(ed))
 	}
 }
 
@@ -107,18 +107,18 @@ type RawMessage []byte
 
 var _ = Message((*RawMessage)(nil))
 
-func (self *RawMessage) Unmarshal(data []byte) error {
-	*self = make([]byte, len(data))
-	copy(*self, data)
+func (rm *RawMessage) Unmarshal(data []byte) error {
+	*rm = make([]byte, len(data))
+	copy(*rm, data)
 	return nil
 }
 
-func (self RawMessage) Size() int {
-	return len(self)
+func (rm RawMessage) Size() int {
+	return len(rm)
 }
 
-func (self RawMessage) MarshalTo(buffer []byte) (int, error) {
-	return copy(buffer, self), nil
+func (rm RawMessage) MarshalTo(buffer []byte) (int, error) {
+	return copy(buffer, rm), nil
 }
 
 var ErrEventDropped = errors.New("gogorpc/stream: event dropped")

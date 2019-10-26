@@ -20,33 +20,33 @@ type Options struct {
 	normalizeOnce sync.Once
 }
 
-func (self *Options) Normalize() *Options {
-	self.normalizeOnce.Do(func() {
-		if self.Logger == nil {
-			self.Logger = &dummyLogger
+func (o *Options) Normalize() *Options {
+	o.normalizeOnce.Do(func() {
+		if o.Logger == nil {
+			o.Logger = &dummyLogger
 		}
 
-		normalizeDurValue(&self.HandshakeTimeout, defaultHandshakeTimeout, minHandshakeTimeout, maxHandshakeTimeout)
-		normalizeIntValue(&self.MaxHandshakeSize, defaultMaxHandshakeSize, minMaxHandshakeSize, maxMaxHandshakeSize)
-		normalizeIntValue(&self.MinInputBufferSize, defaultMinInputBufferSize, minInputBufferSize, maxInputBufferSize)
-		self.MinInputBufferSize = int(utils.NextPowerOfTwo(int64(self.MinInputBufferSize)))
-		normalizeIntValue(&self.MaxInputBufferSize, defaultMaxInputBufferSize, minInputBufferSize, maxInputBufferSize)
-		self.MaxInputBufferSize = int(utils.NextPowerOfTwo(int64(self.MaxInputBufferSize)))
+		normalizeDurValue(&o.HandshakeTimeout, defaultHandshakeTimeout, minHandshakeTimeout, maxHandshakeTimeout)
+		normalizeIntValue(&o.MaxHandshakeSize, defaultMaxHandshakeSize, minMaxHandshakeSize, maxMaxHandshakeSize)
+		normalizeIntValue(&o.MinInputBufferSize, defaultMinInputBufferSize, minInputBufferSize, maxInputBufferSize)
+		o.MinInputBufferSize = int(utils.NextPowerOfTwo(int64(o.MinInputBufferSize)))
+		normalizeIntValue(&o.MaxInputBufferSize, defaultMaxInputBufferSize, minInputBufferSize, maxInputBufferSize)
+		o.MaxInputBufferSize = int(utils.NextPowerOfTwo(int64(o.MaxInputBufferSize)))
 
-		if self.MaxInputBufferSize < self.MinInputBufferSize {
-			self.MaxInputBufferSize = self.MinInputBufferSize
+		if o.MaxInputBufferSize < o.MinInputBufferSize {
+			o.MaxInputBufferSize = o.MinInputBufferSize
 		}
 
-		normalizeIntValue(&self.MaxIncomingPacketSize, defaultMaxPacketSize, minMaxPacketSize, maxMaxPacketSize)
+		normalizeIntValue(&o.MaxIncomingPacketSize, defaultMaxPacketSize, minMaxPacketSize, maxMaxPacketSize)
 
-		if self.MaxIncomingPacketSize > self.MaxInputBufferSize {
-			self.MaxIncomingPacketSize = self.MaxInputBufferSize
+		if o.MaxIncomingPacketSize > o.MaxInputBufferSize {
+			o.MaxIncomingPacketSize = o.MaxInputBufferSize
 		}
 
-		normalizeIntValue(&self.MaxOutgoingPacketSize, defaultMaxPacketSize, minMaxPacketSize, maxMaxPacketSize)
+		normalizeIntValue(&o.MaxOutgoingPacketSize, defaultMaxPacketSize, minMaxPacketSize, maxMaxPacketSize)
 	})
 
-	return self
+	return o
 }
 
 const (

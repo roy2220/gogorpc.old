@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/let-z-go/intrusives/list"
+	"github.com/let-z-go/intrusive"
 	"github.com/let-z-go/toolkit/deque"
 	"github.com/let-z-go/toolkit/uuid"
 
@@ -29,40 +29,40 @@ type Channel struct {
 	inflightRPCs           sync.Map
 }
 
-func (self *Channel) Init(isServerSide bool, options *Options) *Channel {
-	self.options = options.Normalize()
-	self.extension = self.options.ExtensionFactory(RestrictedChannel{self}, isServerSide)
-	self.dequeOfPendingRequests.Init(0)
+func (c *Channel) Init(options *Options, isServerSide bool) *Channel {
+	c.options = options.Normalize()
+	c.extension = c.options.ExtensionFactory(RestrictedChannel{c}, isServerSide)
+	c.dequeOfPendingRequests.Init(0)
 
-	self.stream_ = unsafe.Pointer(new(stream.Stream).Init(
+	c.stream_ = unsafe.Pointer(new(stream.Stream).Init(
+		c.options.Stream,
 		isServerSide,
-		self.options.Stream,
-		self.extension.NewUserData(),
 		uuid.UUID{},
-		&self.dequeOfPendingRequests,
+		c.extension.NewUserData(),
+		&c.dequeOfPendingRequests,
 		nil,
 	))
 
-	self.state_ = int32(initial)
-	self.extension.OnInitialized()
-	return self
+	c.state_ = int32(initial)
+	c.extension.OnInitialized()
+	return c
 }
 
-func (self *Channel) Close() {
-	self.setState(closed)
-	self.extension.OnClosed()
+func (c *Channel) Close() {
+	c.setState(closed)
+	c.extension.OnClosed()
 }
 
-func (self *Channel) Run(ctx context.Context, serverURL *url.URL, connection net.Conn) error {
-	if self.state() == initial {
-		self.setState(establishing)
-		self.extension.OnEstablishing(serverURL)
+func (c *Channel) Run(ctx context.Context, serverURL *url.URL, connection net.Conn) error {
+	if c.state() == initial {
+		c.setState(establishing)
+		c.extension.OnEstablishing(serverURL)
 	} else {
-		self.setState(reestablishing)
-		self.extension.OnReestablishing(serverURL)
+		c.setState(reestablishing)
+		c.extension.OnReestablishing(serverURL)
 	}
 
-	ok, err := self.stream().Establish(ctx, connection, self.extension.NewHandshaker())
+	ok, err := c.stream().Establish(ctx, connection, c.extension.NewHandshaker())
 
 	if err != nil {
 		return err
@@ -72,30 +72,30 @@ func (self *Channel) Run(ctx context.Context, serverURL *url.URL, connection net
 		return ErrHandshakeRefused
 	}
 
-	self.setState(established)
-	self.extension.OnEstablished()
-	stream_ := self.stream()
+	c.setState(established)
+	c.extension.OnEstablished()
+	stream_ := c.stream()
 
-	err = stream_.Process(ctx, self.extension.NewTrafficCrypter(), &messageProcessor{
-		Channel:    self,
-		Keepaliver: self.extension.NewKeepaliver(),
+	err = stream_.Process(ctx, c.extension.NewTrafficCrypter(), &messageProcessor{
+		Channel:    c,
+		Keepaliver: c.extension.NewKeepaliver(),
 	})
 
-	self.extension.OnBroken(err)
+	c.extension.OnBroken(err)
 	return err
 }
 
-func (self *Channel) DoRPC(rpc *RPC, responseFactory MessageFactory) {
-	self.PrepareRPC(rpc, responseFactory)
+func (c *Channel) DoRPC(rpc *RPC, responseFactory MessageFactory) {
+	c.PrepareRPC(rpc, responseFactory)
 	rpc.Handle()
 }
 
-func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
-	rpc.channel = self
+func (c *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
+	rpc.internals.Channel = c
 	rpcParent, rpcHasParent := GetRPC(rpc.Ctx)
 
 	if rpcHasParent {
-		rpc.traceID = rpcParent.traceID
+		rpc.internals.TraceID = rpcParent.internals.TraceID
 
 		for key, value := range rpcParent.RequestExtraData.Value() {
 			if !(len(key) >= 1 && key[0] == '_') {
@@ -109,22 +109,22 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 			rpc.RequestExtraData.Set(key, value)
 		}
 	} else {
-		rpc.traceID = uuid.GenerateUUID4Fast()
+		rpc.internals.TraceID = uuid.GenerateUUID4Fast()
 	}
 
 	var rpcHandler RPCHandler
 
-	if self.isClosed() {
+	if c.isClosed() {
 		rpcHandler = func(rpc *RPC) {
 			rpc.Err = ErrClosed
 		}
 	} else {
-		rpc.sequenceNumber = int32(self.getNextSequenceNumber())
+		rpc.internals.SequenceNumber = int32(c.getNextSequenceNumber())
 
 		if deadline, ok := rpc.Ctx.Deadline(); ok {
-			rpc.deadline = deadline.UnixNano()
+			rpc.internals.Deadline = deadline.UnixNano()
 		} else {
-			rpc.deadline = 0
+			rpc.internals.Deadline = 0
 		}
 
 		rpcHandler = func(rpc *RPC) {
@@ -132,30 +132,30 @@ func (self *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 		}
 	}
 
-	methodOptions := self.options.GetMethod(rpc.ServiceName, rpc.MethodName)
+	methodOptions := c.options.GetMethod(rpc.ServiceName, rpc.MethodName)
 	rpc.internals.Init(rpcHandler, methodOptions.OutgoingRPCInterceptors)
 	rpc.Ctx = BindRPC(rpc.Ctx, rpc)
 }
 
-func (self *Channel) Abort(extraData ExtraData) {
-	self.pendingAbort.Store(extraData)
-	self.stream().Abort(extraData)
+func (c *Channel) Abort(extraData ExtraData) {
+	c.pendingAbort.Store(extraData)
+	c.stream().Abort(extraData)
 }
 
-func (self *Channel) IsServerSide() bool {
-	return self.stream().IsServerSide()
+func (c *Channel) IsServerSide() bool {
+	return c.stream().IsServerSide()
 }
 
-func (self *Channel) UserData() interface{} {
-	return self.stream().UserData()
+func (c *Channel) TransportID() uuid.UUID {
+	return c.stream().TransportID()
 }
 
-func (self *Channel) TransportID() uuid.UUID {
-	return self.stream().TransportID()
+func (c *Channel) UserData() interface{} {
+	return c.stream().UserData()
 }
 
-func (self *Channel) setState(newState state) {
-	oldState := self.state()
+func (c *Channel) setState(newState state) {
+	oldState := c.state()
 
 	switch oldState {
 	case initial:
@@ -179,11 +179,11 @@ func (self *Channel) setState(newState state) {
 
 ValidStateTransition:
 	if newState != oldState {
-		atomic.StoreInt32(&self.state_, int32(newState))
-		logEvent := self.options.Logger.Info()
+		atomic.StoreInt32(&c.state_, int32(newState))
+		logEvent := c.options.Logger.Info()
 
 		if oldState != initial {
-			logEvent.Str("transport_id", self.TransportID().String())
+			logEvent.Str("transport_id", c.TransportID().String())
 		}
 
 		logEvent.Str("old_state", oldState.GoString()).
@@ -193,30 +193,30 @@ ValidStateTransition:
 
 	switch newState {
 	case reestablishing:
-		oldStream := self.stream()
+		oldStream := c.stream()
 
 		newStream := new(stream.Stream).Init(
+			c.options.Stream,
 			oldStream.IsServerSide(),
-			self.options.Stream,
-			self.extension.NewUserData(),
 			oldStream.TransportID(),
-			&self.dequeOfPendingRequests,
+			c.extension.NewUserData(),
+			&c.dequeOfPendingRequests,
 			nil,
 		)
 
-		if value := self.pendingAbort.Load(); value != nil {
+		if value := c.pendingAbort.Load(); value != nil {
 			newStream.Abort(value.(ExtraData))
 		}
 
-		atomic.StorePointer(&self.stream_, unsafe.Pointer(newStream))
+		atomic.StorePointer(&c.stream_, unsafe.Pointer(newStream))
 		oldStream.Close()
 
 		if oldState == established {
-			self.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
+			c.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
 				inflightRPC_ := value.(*inflightRPC)
 
 				if inflightRPC_.IsEmitted {
-					self.inflightRPCs.Delete(key)
+					c.inflightRPCs.Delete(key)
 					inflightRPC_.Fail(nil, ErrBroken)
 				}
 
@@ -224,13 +224,13 @@ ValidStateTransition:
 			})
 		}
 	case closed:
-		self.stream().Close()
-		listOfPendingRequests := new(list.List).Init()
-		self.dequeOfPendingRequests.Close(listOfPendingRequests)
+		c.stream().Close()
+		listOfPendingRequests := new(intrusive.List).Init()
+		c.dequeOfPendingRequests.Close(listOfPendingRequests)
 		stream.PutPooledPendingRequests(listOfPendingRequests)
 
-		self.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
-			self.inflightRPCs.Delete(key)
+		c.inflightRPCs.Range(func(key interface{}, value interface{}) bool {
+			c.inflightRPCs.Delete(key)
 			inflightRPC_ := value.(*inflightRPC)
 
 			if inflightRPC_.IsEmitted {
@@ -244,21 +244,21 @@ ValidStateTransition:
 	}
 }
 
-func (self *Channel) getNextSequenceNumber() int {
-	return int((atomic.AddUint32(&self.nextSequenceNumber, 1) - 1) & 0x7FFFFFFF)
+func (c *Channel) getNextSequenceNumber() int {
+	return int((atomic.AddUint32(&c.nextSequenceNumber, 1) - 1) & 0x7FFFFFFF)
 }
 
-func (self *Channel) isClosed() bool {
-	state_ := self.state()
+func (c *Channel) isClosed() bool {
+	state_ := c.state()
 	return !(state_ >= initial && state_ < closed)
 }
 
-func (self *Channel) stream() *stream.Stream {
-	return (*stream.Stream)(atomic.LoadPointer(&self.stream_))
+func (c *Channel) stream() *stream.Stream {
+	return (*stream.Stream)(atomic.LoadPointer(&c.stream_))
 }
 
-func (self *Channel) state() state {
-	return state(atomic.LoadInt32(&self.state_))
+func (c *Channel) state() state {
+	return state(atomic.LoadInt32(&c.state_))
 }
 
 var (
@@ -277,8 +277,8 @@ const (
 
 type state int
 
-func (self state) GoString() string {
-	switch self {
+func (s state) GoString() string {
+	switch s {
 	case initial:
 		return "<initial>"
 	case establishing:
@@ -290,28 +290,28 @@ func (self state) GoString() string {
 	case closed:
 		return "<closed>"
 	default:
-		return fmt.Sprintf("<state:%d>", self)
+		return fmt.Sprintf("<state:%d>", s)
 	}
 }
 
 func handleOutgoingRPC(rpc *RPC, rpcHasParent bool, rpcParent *RPC, responseFactory MessageFactory) {
-	channel := rpc.channel
+	channel := rpc.internals.Channel
 	inflightRPC_ := getPooledInflightRPC(responseFactory)
-	channel.inflightRPCs.Store(rpc.sequenceNumber, inflightRPC_)
+	channel.inflightRPCs.Store(rpc.internals.SequenceNumber, inflightRPC_)
 
 	if err := channel.stream().SendRequest(rpc.Ctx, &proto.RequestHeader{
-		SequenceNumber: rpc.sequenceNumber,
+		SequenceNumber: rpc.internals.SequenceNumber,
 		ServiceName:    rpc.ServiceName,
 		MethodName:     rpc.MethodName,
 		ExtraData:      rpc.RequestExtraData.Value(),
-		Deadline:       rpc.deadline,
+		Deadline:       rpc.internals.Deadline,
 
 		TraceId: proto.UUID{
-			Low:  rpc.traceID[0],
-			High: rpc.traceID[1],
+			Low:  rpc.internals.TraceID[0],
+			High: rpc.internals.TraceID[1],
 		},
 	}, rpc.Request); err != nil {
-		channel.inflightRPCs.Delete(rpc.sequenceNumber)
+		channel.inflightRPCs.Delete(rpc.internals.SequenceNumber)
 
 		switch err {
 		case stream.ErrClosed:

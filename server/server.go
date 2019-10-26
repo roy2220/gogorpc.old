@@ -19,52 +19,52 @@ type Server struct {
 	activity activity
 }
 
-func (self *Server) Init(options *Options, rawURL string) *Server {
-	self.options = options.Normalize()
-	self.rawURL = rawURL
-	self.ctx, self.cancel = context.WithCancel(context.Background())
-	self.activity.Init(self.ctx, self.options.ShutdownTimeout)
-	return self
+func (s *Server) Init(options *Options, rawURL string) *Server {
+	s.options = options.Normalize()
+	s.rawURL = rawURL
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.activity.Init(s.ctx, s.options.ShutdownTimeout)
+	return s
 }
 
-func (self *Server) Close() {
-	self.cancel()
-	self.activity.Close()
+func (s *Server) Close() {
+	s.cancel()
+	s.activity.Close()
 }
 
-func (self *Server) Run() (err error) {
-	if self.activity.IsClosed() {
-		self.options.Logger.Error().
-			Str("server_url", self.rawURL).
+func (s *Server) Run() (err error) {
+	if s.activity.IsClosed() {
+		s.options.Logger.Error().
+			Str("server_url", s.rawURL).
 			Msg("server_already_closed")
 		return ErrClosed
 	}
 
-	atomic.AddInt32(&self.activity.Counter, 1)
+	atomic.AddInt32(&s.activity.Counter, 1)
 
 	defer func() {
 		if err == ErrClosed {
 			err = nil
 		} else {
-			self.Close()
+			s.Close()
 		}
 
-		self.options.Logger.Error().Err(err).
-			Str("server_url", self.rawURL).
+		s.options.Logger.Error().Err(err).
+			Str("server_url", s.rawURL).
 			Msg("server_closed")
-		atomic.AddInt32(&self.activity.Counter, -1)
+		atomic.AddInt32(&s.activity.Counter, -1)
 	}()
 
-	if self.activity.IsClosed() {
+	if s.activity.IsClosed() {
 		return ErrClosed
 	}
 
 	var url_ *url.URL
-	url_, err = url.Parse(self.rawURL)
+	url_, err = url.Parse(s.rawURL)
 
 	if err != nil {
-		self.options.Logger.Error().Err(err).
-			Str("server_url", self.rawURL).
+		s.options.Logger.Error().Err(err).
+			Str("server_url", s.rawURL).
 			Msg("server_invalid_url")
 		return
 	}
@@ -76,16 +76,16 @@ func (self *Server) Run() (err error) {
 		return
 	}
 
-	for i, hook := range self.options.Hooks {
+	for i, hook := range s.options.Hooks {
 		if hook.BeforeRun == nil {
 			continue
 		}
 
-		err = hook.BeforeRun(self.ctx, url_)
+		err = hook.BeforeRun(s.ctx, url_)
 
 		if err != nil {
 			for i--; i >= 0; i-- {
-				hook = self.options.Hooks[i]
+				hook = s.options.Hooks[i]
 
 				if hook.AfterRun == nil {
 					continue
@@ -98,21 +98,21 @@ func (self *Server) Run() (err error) {
 		}
 	}
 
-	err = acceptor(self.ctx, url_, &self.activity.Counter, func(connection net.Conn) {
-		channel_ := new(channel.Channel).Init(true, self.options.Channel)
+	err = acceptor(s.ctx, url_, &s.activity.Counter, func(connection net.Conn) {
+		channel_ := new(channel.Channel).Init(s.options.Channel, true)
 		defer channel_.Close()
-		err := channel_.Run(self.activity.Ctx, url_, connection)
-		self.options.Logger.Warn().Err(err).
-			Str("server_url", self.rawURL).
+		err := channel_.Run(s.activity.Ctx, url_, connection)
+		s.options.Logger.Warn().Err(err).
+			Str("server_url", s.rawURL).
 			Str("transport_id", channel_.TransportID().String()).
 			Msg("server_channel_run_failed")
 	})
 
-	self.options.Logger.Error().Err(err).
-		Str("server_url", self.rawURL).
+	s.options.Logger.Error().Err(err).
+		Str("server_url", s.rawURL).
 		Msg("server_accept_failed")
 
-	for _, hook := range self.options.Hooks {
+	for _, hook := range s.options.Hooks {
 		if hook.AfterRun == nil {
 			continue
 		}
@@ -123,8 +123,8 @@ func (self *Server) Run() (err error) {
 	return
 }
 
-func (self *Server) WaitForShutdown() bool {
-	return self.activity.WaitFor()
+func (s *Server) WaitForShutdown() bool {
+	return s.activity.WaitFor()
 }
 
 var ErrClosed = errors.New("gogorpc/server: closed")
@@ -136,14 +136,14 @@ type activity struct {
 	isClosed int32
 }
 
-func (self *activity) Init(ctx context.Context, overtime time.Duration) {
+func (a *activity) Init(ctx context.Context, overtime time.Duration) {
 	if overtime < 0 {
-		self.Ctx = context.Background()
+		a.Ctx = context.Background()
 	} else if overtime == 0 {
-		self.Ctx = ctx
+		a.Ctx = ctx
 	} else {
 		var cancel context.CancelFunc
-		self.Ctx, cancel = context.WithCancel(context.Background())
+		a.Ctx, cancel = context.WithCancel(context.Background())
 
 		go func() {
 			select {
@@ -154,17 +154,17 @@ func (self *activity) Init(ctx context.Context, overtime time.Duration) {
 		}()
 	}
 
-	self.Counter = 1
+	a.Counter = 1
 }
 
-func (self *activity) Close() {
-	if atomic.CompareAndSwapInt32(&self.isClosed, 0, 1) {
-		atomic.AddInt32(&self.Counter, -1)
+func (a *activity) Close() {
+	if atomic.CompareAndSwapInt32(&a.isClosed, 0, 1) {
+		atomic.AddInt32(&a.Counter, -1)
 	}
 }
 
-func (self *activity) WaitFor() bool {
-	if self.Ctx.Err() != nil {
+func (a *activity) WaitFor() bool {
+	if a.Ctx.Err() != nil {
 		return false
 	}
 
@@ -172,20 +172,20 @@ func (self *activity) WaitFor() bool {
 	defer ticker.Stop()
 
 	for {
-		if atomic.LoadInt32(&self.Counter) == 0 {
+		if atomic.LoadInt32(&a.Counter) == 0 {
 			return true
 		}
 
 		select {
-		case <-self.Ctx.Done():
+		case <-a.Ctx.Done():
 			return false
 		case <-ticker.C:
 		}
 	}
 }
 
-func (self *activity) IsClosed() bool {
-	return atomic.LoadInt32(&self.isClosed) == 1
+func (a *activity) IsClosed() bool {
+	return atomic.LoadInt32(&a.isClosed) == 1
 }
 
 const activityPollInterval = 500 * time.Millisecond

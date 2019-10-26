@@ -5,13 +5,13 @@ import (
 	"unsafe"
 )
 
-func (self *RPC) DetachFromPool() *RPC {
-	self.pooled().isDetached = true
-	return self
+func (r *RPC) DetachFromPool() *RPC {
+	r.pooled().isDetached = true
+	return r
 }
 
-func (self *RPC) pooled() *pooledRPC {
-	return (*pooledRPC)(unsafe.Pointer(uintptr(unsafe.Pointer(self)) - unsafe.Offsetof(pooledRPC{}.RPC)))
+func (r *RPC) pooled() *pooledRPC {
+	return (*pooledRPC)(unsafe.Pointer(uintptr(unsafe.Pointer(r)) - unsafe.Offsetof(pooledRPC{}.RPC)))
 }
 
 func GetPooledRPC() *RPC {

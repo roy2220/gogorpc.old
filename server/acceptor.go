@@ -51,11 +51,11 @@ type AcceptorExistsError struct {
 	context string
 }
 
-func (self AcceptorExistsError) Error() string {
+func (aee AcceptorExistsError) Error() string {
 	message := "gogorpc/server: acceptor exists"
 
-	if self.context != "" {
-		message += ": " + self.context
+	if aee.context != "" {
+		message += ": " + aee.context
 	}
 
 	return message
@@ -65,11 +65,11 @@ type AcceptorNotFoundError struct {
 	context string
 }
 
-func (self AcceptorNotFoundError) Error() string {
+func (anfe AcceptorNotFoundError) Error() string {
 	message := "gogorpc/server: acceptor not found"
 
-	if self.context != "" {
-		message += ": " + self.context
+	if anfe.context != "" {
+		message += ": " + anfe.context
 	}
 
 	return message

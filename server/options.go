@@ -19,25 +19,25 @@ type Options struct {
 	normalizeOnce sync.Once
 }
 
-func (self *Options) Normalize() *Options {
-	self.normalizeOnce.Do(func() {
-		if self.Channel == nil {
-			self.Channel = &defaultChannelOptions
+func (o *Options) Normalize() *Options {
+	o.normalizeOnce.Do(func() {
+		if o.Channel == nil {
+			o.Channel = &defaultChannelOptions
 		}
 
-		self.Channel.Normalize()
+		o.Channel.Normalize()
 
-		if self.Logger == nil {
-			self.Logger = self.Channel.Logger
+		if o.Logger == nil {
+			o.Logger = o.Channel.Logger
 		}
 	})
 
-	return self
+	return o
 }
 
-func (self *Options) Do(doer func(*Options)) *Options {
-	doer(self)
-	return self
+func (o *Options) Do(doer func(*Options)) *Options {
+	doer(o)
+	return o
 }
 
 type Hook struct {

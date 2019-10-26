@@ -17,20 +17,20 @@ type Options struct {
 	normalizeOnce sync.Once
 }
 
-func (self *Options) Normalize() *Options {
-	self.normalizeOnce.Do(func() {
-		if self.Client == nil {
-			self.Client = &defaultClientOptions
+func (o *Options) Normalize() *Options {
+	o.normalizeOnce.Do(func() {
+		if o.Client == nil {
+			o.Client = &defaultClientOptions
 		}
 
-		self.Client.Normalize()
+		o.Client.Normalize()
 
-		if self.Logger == nil {
-			self.Logger = self.Client.Logger
+		if o.Logger == nil {
+			o.Logger = o.Client.Logger
 		}
 	})
 
-	return self
+	return o
 }
 
 var defaultClientOptions client.Options

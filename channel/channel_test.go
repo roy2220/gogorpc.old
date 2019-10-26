@@ -388,7 +388,7 @@ func testSetup2(
 		t,
 		func(ctx context.Context, makeConn func() net.Conn) bool {
 			conn := makeConn()
-			cn := new(Channel).Init(false, opts1)
+			cn := new(Channel).Init(opts1, false)
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 			go func(conn net.Conn) {
@@ -406,7 +406,7 @@ func testSetup2(
 			return cb1(ctx, cn, conn)
 		},
 		func(ctx context.Context, conn net.Conn) bool {
-			cn := new(Channel).Init(true, opts2)
+			cn := new(Channel).Init(opts2, true)
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 			go func() {

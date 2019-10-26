@@ -17,63 +17,58 @@ type RPC struct {
 	Response          Message
 	Err               error
 
-	channel        *Channel
-	sequenceNumber int32
-	deadline       int64
-	traceID        uuid.UUID
-
 	internals rpcInternals
 }
 
-func (self *RPC) Handle() bool {
-	return self.internals.Handle(self)
+func (r *RPC) Handle() bool {
+	return r.internals.Handle(r)
 }
 
-func (self *RPC) Reprepare() {
-	self.ResponseExtraData = ExtraDataRef{}
-	self.Response = nil
-	self.Err = nil
-	self.internals.Reprepare()
+func (r *RPC) Reprepare() {
+	r.ResponseExtraData = ExtraDataRef{}
+	r.Response = nil
+	r.Err = nil
+	r.internals.Reprepare()
 }
 
-func (self *RPC) Channel() RestrictedChannel {
-	return RestrictedChannel{self.channel}
+func (r *RPC) Channel() RestrictedChannel {
+	return RestrictedChannel{r.internals.Channel}
 }
 
-func (self *RPC) TraceID() uuid.UUID {
-	return self.traceID
+func (r *RPC) TraceID() uuid.UUID {
+	return r.internals.TraceID
 }
 
-func (self *RPC) IsHandled() bool {
-	return self.internals.IsHandled()
+func (r *RPC) IsHandled() bool {
+	return r.internals.IsHandled()
 }
 
 type RestrictedChannel struct {
 	underlying *Channel
 }
 
-func (self RestrictedChannel) DoRPC(rpc *RPC, responseFactory MessageFactory) {
-	self.underlying.DoRPC(rpc, responseFactory)
+func (rc RestrictedChannel) DoRPC(rpc *RPC, responseFactory MessageFactory) {
+	rc.underlying.DoRPC(rpc, responseFactory)
 }
 
-func (self RestrictedChannel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
-	self.underlying.PrepareRPC(rpc, responseFactory)
+func (rc RestrictedChannel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
+	rc.underlying.PrepareRPC(rpc, responseFactory)
 }
 
-func (self RestrictedChannel) Abort(extraData ExtraData) {
-	self.underlying.Abort(extraData)
+func (rc RestrictedChannel) Abort(extraData ExtraData) {
+	rc.underlying.Abort(extraData)
 }
 
-func (self RestrictedChannel) IsServerSide() bool {
-	return self.underlying.IsServerSide()
+func (rc RestrictedChannel) IsServerSide() bool {
+	return rc.underlying.IsServerSide()
 }
 
-func (self RestrictedChannel) UserData() interface{} {
-	return self.underlying.UserData()
+func (rc RestrictedChannel) TransportID() uuid.UUID {
+	return rc.underlying.TransportID()
 }
 
-func (self RestrictedChannel) TransportID() uuid.UUID {
-	return self.underlying.TransportID()
+func (rc RestrictedChannel) UserData() interface{} {
+	return rc.underlying.UserData()
 }
 
 type RPCHandler func(rpc *RPC)
@@ -99,24 +94,29 @@ func MustGetRPC(ctx context.Context) *RPC {
 }
 
 type rpcInternals struct {
+	Channel        *Channel
+	SequenceNumber int32
+	Deadline       int64
+	TraceID        uuid.UUID
+
 	handler              RPCHandler
 	interceptors         []RPCHandler
 	nextInterceptorIndex int
 }
 
-func (self *rpcInternals) Init(handler RPCHandler, interceptors []RPCHandler) {
-	self.handler = handler
-	self.interceptors = interceptors
+func (ri *rpcInternals) Init(handler RPCHandler, interceptors []RPCHandler) {
+	ri.handler = handler
+	ri.interceptors = interceptors
 }
 
-func (self *rpcInternals) Handle(externals *RPC) bool {
-	if i, n := self.nextInterceptorIndex, len(self.interceptors); i <= n {
-		self.nextInterceptorIndex++
+func (ri *rpcInternals) Handle(externals *RPC) bool {
+	if i, n := ri.nextInterceptorIndex, len(ri.interceptors); i <= n {
+		ri.nextInterceptorIndex++
 
 		if i < n {
-			self.interceptors[i](externals)
+			ri.interceptors[i](externals)
 		} else {
-			self.handler(externals)
+			ri.handler(externals)
 		}
 
 		return true
@@ -125,12 +125,12 @@ func (self *rpcInternals) Handle(externals *RPC) bool {
 	return false
 }
 
-func (self *rpcInternals) Reprepare() {
-	self.nextInterceptorIndex = 0
+func (ri *rpcInternals) Reprepare() {
+	ri.nextInterceptorIndex = 0
 }
 
-func (self *rpcInternals) IsHandled() bool {
-	return self.nextInterceptorIndex >= 1
+func (ri *rpcInternals) IsHandled() bool {
+	return ri.nextInterceptorIndex >= 1
 }
 
 type rpcKey struct{}

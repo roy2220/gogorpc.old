@@ -24,84 +24,84 @@ type Options struct {
 	normalizeOnce sync.Once
 }
 
-func (self *Options) Normalize() *Options {
-	self.normalizeOnce.Do(func() {
-		if self.Transport == nil {
-			self.Transport = &defaultTransportOptions
+func (o *Options) Normalize() *Options {
+	o.normalizeOnce.Do(func() {
+		if o.Transport == nil {
+			o.Transport = &defaultTransportOptions
 		}
 
-		self.Transport.Normalize()
+		o.Transport.Normalize()
 
-		if self.Logger == nil {
-			self.Logger = self.Transport.Logger
+		if o.Logger == nil {
+			o.Logger = o.Transport.Logger
 		}
 
-		normalizeDurValue(&self.ActiveHangupTimeout, defaultActiveHangupTimeout, minActiveHangupTimeout, maxActiveHangupTimeout)
-		normalizeDurValue(&self.IncomingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
-		normalizeDurValue(&self.OutgoingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
-		normalizeIntValue(&self.IncomingConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
-		normalizeIntValue(&self.OutgoingConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
+		normalizeDurValue(&o.ActiveHangupTimeout, defaultActiveHangupTimeout, minActiveHangupTimeout, maxActiveHangupTimeout)
+		normalizeDurValue(&o.IncomingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
+		normalizeDurValue(&o.OutgoingKeepaliveInterval, defaultKeepaliveInterval, minKeepaliveInterval, maxKeepaliveInterval)
+		normalizeIntValue(&o.IncomingConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
+		normalizeIntValue(&o.OutgoingConcurrencyLimit, defaultConcurrencyLimit, minConcurrencyLimit, maxConcurrencyLimit)
 	})
 
-	return self
+	return o
 }
 
-func (self *Options) AddEventFilter(eventDirection EventDirection, eventType EventType, eventFilter EventFilter) *Options {
+func (o *Options) AddEventFilter(eventDirection EventDirection, eventType EventType, eventFilter EventFilter) *Options {
 	if eventDirection < 0 {
 		utils.Assert(eventType < 0, func() string {
 			return fmt.Sprintf("gogorpc/channel: invalid argument: eventType=%#v, eventDirection=%#v", eventType, eventDirection)
 		})
 
-		eventFilters := &self.EventFilters[0]
+		eventFilters := &o.EventFilters[0]
 		i := len(*eventFilters)
 		insertEventFilter(eventFilter, eventFilters, i)
 
 		for ed, j := 0, 1; ed < NumberOfEventDirections; ed, j = ed+1, j+1 {
-			insertEventFilter(eventFilter, &self.EventFilters[j], i)
+			insertEventFilter(eventFilter, &o.EventFilters[j], i)
 
 			for et, k := 0, 1+NumberOfEventDirections+ed*NumberOfEventTypes; et < NumberOfEventTypes; et, k = et+1, k+1 {
-				insertEventFilter(eventFilter, &self.EventFilters[k], i)
+				insertEventFilter(eventFilter, &o.EventFilters[k], i)
 			}
 		}
 	} else {
 		ed := int(eventDirection)
 
 		if eventType < 0 {
-			eventFilters := &self.EventFilters[1+ed]
+			eventFilters := &o.EventFilters[1+ed]
 			i := len(*eventFilters)
 			insertEventFilter(eventFilter, eventFilters, i)
 
 			for et, j := 0, 1+NumberOfEventDirections+ed*NumberOfEventTypes; et < NumberOfEventTypes; et, j = et+1, j+1 {
-				insertEventFilter(eventFilter, &self.EventFilters[j], i)
+				insertEventFilter(eventFilter, &o.EventFilters[j], i)
 			}
 		} else {
 			et := int(eventType)
-			eventFilters := &self.EventFilters[1+NumberOfEventDirections+ed*NumberOfEventTypes+et]
+			eventFilters := &o.EventFilters[1+NumberOfEventDirections+ed*NumberOfEventTypes+et]
 			insertEventFilter(eventFilter, eventFilters, len(*eventFilters))
 		}
 	}
 
-	return self
+	return o
 }
 
-func (self *Options) GetEventFilters(eventDirection EventDirection, eventType EventType) []EventFilter {
+func (o *Options) GetEventFilters(eventDirection EventDirection, eventType EventType) []EventFilter {
 	if eventDirection < 0 {
 		utils.Assert(eventType < 0, func() string {
 			return fmt.Sprintf("gogorpc/channel: invalid argument: eventType=%#v, eventDirection=%#v", eventType, eventDirection)
 		})
 
-		return self.EventFilters[0]
+		return o.EventFilters[0]
 	}
 
 	if eventType < 0 {
-		return self.EventFilters[1+int(eventDirection)]
+		return o.EventFilters[1+int(eventDirection)]
 	}
 
-	return self.DoGetEventFilters(eventDirection, eventType)
+	return o.DoGetEventFilters(eventDirection, eventType)
 }
 
-func (self *Options) DoGetEventFilters(eventDirection EventDirection, eventType EventType) []EventFilter {
-	return self.EventFilters[1+NumberOfEventDirections+int(eventDirection)*NumberOfEventTypes+int(eventType)]
+func (o *Options) DoGetEventFilters(eventDirection EventDirection, eventType EventType) []EventFilter {
+	return o.EventFilters[1+NumberOfEventDirections+int(eventDirection)*NumberOfEventTypes+int(eventType)]
 }
 
 const (
@@ -125,11 +125,13 @@ const (
 var defaultTransportOptions transport.Options
 
 func insertEventFilter(eventFilter EventFilter, eventFilters *[]EventFilter, i int) {
-	newEventFilters := make([]EventFilter, len(*eventFilters)+1)
-	copy(newEventFilters[:i], (*eventFilters)[:i])
-	newEventFilters[i] = eventFilter
-	copy(newEventFilters[i+1:], (*eventFilters)[i:])
-	*eventFilters = newEventFilters
+	*eventFilters = append(*eventFilters, nil)
+
+	for j := len(*eventFilters) - 1; j > i; j-- {
+		(*eventFilters)[j] = (*eventFilters)[j-1]
+	}
+
+	(*eventFilters)[i] = eventFilter
 }
 
 func normalizeDurValue(value *time.Duration, defaultValue, minValue, maxValue time.Duration) {

@@ -15,43 +15,43 @@ type inflightRPC struct {
 	completion      chan struct{}
 }
 
-func (self *inflightRPC) Init(responseFactory MessageFactory) *inflightRPC {
-	self.responseFactory = responseFactory
-	self.completion = make(chan struct{}, 1)
-	return self
+func (ir *inflightRPC) Init(responseFactory MessageFactory) *inflightRPC {
+	ir.responseFactory = responseFactory
+	ir.completion = make(chan struct{}, 1)
+	return ir
 }
 
-func (self *inflightRPC) Reset(responseFactory MessageFactory) *inflightRPC {
-	self.IsEmitted = false
-	self.ResponseExtraData = nil
-	self.Response = nil
-	self.Err = nil
-	self.responseFactory = responseFactory
-	return self
+func (ir *inflightRPC) Reset(responseFactory MessageFactory) *inflightRPC {
+	ir.IsEmitted = false
+	ir.ResponseExtraData = nil
+	ir.Response = nil
+	ir.Err = nil
+	ir.responseFactory = responseFactory
+	return ir
 }
 
-func (self *inflightRPC) NewResponse() Message {
-	return self.responseFactory()
+func (ir *inflightRPC) NewResponse() Message {
+	return ir.responseFactory()
 }
 
-func (self *inflightRPC) Succeed(extraData ExtraData, response Message) {
-	self.ResponseExtraData = extraData
-	self.Response = response
-	self.completion <- struct{}{}
+func (ir *inflightRPC) Succeed(extraData ExtraData, response Message) {
+	ir.ResponseExtraData = extraData
+	ir.Response = response
+	ir.completion <- struct{}{}
 }
 
-func (self *inflightRPC) Fail(extraData ExtraData, err error) {
-	self.ResponseExtraData = extraData
-	self.Response = NullMessage
-	self.Err = err
-	self.completion <- struct{}{}
+func (ir *inflightRPC) Fail(extraData ExtraData, err error) {
+	ir.ResponseExtraData = extraData
+	ir.Response = NullMessage
+	ir.Err = err
+	ir.completion <- struct{}{}
 }
 
-func (self *inflightRPC) WaitFor(ctx context.Context) error {
+func (ir *inflightRPC) WaitFor(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-self.completion:
+	case <-ir.completion:
 		return nil
 	}
 }

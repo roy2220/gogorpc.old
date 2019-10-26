@@ -22,39 +22,39 @@ type Registry struct {
 	services          sync.Map
 }
 
-func (self *Registry) Init(options *Options, consulClient *api.Client) *Registry {
-	self.options = options.Normalize()
-	self.consulClient = consulClient
-	return self
+func (r *Registry) Init(options *Options, consulClient *api.Client) *Registry {
+	r.options = options.Normalize()
+	r.consulClient = consulClient
+	return r
 }
 
-func (self *Registry) RegisterServices(servicePrototypes ...*Service) func(*server.Options) {
+func (r *Registry) RegisterServices(servicePrototypes ...*Service) func(*server.Options) {
 	return func(serverOptions *server.Options) {
 		if len(servicePrototypes) == 0 {
 			return
 		}
 
-		servicePrototypes2, ok := self.servicePrototypes[serverOptions]
+		servicePrototypes2, ok := r.servicePrototypes[serverOptions]
 
 		if !ok {
 			serverOptions.Hooks = append(serverOptions.Hooks, &server.Hook{
 				BeforeRun: func(ctx context.Context, serverURL *url.URL) error {
-					servicePrototypes := self.servicePrototypes[serverOptions]
-					return self.registerServices(ctx, serverURL, servicePrototypes)
+					servicePrototypes := r.servicePrototypes[serverOptions]
+					return r.registerServices(ctx, serverURL, servicePrototypes)
 				},
 
 				AfterRun: func(serverURL *url.URL) {
-					servicePrototypes := self.servicePrototypes[serverOptions]
-					self.deregisterServices(serverURL, servicePrototypes)
+					servicePrototypes := r.servicePrototypes[serverOptions]
+					r.deregisterServices(serverURL, servicePrototypes)
 				},
 			})
 
-			if self.servicePrototypes == nil {
-				self.servicePrototypes = map[*server.Options]map[string]*Service{}
+			if r.servicePrototypes == nil {
+				r.servicePrototypes = map[*server.Options]map[string]*Service{}
 			}
 
 			servicePrototypes2 = map[string]*Service{}
-			self.servicePrototypes[serverOptions] = servicePrototypes2
+			r.servicePrototypes[serverOptions] = servicePrototypes2
 		}
 
 		for _, servicePrototype := range servicePrototypes {
@@ -63,7 +63,7 @@ func (self *Registry) RegisterServices(servicePrototypes ...*Service) func(*serv
 	}
 }
 
-func (self *Registry) registerServices(ctx context.Context, serverURL *url.URL, servicePrototypes map[string]*Service) error {
+func (r *Registry) registerServices(ctx context.Context, serverURL *url.URL, servicePrototypes map[string]*Service) error {
 	port, err := net.DefaultResolver.LookupPort(ctx, "tcp", serverURL.Port())
 
 	if err != nil {
@@ -77,9 +77,9 @@ func (self *Registry) registerServices(ctx context.Context, serverURL *url.URL, 
 		serviceURL := *serverURL
 		serviceURL.Fragment = servicePrototype.Name
 		rawServiceURL := serviceURL.String()
-		service := servicePrototype.clone(self.options.BasicServiceMeta, self.options.BasicServiceTags)
+		service := servicePrototype.clone(r.options.BasicServiceMeta, r.options.BasicServiceTags)
 
-		if _, ok := self.services.LoadOrStore(rawServiceURL, service); ok {
+		if _, ok := r.services.LoadOrStore(rawServiceURL, service); ok {
 			return &DuplicateServiceRegistrationError{fmt.Sprintf("serviceURL=%#v", rawServiceURL)}
 		}
 
@@ -87,7 +87,7 @@ func (self *Registry) registerServices(ctx context.Context, serverURL *url.URL, 
 		service.Meta["_Weight"] = strconv.Itoa(service.Weight)
 		service.Meta["_GoVersion"] = runtime.Version()
 
-		if err := self.consulClient.Agent().ServiceRegister(&api.AgentServiceRegistration{
+		if err := r.consulClient.Agent().ServiceRegister(&api.AgentServiceRegistration{
 			ID:      service.id.String(),
 			Name:    service.Name,
 			Tags:    service.Tags,
@@ -102,20 +102,20 @@ func (self *Registry) registerServices(ctx context.Context, serverURL *url.URL, 
 				DeregisterCriticalServiceAfter: "60s",
 			},
 		}); err != nil {
-			self.options.Logger.Error().Err(err).
+			r.options.Logger.Error().Err(err).
 				Str("server_url", serverURL.String()).
 				Str("service_name", service.Name).
 				Str("service_id", service.id.String()).
 				Msg("registry_service_register_failed")
 
-			self.services.Delete(rawServiceURL)
+			r.services.Delete(rawServiceURL)
 
 			for i--; i >= 0; i-- {
 				service = services[i]
-				self.services.Delete(service.Meta["_URL"])
+				r.services.Delete(service.Meta["_URL"])
 
-				if err := self.consulClient.Agent().ServiceDeregister(service.id.String()); err != nil {
-					self.options.Logger.Error().Err(err).
+				if err := r.consulClient.Agent().ServiceDeregister(service.id.String()); err != nil {
+					r.options.Logger.Error().Err(err).
 						Str("server_url", serverURL.String()).
 						Str("service_name", service.Name).
 						Str("service_id", service.id.String()).
@@ -123,7 +123,7 @@ func (self *Registry) registerServices(ctx context.Context, serverURL *url.URL, 
 					continue
 				}
 
-				self.options.Logger.Info().
+				r.options.Logger.Info().
 					Str("server_url", serverURL.String()).
 					Str("service_name", service.Name).
 					Str("service_id", service.id.String()).
@@ -133,7 +133,7 @@ func (self *Registry) registerServices(ctx context.Context, serverURL *url.URL, 
 			return err
 		}
 
-		self.options.Logger.Info().Err(err).
+		r.options.Logger.Info().Err(err).
 			Str("server_url", serverURL.String()).
 			Str("service_name", service.Name).
 			Str("service_id", service.id.String()).
@@ -146,17 +146,17 @@ func (self *Registry) registerServices(ctx context.Context, serverURL *url.URL, 
 	return nil
 }
 
-func (self *Registry) deregisterServices(serverURL *url.URL, servicePrototypes map[string]*Service) {
+func (r *Registry) deregisterServices(serverURL *url.URL, servicePrototypes map[string]*Service) {
 	for _, servicePrototype := range servicePrototypes {
 		serviceURL := *serverURL
 		serviceURL.Fragment = servicePrototype.Name
 		rawServiceURL := serviceURL.String()
-		value, _ := self.services.Load(rawServiceURL)
-		self.services.Delete(rawServiceURL)
+		value, _ := r.services.Load(rawServiceURL)
+		r.services.Delete(rawServiceURL)
 		service := value.(*Service)
 
-		if err := self.consulClient.Agent().ServiceDeregister(service.id.String()); err != nil {
-			self.options.Logger.Error().Err(err).
+		if err := r.consulClient.Agent().ServiceDeregister(service.id.String()); err != nil {
+			r.options.Logger.Error().Err(err).
 				Str("server_url", serverURL.String()).
 				Str("service_name", service.Name).
 				Str("service_id", service.id.String()).
@@ -164,7 +164,7 @@ func (self *Registry) deregisterServices(serverURL *url.URL, servicePrototypes m
 			continue
 		}
 
-		self.options.Logger.Info().
+		r.options.Logger.Info().
 			Str("server_url", serverURL.String()).
 			Str("service_name", service.Name).
 			Str("service_id", service.id.String()).
@@ -181,25 +181,25 @@ type Service struct {
 	id uuid.UUID
 }
 
-func (self *Service) clone(basicMeta map[string]string, basicTags []string) *Service {
+func (s *Service) clone(basicMeta map[string]string, basicTags []string) *Service {
 	clone := Service{
 		id: uuid.GenerateUUID4Fast(),
 
-		Name:   self.Name,
-		Weight: self.Weight,
+		Name:   s.Name,
+		Weight: s.Weight,
 	}
 
-	clone.Meta = make(map[string]string, len(basicMeta)+len(self.Meta))
+	clone.Meta = make(map[string]string, len(basicMeta)+len(s.Meta))
 
 	for k, v := range basicMeta {
 		clone.Meta[k] = v
 	}
 
-	for k, v := range self.Meta {
+	for k, v := range s.Meta {
 		clone.Meta[k] = v
 	}
 
-	clone.Tags = make([]string, len(basicTags)+len(self.Tags))
+	clone.Tags = make([]string, len(basicTags)+len(s.Tags))
 	i := 0
 
 	for _, tag := range basicTags {
@@ -207,7 +207,7 @@ func (self *Service) clone(basicMeta map[string]string, basicTags []string) *Ser
 		i++
 	}
 
-	for _, tag := range self.Tags {
+	for _, tag := range s.Tags {
 		clone.Tags[i] = tag
 		i++
 	}
@@ -219,11 +219,11 @@ type DuplicateServiceRegistrationError struct {
 	context string
 }
 
-func (self DuplicateServiceRegistrationError) Error() string {
+func (dsre DuplicateServiceRegistrationError) Error() string {
 	message := "gogorpc/registry: duplicate service registration"
 
-	if self.context != "" {
-		message += ": " + self.context
+	if dsre.context != "" {
+		message += ": " + dsre.context
 	}
 
 	return message

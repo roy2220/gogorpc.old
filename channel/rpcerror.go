@@ -22,22 +22,22 @@ const (
 
 type RPCError proto.RPCError
 
-func (self *RPCError) Error() string {
-	return fmt.Sprintf("gogorpc/channel: rpc error: %d - %s", self.Type, self.Code)
+func (re *RPCError) Error() string {
+	return fmt.Sprintf("gogorpc/channel: rpc error: %d - %s", re.Type, re.Code)
 }
 
-func (self *RPCError) Equals(err error) bool {
+func (re *RPCError) Equals(err error) bool {
 	if other, ok := err.(*RPCError); ok {
-		return self.Code == other.Code
+		return re.Code == other.Code
 	}
 
 	return false
 }
 
-func (self *RPCError) Describe(desc string) *RPCError {
+func (re *RPCError) Describe(desc string) *RPCError {
 	return &RPCError{
-		Type: self.Type,
-		Code: self.Code,
+		Type: re.Type,
+		Code: re.Code,
 		Desc: desc,
 	}
 }

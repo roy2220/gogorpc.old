@@ -96,9 +96,9 @@ func TestHandshake1(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			tp := new(Transport).Init(&Options{Logger: &logger}, uuid.UUID{})
+			tp := new(Transport).Init(&Options{Logger: &logger}, false, uuid.UUID{})
 			defer tp.Close()
-			ok, err := tp.PostConnect(ctx, conn, testHandshaker{
+			ok, err := tp.Establish(ctx, conn, testHandshaker{
 				CbSizeHandshake: func() int {
 					return len("hello")
 				},
@@ -120,9 +120,9 @@ func TestHandshake1(t *testing.T) {
 			tp.Prepare(DummyTrafficDecrypter{})
 		},
 		func(ctx context.Context, conn net.Conn) {
-			tp := new(Transport).Init(&Options{Logger: &logger}, uuid.UUID{})
+			tp := new(Transport).Init(&Options{Logger: &logger}, true, uuid.UUID{})
 			defer tp.Close()
-			ok, err := tp.PostAccept(ctx, conn, testHandshaker{
+			ok, err := tp.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, rh []byte) (bool, error) {
 					if string(rh) != "hello" {
 						return false, nil
@@ -150,9 +150,9 @@ func TestHandshake2(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, uuid.UUID{})
+			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, false, uuid.UUID{})
 			defer tp.Close()
-			ok, err := tp.PostConnect(ctx, conn, testHandshaker{}.Init())
+			ok, err := tp.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.Regexp(t, "i/o timeout", err) {
 				t.FailNow()
 			}
@@ -160,9 +160,9 @@ func TestHandshake2(t *testing.T) {
 			tp.Prepare(DummyTrafficDecrypter{})
 		},
 		func(ctx context.Context, conn net.Conn) {
-			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, uuid.UUID{})
+			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, true, uuid.UUID{})
 			defer tp.Close()
-			ok, err := tp.PostAccept(ctx, conn, testHandshaker{
+			ok, err := tp.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, rh []byte) (bool, error) {
 					<-ctx.Done()
 					<-time.After(10 * time.Millisecond)
@@ -182,9 +182,9 @@ func TestHandshake3(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, uuid.UUID{})
+			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, false, uuid.UUID{})
 			defer tp.Close()
-			ok, err := tp.PostConnect(ctx, conn, testHandshaker{
+			ok, err := tp.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, rh []byte) (bool, error) {
 					<-ctx.Done()
 					<-time.After(10 * time.Millisecond)
@@ -198,9 +198,9 @@ func TestHandshake3(t *testing.T) {
 			tp.Prepare(DummyTrafficDecrypter{})
 		},
 		func(ctx context.Context, conn net.Conn) {
-			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, uuid.UUID{})
+			tp := new(Transport).Init(&Options{HandshakeTimeout: -1}, true, uuid.UUID{})
 			defer tp.Close()
-			ok, err := tp.PostAccept(ctx, conn, testHandshaker{}.Init())
+			ok, err := tp.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
 				t.FailNow()
 			}
@@ -487,9 +487,9 @@ func testSetup2(
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			tp := new(Transport).Init(opts1, uuid.UUID{})
+			tp := new(Transport).Init(opts1, false, uuid.UUID{})
 			defer tp.Close()
-			ok, err := tp.PostConnect(ctx, conn, testHandshaker{
+			ok, err := tp.Establish(ctx, conn, testHandshaker{
 				CbSizeHandshake: func() int {
 					return 0
 				},
@@ -510,9 +510,9 @@ func testSetup2(
 			cb1(ctx, tp)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			tp := new(Transport).Init(opts2, uuid.UUID{})
+			tp := new(Transport).Init(opts2, true, uuid.UUID{})
 			defer tp.Close()
-			ok, err := tp.PostAccept(ctx, conn, testHandshaker{
+			ok, err := tp.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, rh []byte) (bool, error) {
 					return true, nil
 				},

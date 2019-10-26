@@ -20,16 +20,16 @@ type Hangup struct {
 	ExtraData ExtraData
 }
 
-func (self *Hangup) Error() string {
+func (h *Hangup) Error() string {
 	message := "gogorpc/stream: hangup"
 
-	if self.IsPassive {
+	if h.IsPassive {
 		message += " (passive): "
 	} else {
 		message += " (active): "
 	}
 
-	switch self.Code {
+	switch h.Code {
 	case HangupAborted:
 		message += "aborted"
 	case HangupBadIncomingEvent:
@@ -41,7 +41,7 @@ func (self *Hangup) Error() string {
 	case HangupSystem:
 		message += "system"
 	default:
-		message += fmt.Sprintf("hangup %d", self.Code)
+		message += fmt.Sprintf("hangup %d", h.Code)
 	}
 
 	return message

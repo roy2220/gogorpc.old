@@ -19,28 +19,28 @@ type Options struct {
 	normalizeOnce sync.Once
 }
 
-func (self *Options) Normalize() *Options {
-	self.normalizeOnce.Do(func() {
-		if self.Channel == nil {
-			self.Channel = &defaultChannelOptions
+func (o *Options) Normalize() *Options {
+	o.normalizeOnce.Do(func() {
+		if o.Channel == nil {
+			o.Channel = &defaultChannelOptions
 		}
 
-		self.Channel.Normalize()
+		o.Channel.Normalize()
 
-		if self.Logger == nil {
-			self.Logger = self.Channel.Logger
+		if o.Logger == nil {
+			o.Logger = o.Channel.Logger
 		}
 
-		if self.ConnectTimeout == 0 {
-			self.ConnectTimeout = defaultConnectTimeout
+		if o.ConnectTimeout == 0 {
+			o.ConnectTimeout = defaultConnectTimeout
 		}
 
-		if !self.WithoutConnectRetry {
-			self.ConnectRetry.normalize()
+		if !o.WithoutConnectRetry {
+			o.ConnectRetry.normalize()
 		}
 	})
 
-	return self
+	return o
 }
 
 type ConnectRetryOptions struct {
@@ -51,16 +51,16 @@ type ConnectRetryOptions struct {
 	WithoutBackoffJitter bool
 }
 
-func (self *ConnectRetryOptions) normalize() {
-	if self.WithoutBackoff {
+func (cro *ConnectRetryOptions) normalize() {
+	if cro.WithoutBackoff {
 		return
 	}
 
-	normalizeDurValue(&self.MinBackoff, defaultMinConnectRetryBackoff, minConnectRetryBackoff, maxConnectRetryBackoff)
-	normalizeDurValue(&self.MaxBackoff, defaultMaxConnectRetryBackoff, minConnectRetryBackoff, maxConnectRetryBackoff)
+	normalizeDurValue(&cro.MinBackoff, defaultMinConnectRetryBackoff, minConnectRetryBackoff, maxConnectRetryBackoff)
+	normalizeDurValue(&cro.MaxBackoff, defaultMaxConnectRetryBackoff, minConnectRetryBackoff, maxConnectRetryBackoff)
 
-	if self.MaxBackoff < self.MinBackoff {
-		self.MaxBackoff = self.MinBackoff
+	if cro.MaxBackoff < cro.MinBackoff {
+		cro.MaxBackoff = cro.MinBackoff
 	}
 }
 

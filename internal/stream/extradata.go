@@ -6,13 +6,13 @@ import (
 
 type ExtraData map[string][]byte
 
-func (self ExtraData) TryGet(key string) ([]byte, bool) {
-	value, ok := self[key]
+func (ed ExtraData) TryGet(key string) ([]byte, bool) {
+	value, ok := ed[key]
 	return value, ok
 }
 
-func (self ExtraData) Get(key string, defaultValue []byte) []byte {
-	value, ok := self[key]
+func (ed ExtraData) Get(key string, defaultValue []byte) []byte {
+	value, ok := ed[key]
 
 	if !ok {
 		value = defaultValue
@@ -21,8 +21,8 @@ func (self ExtraData) Get(key string, defaultValue []byte) []byte {
 	return value
 }
 
-func (self ExtraData) MustGet(key string) []byte {
-	value, ok := self[key]
+func (ed ExtraData) MustGet(key string) []byte {
+	value, ok := ed[key]
 
 	if !ok {
 		panic(fmt.Errorf("gogorpc/stream: extra data key not found: key=%#v", key))
@@ -31,35 +31,35 @@ func (self ExtraData) MustGet(key string) []byte {
 	return value
 }
 
-func (self *ExtraData) Set(key string, value []byte) {
-	if *self == nil {
-		*self = make(ExtraData, 1)
+func (ed *ExtraData) Set(key string, value []byte) {
+	if *ed == nil {
+		*ed = make(ExtraData, 1)
 	}
 
-	(*self)[key] = value
+	(*ed)[key] = value
 }
 
-func (self ExtraData) Clear(key string) {
-	delete(self, key)
+func (ed ExtraData) Clear(key string) {
+	delete(ed, key)
 }
 
-func (self ExtraData) Copy() ExtraData {
-	if self == nil {
+func (ed ExtraData) Copy() ExtraData {
+	if ed == nil {
 		return nil
 	}
 
-	copy_ := make(ExtraData, len(self))
+	copy_ := make(ExtraData, len(ed))
 
-	for key, value := range self {
+	for key, value := range ed {
 		copy_[key] = value
 	}
 
 	return copy_
 }
 
-func (self ExtraData) Ref(copyOnWrite bool) ExtraDataRef {
+func (ed ExtraData) Ref(copyOnWrite bool) ExtraDataRef {
 	return ExtraDataRef{
-		value:       self,
+		value:       ed,
 		copyOnWrite: copyOnWrite,
 	}
 }
@@ -69,35 +69,35 @@ type ExtraDataRef struct {
 	copyOnWrite bool
 }
 
-func (self ExtraDataRef) TryGet(key string) ([]byte, bool) {
-	return self.value.TryGet(key)
+func (edr ExtraDataRef) TryGet(key string) ([]byte, bool) {
+	return edr.value.TryGet(key)
 }
 
-func (self ExtraDataRef) Get(key string, defaultValue []byte) []byte {
-	return self.value.Get(key, defaultValue)
+func (edr ExtraDataRef) Get(key string, defaultValue []byte) []byte {
+	return edr.value.Get(key, defaultValue)
 }
 
-func (self ExtraDataRef) MustGet(key string) []byte {
-	return self.value.MustGet(key)
+func (edr ExtraDataRef) MustGet(key string) []byte {
+	return edr.value.MustGet(key)
 }
 
-func (self *ExtraDataRef) Set(key string, value []byte) {
-	self.preWrite()
-	self.value.Set(key, value)
+func (edr *ExtraDataRef) Set(key string, value []byte) {
+	edr.preWrite()
+	edr.value.Set(key, value)
 }
 
-func (self *ExtraDataRef) Clear(key string) {
-	self.preWrite()
-	self.value.Clear(key)
+func (edr *ExtraDataRef) Clear(key string) {
+	edr.preWrite()
+	edr.value.Clear(key)
 }
 
-func (self ExtraDataRef) Value() ExtraData {
-	return self.value
+func (edr ExtraDataRef) Value() ExtraData {
+	return edr.value
 }
 
-func (self ExtraDataRef) preWrite() {
-	if self.copyOnWrite {
-		self.value = self.value.Copy()
-		self.copyOnWrite = false
+func (edr ExtraDataRef) preWrite() {
+	if edr.copyOnWrite {
+		edr.value = edr.value.Copy()
+		edr.copyOnWrite = false
 	}
 }

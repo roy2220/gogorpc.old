@@ -49,11 +49,11 @@ type ConnectorExistsError struct {
 	context string
 }
 
-func (self ConnectorExistsError) Error() string {
+func (cee ConnectorExistsError) Error() string {
 	message := "gogorpc/client: connector exists"
 
-	if self.context != "" {
-		message += ": " + self.context
+	if cee.context != "" {
+		message += ": " + cee.context
 	}
 
 	return message
@@ -63,11 +63,11 @@ type ConnectorNotFoundError struct {
 	context string
 }
 
-func (self ConnectorNotFoundError) Error() string {
+func (cnfe ConnectorNotFoundError) Error() string {
 	message := "gogorpc/client: connector not found"
 
-	if self.context != "" {
-		message += ": " + self.context
+	if cnfe.context != "" {
+		message += ": " + cnfe.context
 	}
 
 	return message

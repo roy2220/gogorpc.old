@@ -24,38 +24,38 @@ type Client struct {
 	lastError     atomic.Value
 }
 
-func (self *Client) Init(options *Options, rawServerURLs ...string) *Client {
-	self.options = options.Normalize()
-	self.channel.Init(false, self.options.Channel)
-	self.rawServerURLs = rawServerURLs
-	self.ctx, self.cancel = context.WithCancel(context.Background())
-	self.shutdown = make(chan struct{})
-	go self.run()
-	return self
+func (c *Client) Init(options *Options, rawServerURLs ...string) *Client {
+	c.options = options.Normalize()
+	c.channel.Init(c.options.Channel, false)
+	c.rawServerURLs = rawServerURLs
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+	c.shutdown = make(chan struct{})
+	go c.run()
+	return c
 }
 
-func (self *Client) Close() {
-	self.cancel()
+func (c *Client) Close() {
+	c.cancel()
 }
 
-func (self *Client) DoRPC(rpc *channel.RPC, responseFactory channel.MessageFactory) {
-	self.channel.DoRPC(rpc, responseFactory)
+func (c *Client) DoRPC(rpc *channel.RPC, responseFactory channel.MessageFactory) {
+	c.channel.DoRPC(rpc, responseFactory)
 }
 
-func (self *Client) PrepareRPC(rpc *channel.RPC, responseFactory channel.MessageFactory) {
-	self.channel.PrepareRPC(rpc, responseFactory)
+func (c *Client) PrepareRPC(rpc *channel.RPC, responseFactory channel.MessageFactory) {
+	c.channel.PrepareRPC(rpc, responseFactory)
 }
 
-func (self *Client) Abort(extraData channel.ExtraData) {
-	self.channel.Abort(extraData)
+func (c *Client) Abort(extraData channel.ExtraData) {
+	c.channel.Abort(extraData)
 }
 
-func (self *Client) Shutdown() <-chan struct{} {
-	return self.shutdown
+func (c *Client) Shutdown() <-chan struct{} {
+	return c.shutdown
 }
 
-func (self *Client) LastError() error {
-	value := self.lastError.Load()
+func (c *Client) LastError() error {
+	value := c.lastError.Load()
 
 	if value == nil {
 		return nil
@@ -64,22 +64,22 @@ func (self *Client) LastError() error {
 	return value.(error)
 }
 
-func (self *Client) run() (err error) {
+func (c *Client) run() (err error) {
 	defer func() {
-		self.options.Logger.Error().Err(err).
-			Strs("server_urls", self.rawServerURLs).
+		c.options.Logger.Error().Err(err).
+			Strs("server_urls", c.rawServerURLs).
 			Msg("client_closed")
-		self.channel.Close()
-		self.cancel()
-		self.lastError.Store(err)
-		close(self.shutdown)
+		c.channel.Close()
+		c.cancel()
+		c.lastError.Store(err)
+		close(c.shutdown)
 	}()
 
 	serverURLManager_ := serverURLManager{
-		Options: self.options,
+		Options: c.options,
 	}
 
-	err = serverURLManager_.LoadServerURLs(self.rawServerURLs)
+	err = serverURLManager_.LoadServerURLs(c.rawServerURLs)
 
 	if err != nil {
 		return
@@ -88,7 +88,7 @@ func (self *Client) run() (err error) {
 	connectRetryCount := -1
 
 	for {
-		err = self.ctx.Err()
+		err = c.ctx.Err()
 
 		if err != nil {
 			return
@@ -96,12 +96,12 @@ func (self *Client) run() (err error) {
 
 		connectRetryCount++
 
-		if connectRetryCount >= 1 && self.options.WithoutConnectRetry {
+		if connectRetryCount >= 1 && c.options.WithoutConnectRetry {
 			return
 		}
 
 		var serverURL *url.URL
-		serverURL, err = serverURLManager_.GetNextServerURL(self.ctx, connectRetryCount)
+		serverURL, err = serverURLManager_.GetNextServerURL(c.ctx, connectRetryCount)
 
 		if err != nil {
 			return
@@ -115,19 +115,19 @@ func (self *Client) run() (err error) {
 		}
 
 		var connection net.Conn
-		connection, err = connector(self.ctx, self.getConnectTimeout(), serverURL)
+		connection, err = connector(c.ctx, c.getConnectTimeout(), serverURL)
 
 		if err != nil {
-			self.options.Logger.Error().Err(err).
+			c.options.Logger.Error().Err(err).
 				Str("server_url", serverURL.String()).
 				Msg("client_connect_failed")
 			continue
 		}
 
-		err = self.channel.Run(self.ctx, serverURL, connection)
-		self.options.Logger.Error().Err(err).
+		err = c.channel.Run(c.ctx, serverURL, connection)
+		c.options.Logger.Error().Err(err).
 			Str("server_url", serverURL.String()).
-			Str("transport_id", self.channel.TransportID().String()).
+			Str("transport_id", c.channel.TransportID().String()).
 			Msg("client_channel_run_failed")
 
 		if _, ok := err.(*channel.NetworkError); ok {
@@ -138,14 +138,14 @@ func (self *Client) run() (err error) {
 			return
 		}
 
-		if self.options.CloseOnChannelError {
+		if c.options.CloseOnChannelError {
 			return
 		}
 	}
 }
 
-func (self *Client) getConnectTimeout() time.Duration {
-	if connectTimeout := self.options.ConnectTimeout; connectTimeout >= 1 {
+func (c *Client) getConnectTimeout() time.Duration {
+	if connectTimeout := c.options.ConnectTimeout; connectTimeout >= 1 {
 		return connectTimeout
 	}
 
@@ -165,12 +165,12 @@ type serverURLManager struct {
 	connectRetryBackoff time.Duration
 }
 
-func (self *serverURLManager) LoadServerURLs(rawServerURLs []string) error {
+func (sum *serverURLManager) LoadServerURLs(rawServerURLs []string) error {
 	for _, rawServerURL := range rawServerURLs {
 		serverURL, err := url.Parse(rawServerURL)
 
 		if err != nil {
-			self.Options.Logger.Warn().
+			sum.Options.Logger.Warn().
 				Err(err).
 				Str("server_url", rawServerURL).
 				Msg("client_invalid_server_url")
@@ -178,38 +178,38 @@ func (self *serverURLManager) LoadServerURLs(rawServerURLs []string) error {
 		}
 
 		if _, err := GetConnector(serverURL.Scheme); err != nil {
-			self.Options.Logger.Warn().
+			sum.Options.Logger.Warn().
 				Err(err).
 				Str("server_url", rawServerURL).
 				Msg("client_invalid_server_url")
 			continue
 		}
 
-		self.serverURLs = append(self.serverURLs, serverURL)
+		sum.serverURLs = append(sum.serverURLs, serverURL)
 	}
 
-	n := len(self.serverURLs)
+	n := len(sum.serverURLs)
 
 	if n == 0 {
 		return ErrNoValidServerURL
 	}
 
 	rand.Shuffle(n, func(i, j int) {
-		self.serverURLs[i], self.serverURLs[j] = self.serverURLs[j], self.serverURLs[i]
+		sum.serverURLs[i], sum.serverURLs[j] = sum.serverURLs[j], sum.serverURLs[i]
 	})
 
 	return nil
 }
 
-func (self *serverURLManager) GetNextServerURL(ctx context.Context, connectRetryCount int) (*url.URL, error) {
-	connectRetryOptions := &self.Options.ConnectRetry
+func (sum *serverURLManager) GetNextServerURL(ctx context.Context, connectRetryCount int) (*url.URL, error) {
+	connectRetryOptions := &sum.Options.ConnectRetry
 
 	if connectRetryOptions.MaxCount >= 1 && connectRetryCount > connectRetryOptions.MaxCount {
 		return nil, ErrTooManyConnectRetries
 	}
 
 	if !connectRetryOptions.WithoutBackoff && connectRetryCount >= 1 {
-		connectRetryBackoff := self.connectRetryBackoff
+		connectRetryBackoff := sum.connectRetryBackoff
 
 		if connectRetryCount == 1 {
 			connectRetryBackoff = connectRetryOptions.MinBackoff
@@ -221,7 +221,7 @@ func (self *serverURLManager) GetNextServerURL(ctx context.Context, connectRetry
 			}
 		}
 
-		self.connectRetryBackoff = connectRetryBackoff
+		sum.connectRetryBackoff = connectRetryBackoff
 
 		if !connectRetryOptions.WithoutBackoffJitter {
 			connectRetryBackoff = time.Duration(float64(connectRetryBackoff) * (0.5 + rand.Float64()))
@@ -238,7 +238,7 @@ func (self *serverURLManager) GetNextServerURL(ctx context.Context, connectRetry
 		}
 	}
 
-	serverURL := self.serverURLs[self.nextServerURLIndex]
-	self.nextServerURLIndex = (self.nextServerURLIndex + 1) % len(self.serverURLs)
+	serverURL := sum.serverURLs[sum.nextServerURLIndex]
+	sum.nextServerURLIndex = (sum.nextServerURLIndex + 1) % len(sum.serverURLs)
 	return serverURL, nil
 }
