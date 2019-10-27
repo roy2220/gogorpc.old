@@ -23,9 +23,8 @@ type Stream struct {
 	options                   *Options
 	transport                 transport.Transport
 	userData                  interface{}
-	deques                    [2]deque.Deque
 	dequeOfPendingRequests    *deque.Deque
-	dequeOfPendingResponses   *deque.Deque
+	dequeOfPendingResponses   deque.Deque
 	isHungUp_                 int32
 	pendingHangup             chan *Hangup
 	incomingKeepaliveInterval time.Duration
@@ -41,41 +40,21 @@ func (s *Stream) Init(
 	transportID uuid.UUID,
 	userData interface{},
 	dequeOfPendingRequests *deque.Deque,
-	dequeOfPendingResponses *deque.Deque,
 ) *Stream {
 	s.options = options.Normalize()
 	s.transport.Init(s.options.Transport, isServerSide, transportID)
 	s.userData = userData
-
-	if dequeOfPendingRequests == nil {
-		dequeOfPendingRequests = s.deques[0].Init(0)
-	}
-
-	if dequeOfPendingResponses == nil {
-		dequeOfPendingResponses = s.deques[1].Init(0)
-	}
-
 	s.dequeOfPendingRequests = dequeOfPendingRequests
-	s.dequeOfPendingResponses = dequeOfPendingResponses
+	s.dequeOfPendingResponses.Init(0)
 	s.pendingHangup = make(chan *Hangup, 1)
 	return s
 }
 
 func (s *Stream) Close() error {
 	err := s.transport.Close()
-
-	if s.dequeOfPendingRequests == &s.deques[0] {
-		listOfPendingRequests := new(intrusive.List).Init()
-		s.dequeOfPendingRequests.Close(listOfPendingRequests)
-		PutPooledPendingRequests(listOfPendingRequests)
-	}
-
-	if s.dequeOfPendingResponses == &s.deques[1] {
-		listOfPendingResponses := new(intrusive.List).Init()
-		s.dequeOfPendingResponses.Close(listOfPendingResponses)
-		PutPooledPendingResponses(listOfPendingResponses)
-	}
-
+	listOfPendingResponses := deque.NewList()
+	s.dequeOfPendingResponses.Close(listOfPendingResponses)
+	putPooledPendingResponses(listOfPendingResponses)
 	return err
 }
 
@@ -94,14 +73,12 @@ func (s *Stream) Process(
 	trafficCrypter transport.TrafficCrypter,
 	messageProcessor MessageProcessor,
 ) error {
-	s.transport.Prepare(trafficCrypter)
-
-	if err := s.prepare(); err != nil {
+	if err := s.prepare(trafficCrypter, messageProcessor); err != nil {
 		return err
 	}
 
-	errs := make(chan error, 2)
 	ctx, cancel := context.WithCancel(ctx)
+	errs := make(chan error, 2)
 
 	go func() {
 		err := s.sendEvents(ctx, messageProcessor, trafficCrypter)
@@ -131,13 +108,13 @@ func (s *Stream) Process(
 }
 
 func (s *Stream) SendRequest(ctx context.Context, requestHeader *proto.RequestHeader, request Message) error {
-	pendingRequest := pendingRequestPool.Get().(*PendingRequest)
-	pendingRequest.Header = *requestHeader
-	pendingRequest.Underlying = request
+	pendingRequest_ := pendingRequestPool.Get().(*pendingRequest)
+	pendingRequest_.Header = *requestHeader
+	pendingRequest_.Underlying = request
 
 	// dequeOfPendingRequests.length += 1
-	if err := s.dequeOfPendingRequests.AppendNode(ctx, &pendingRequest.ListNode); err != nil {
-		pendingRequestPool.Put(pendingRequest)
+	if err := s.dequeOfPendingRequests.AppendNode(ctx, &pendingRequest_.ListNode); err != nil {
+		pendingRequestPool.Put(pendingRequest_)
 
 		switch err {
 		case deque.ErrDequeClosed:
@@ -151,13 +128,14 @@ func (s *Stream) SendRequest(ctx context.Context, requestHeader *proto.RequestHe
 }
 
 func (s *Stream) SendResponse(responseHeader *proto.ResponseHeader, response Message) error {
-	pendingResponse := pendingResponsePool.Get().(*PendingResponse)
-	pendingResponse.Header = *responseHeader
-	pendingResponse.Underlying = response
+	pendingResponse_ := pendingResponsePool.Get().(*pendingResponse)
+	pendingResponse_.Header = *responseHeader
+	pendingResponse_.Underlying = response
 
 	// dequeOfPendingResponses.length += 1
-	if err := s.dequeOfPendingResponses.AppendNode(context.Background(), &pendingResponse.ListNode); err != nil {
-		pendingResponsePool.Put(pendingResponse)
+	// dequeOfPendingResponses.capacity += 1
+	if err := s.dequeOfPendingResponses.DiscardNodeRemoval(&pendingResponse_.ListNode, false); err != nil {
+		pendingResponsePool.Put(pendingResponse_)
 
 		switch err {
 		case deque.ErrDequeClosed:
@@ -186,30 +164,61 @@ func (s *Stream) UserData() interface{} {
 	return s.userData
 }
 
-func (s *Stream) prepare() error {
-	{
-		n := s.outgoingConcurrencyLimit - s.dequeOfPendingRequests.MaxLength()
+func (s *Stream) prepare(trafficDecrypter transport.TrafficDecrypter, messageEmitter MessageEmitter) error {
+	s.transport.Prepare(trafficDecrypter)
 
-		if n < 0 {
-			return ErrConcurrencyOverflow
+	switch n := s.outgoingConcurrencyLimit - s.dequeOfPendingRequests.Capacity(); {
+	case n < 0:
+		listOfPendingRequests := deque.NewList()
+		// dequeOfPendingRequests.capacity += n
+		s.dequeOfPendingRequests.Shrink(-n, false, listOfPendingRequests)
+		getListNode := listOfPendingRequests.Underlying.GetNodesSafely()
+
+		event := Event{
+			stream:    s,
+			direction: EventOutgoing,
+			type_:     EventRequest,
 		}
 
-		// dequeOfPendingRequests.maxLength += n
+		err := error(nil)
+
+		for listNode := getListNode(); listNode != nil; listNode = getListNode() {
+			pendingRequest_ := (*pendingRequest)(listNode.GetContainer(unsafe.Offsetof(pendingRequest{}.ListNode)))
+			event.RequestHeader = pendingRequest_.Header
+			event.Message = pendingRequest_.Underlying
+			event.Err = ErrTooManyOutgoingRequests
+			messageEmitter.PostEmitRequest(&event)
+
+			if event.Err != ErrEventDropped {
+				if err == nil {
+					err = event.Err
+				} else {
+					s.options.Logger.Error().Err(event.Err).
+						Str("transport_id", s.TransportID().String()).
+						Msg("stream_system_error")
+				}
+
+				continue
+			}
+
+			listNode.Remove()
+			listOfPendingRequests.Length--
+			listNode.Reset()
+			pendingRequestPool.Put(pendingRequest_)
+		}
+
+		if err != nil {
+			s.dequeOfPendingRequests.DiscardNodesRemoval(listOfPendingRequests, false)
+		}
+
+		return err
+	case n == 0:
+		return nil
+	default: // n > 0
+		// dequeOfPendingRequests.capacity += n
 		s.dequeOfPendingRequests.CommitNodesRemoval(n)
+		return nil
 	}
-
-	{
-		n := s.incomingConcurrencyLimit - s.dequeOfPendingResponses.MaxLength()
-
-		if n < 0 {
-			return ErrConcurrencyOverflow
-		}
-
-		// dequeOfPendingResponses.maxLength += n
-		s.dequeOfPendingResponses.CommitNodesRemoval(n) // dequeOfPendingResponses.maxLength += n
-	}
-
-	return nil
 }
 
 func (s *Stream) receiveEvents(
@@ -271,7 +280,7 @@ func (s *Stream) receiveEvents(
 		}
 
 		atomic.AddInt32(&s.incomingConcurrency, int32(newIncomingConcurrency-oldIncomingConcurrency))
-		// dequeOfPendingRequests.maxLength += handledResponseCount
+		// dequeOfPendingRequests.capacity += handledResponseCount
 		s.dequeOfPendingRequests.CommitNodesRemoval(handledResponseCount)
 	}
 }
@@ -496,7 +505,7 @@ func (s *Stream) sendEvents(
 	}
 
 	for {
-		pendingRequests2, pendingResponses2, pendingHangup, err := s.checkPendingMessages(
+		listOfPendingRequests, listOfPendingResponses, pendingHangup, err := s.checkPendingMessages(
 			errs,
 			pendingRequests,
 			pendingResponses,
@@ -509,19 +518,19 @@ func (s *Stream) sendEvents(
 			return err
 		}
 
-		err = s.emitEvents(pendingRequests2, pendingResponses2, pendingHangup, &event, messageEmitter)
+		err = s.emitEvents(listOfPendingRequests, listOfPendingResponses, pendingHangup, &event, messageEmitter)
 
 		if err != nil {
-			if pendingRequests2 != nil {
-				// dequeOfPendingRequests.length += pendingRequests2.ListLength
-				// dequeOfPendingRequests.maxLength += pendingRequests2.ListLength
-				s.dequeOfPendingRequests.DiscardNodesRemoval(&pendingRequests2.List, pendingRequests2.ListLength, false)
+			if listOfPendingRequests != nil {
+				// dequeOfPendingRequests.length += listOfPendingRequests.Length
+				// dequeOfPendingRequests.capacity += listOfPendingRequests.Length
+				s.dequeOfPendingRequests.DiscardNodesRemoval(listOfPendingRequests, true)
 			}
 
-			if pendingResponses2 != nil {
-				// dequeOfPendingResponses.length += pendingResponses2.ListLength
-				// dequeOfPendingResponses.maxLength += pendingResponses2.ListLength
-				s.dequeOfPendingResponses.DiscardNodesRemoval(&pendingResponses2.List, pendingResponses2.ListLength, false)
+			if listOfPendingResponses != nil {
+				// dequeOfPendingResponses.length += listOfPendingResponses.Length
+				// dequeOfPendingResponses.capacity += listOfPendingResponses.Length
+				s.dequeOfPendingResponses.DiscardNodesRemoval(listOfPendingResponses, true)
 			}
 		}
 
@@ -538,8 +547,8 @@ func (s *Stream) sendEvents(
 	}
 }
 
-func (s *Stream) makePendingRequests(ctx context.Context, cancel context.CancelFunc, errs chan error) chan *pendingMessages {
-	pendingRequests := make(chan *pendingMessages)
+func (s *Stream) makePendingRequests(ctx context.Context, cancel context.CancelFunc, errs chan error) chan *deque.List {
+	pendingRequests := make(chan *deque.List)
 
 	go func() {
 		errs <- s.putPendingRequests(ctx, pendingRequests)
@@ -549,16 +558,14 @@ func (s *Stream) makePendingRequests(ctx context.Context, cancel context.CancelF
 	return pendingRequests
 }
 
-func (s *Stream) putPendingRequests(ctx context.Context, pendingRequests chan *pendingMessages) error {
-	pendingRequestsA := new(pendingMessages)
-	pendingRequestsB := new(pendingMessages)
+func (s *Stream) putPendingRequests(ctx context.Context, pendingRequests chan *deque.List) error {
+	var lists [2]deque.List
 
-	for {
-		pendingRequestsA.List.Init()
-		var err error
-		// dequeOfPendingRequests.length -= pendingRequestsA.ListLength
-		// dequeOfPendingRequests.maxLength -= pendingRequestsA.ListLength
-		pendingRequestsA.ListLength, err = s.dequeOfPendingRequests.RemoveNodes(ctx, true, &pendingRequestsA.List)
+	for i := 0; ; i ^= 1 {
+		listOfPendingRequests := lists[i].Reset()
+		// dequeOfPendingRequests.length -= listOfPendingRequests.Length
+		// dequeOfPendingRequests.capacity -= listOfPendingRequests.Length
+		err := s.dequeOfPendingRequests.RemoveNodes(ctx, true, listOfPendingRequests)
 
 		if err != nil {
 			return err
@@ -566,18 +573,17 @@ func (s *Stream) putPendingRequests(ctx context.Context, pendingRequests chan *p
 
 		select {
 		case <-ctx.Done():
-			// dequeOfPendingRequests.length += pendingRequestsA.ListLength
-			// dequeOfPendingRequests.maxLength += pendingRequestsA.ListLength
-			s.dequeOfPendingRequests.DiscardNodesRemoval(&pendingRequestsA.List, pendingRequestsA.ListLength, false)
+			// dequeOfPendingRequests.length += listOfPendingRequests.Length
+			// dequeOfPendingRequests.capacity += listOfPendingRequests.Length
+			s.dequeOfPendingRequests.DiscardNodesRemoval(listOfPendingRequests, true)
 			return ctx.Err()
-		case pendingRequests <- pendingRequestsA:
-			pendingRequestsA, pendingRequestsB = pendingRequestsB, pendingRequestsA
+		case pendingRequests <- listOfPendingRequests:
 		}
 	}
 }
 
-func (s *Stream) makePendingResponses(ctx context.Context, cancel context.CancelFunc, errs chan error) chan *pendingMessages {
-	pendingResponses := make(chan *pendingMessages)
+func (s *Stream) makePendingResponses(ctx context.Context, cancel context.CancelFunc, errs chan error) chan *deque.List {
+	pendingResponses := make(chan *deque.List)
 
 	go func() {
 		errs <- s.putPendingResponses(ctx, pendingResponses)
@@ -587,16 +593,14 @@ func (s *Stream) makePendingResponses(ctx context.Context, cancel context.Cancel
 	return pendingResponses
 }
 
-func (s *Stream) putPendingResponses(ctx context.Context, pendingResponses chan *pendingMessages) error {
-	pendingResponsesA := new(pendingMessages)
-	pendingResponsesB := new(pendingMessages)
+func (s *Stream) putPendingResponses(ctx context.Context, pendingResponses chan *deque.List) error {
+	var lists [2]deque.List
 
-	for {
-		pendingResponsesA.List.Init()
-		var err error
-		// dequeOfPendingResponses.length -= pendingResponsesA.ListLength
-		// dequeOfPendingResponses.maxLength -= pendingResponsesA.ListLength
-		pendingResponsesA.ListLength, err = s.dequeOfPendingResponses.RemoveNodes(ctx, true, &pendingResponsesA.List)
+	for i := 0; ; i ^= 1 {
+		listOfPendingResponses := lists[i].Reset()
+		// dequeOfPendingResponses.length -= pendingResponses.Length
+		// dequeOfPendingResponses.capacity -= pendingResponses.Length
+		err := s.dequeOfPendingResponses.RemoveNodes(ctx, true, listOfPendingResponses)
 
 		if err != nil {
 			return err
@@ -604,35 +608,34 @@ func (s *Stream) putPendingResponses(ctx context.Context, pendingResponses chan 
 
 		select {
 		case <-ctx.Done():
-			// dequeOfPendingResponses.length += pendingResponsesA.ListLength
-			// dequeOfPendingResponses.maxLength += pendingResponsesA.ListLength
-			s.dequeOfPendingResponses.DiscardNodesRemoval(&pendingResponsesA.List, pendingResponsesA.ListLength, false)
+			// dequeOfPendingResponses.length += pendingResponses.Length
+			// dequeOfPendingResponses.capacity += pendingResponses.Length
+			s.dequeOfPendingResponses.DiscardNodesRemoval(listOfPendingResponses, true)
 			return ctx.Err()
-		case pendingResponses <- pendingResponsesA:
-			pendingResponsesA, pendingResponsesB = pendingResponsesB, pendingResponsesA
+		case pendingResponses <- listOfPendingResponses:
 		}
 	}
 }
 
 func (s *Stream) checkPendingMessages(
 	errs chan error,
-	pendingRequests chan *pendingMessages,
-	pendingResponses chan *pendingMessages,
+	pendingRequests chan *deque.List,
+	pendingResponses chan *deque.List,
 	timeout time.Duration,
-) (*pendingMessages, *pendingMessages, *Hangup, error) {
-	var pendingRequests2 *pendingMessages
-	var pendingResponses2 *pendingMessages
+) (*deque.List, *deque.List, *Hangup, error) {
+	var listOfPendingRequests *deque.List
+	var listOfPendingResponses *deque.List
 	var pendingHangup *Hangup
 	n := 0
 
 	select {
-	case pendingRequests2 = <-pendingRequests:
+	case listOfPendingRequests = <-pendingRequests:
 		n++
 	default:
 	}
 
 	select {
-	case pendingResponses2 = <-pendingResponses:
+	case listOfPendingResponses = <-pendingResponses:
 		n++
 	default:
 	}
@@ -650,9 +653,9 @@ func (s *Stream) checkPendingMessages(
 		case err := <-errs:
 			timerpool.StopAndPutTimer(timer)
 			return nil, nil, nil, err
-		case pendingRequests2 = <-pendingRequests:
+		case listOfPendingRequests = <-pendingRequests:
 			timerpool.StopAndPutTimer(timer)
-		case pendingResponses2 = <-pendingResponses:
+		case listOfPendingResponses = <-pendingResponses:
 			timerpool.StopAndPutTimer(timer)
 		case pendingHangup = <-s.pendingHangup:
 			timerpool.StopAndPutTimer(timer)
@@ -661,12 +664,12 @@ func (s *Stream) checkPendingMessages(
 		}
 	}
 
-	return pendingRequests2, pendingResponses2, pendingHangup, nil
+	return listOfPendingRequests, listOfPendingResponses, pendingHangup, nil
 }
 
 func (s *Stream) emitEvents(
-	pendingRequests *pendingMessages,
-	pendingResponses *pendingMessages,
+	listOfPendingRequests *deque.List,
+	listOfPendingResponses *deque.List,
 	pendingHangup *Hangup,
 	event *Event,
 	messageEmitter MessageEmitter,
@@ -674,91 +677,94 @@ func (s *Stream) emitEvents(
 	err := error(nil)
 	emittedEventCount := 0
 
-	if pendingRequests != nil {
+	if listOfPendingRequests != nil {
+		getListNode := listOfPendingRequests.Underlying.GetNodesSafely()
+		event.type_ = EventRequest
 		now := time.Now().UnixNano()
-		getListNode := pendingRequests.List.GetNodesSafely()
-		emittedRequestCount := 0
 		droppedRequestCount := 0
 
 		for listNode := getListNode(); listNode != nil; listNode = getListNode() {
-			pendingRequest := (*PendingRequest)(listNode.GetContainer(unsafe.Offsetof(PendingRequest{}.ListNode)))
-			event.type_ = EventRequest
-			event.RequestHeader = pendingRequest.Header
-			event.Message = pendingRequest.Underlying
+			pendingRequest_ := (*pendingRequest)(listNode.GetContainer(unsafe.Offsetof(pendingRequest{}.ListNode)))
+			event.RequestHeader = pendingRequest_.Header
+			event.Message = pendingRequest_.Underlying
 			var ok bool
+			var err2 error
 
-			if deadline := pendingRequest.Header.Deadline; deadline != 0 && deadline <= now {
+			if deadline := pendingRequest_.Header.Deadline; deadline != 0 && deadline <= now {
 				event.Err = ErrRequestExpired
 				messageEmitter.PostEmitRequest(event)
-				ok, err = event.Err == nil, event.Err
+				ok, err2 = false, event.Err
 
-				if err == ErrEventDropped {
-					err = nil
+				if err2 == ErrEventDropped {
+					err2 = nil
 				}
 			} else {
-				ok, err = s.write(event, messageEmitter)
+				ok, err2 = s.write(event, messageEmitter)
 			}
 
-			if err != nil {
-				s.options.Logger.Error().Err(err).
-					Str("transport_id", s.TransportID().String()).
-					Msg("stream_system_error")
+			if err2 != nil {
+				if err == nil {
+					err = err2
+				} else {
+					s.options.Logger.Error().Err(err2).
+						Str("transport_id", s.TransportID().String()).
+						Msg("stream_system_error")
+				}
+
 				continue
 			}
 
 			listNode.Remove()
+			listOfPendingRequests.Length--
 			listNode.Reset()
-			pendingRequestPool.Put(pendingRequest)
-			pendingRequests.ListLength--
+			pendingRequestPool.Put(pendingRequest_)
 
 			if ok {
-				emittedRequestCount++
+				emittedEventCount++
 			} else {
 				droppedRequestCount++
 			}
 		}
 
-		// dequeOfPendingRequests.maxLength += droppedRequestCount
+		// dequeOfPendingRequests.capacity += droppedRequestCount
 		s.dequeOfPendingRequests.CommitNodesRemoval(droppedRequestCount)
-		emittedEventCount += emittedRequestCount
 	}
 
-	if pendingResponses != nil {
-		getListNode := pendingResponses.List.GetNodesSafely()
+	if listOfPendingResponses != nil {
+		getListNode := listOfPendingResponses.Underlying.GetNodesSafely()
+		event.type_ = EventResponse
 		emittedResponseCount := 0
-		droppedResponseCount := 0
 
 		for listNode := getListNode(); listNode != nil; listNode = getListNode() {
-			pendingResponse := (*PendingResponse)(listNode.GetContainer(unsafe.Offsetof(PendingResponse{}.ListNode)))
-			event.type_ = EventResponse
-			event.ResponseHeader = pendingResponse.Header
-			event.Message = pendingResponse.Underlying
-			var ok bool
-			ok, err = s.write(event, messageEmitter)
+			pendingResponse_ := (*pendingResponse)(listNode.GetContainer(unsafe.Offsetof(pendingResponse{}.ListNode)))
+			event.ResponseHeader = pendingResponse_.Header
+			event.Message = pendingResponse_.Underlying
+			ok, err2 := s.write(event, messageEmitter)
 
-			if err != nil {
-				s.options.Logger.Error().Err(err).
-					Str("transport_id", s.TransportID().String()).
-					Msg("stream_system_error")
+			if err2 != nil {
+				if err == nil {
+					err = err2
+				} else {
+					s.options.Logger.Error().Err(err2).
+						Str("transport_id", s.TransportID().String()).
+						Msg("stream_system_error")
+				}
+
 				continue
 			}
 
 			listNode.Remove()
+			listOfPendingResponses.Length--
 			listNode.Reset()
-			pendingResponsePool.Put(pendingResponse)
-			pendingResponses.ListLength--
+			pendingResponsePool.Put(pendingResponse_)
 
 			if ok {
+				emittedEventCount++
 				emittedResponseCount++
-			} else {
-				droppedResponseCount++
 			}
 		}
 
-		// dequeOfPendingResponses.maxLength += emittedResponseCount + droppedResponseCount
-		s.dequeOfPendingResponses.CommitNodesRemoval(emittedResponseCount + droppedResponseCount)
 		atomic.AddInt32(&s.incomingConcurrency, -int32(emittedResponseCount))
-		emittedEventCount += emittedResponseCount
 	}
 
 	if pendingHangup != nil {
@@ -768,9 +774,8 @@ func (s *Stream) emitEvents(
 		event.type_ = EventHangup
 		event.Hangup.Code = pendingHangup.Code
 		event.Hangup.ExtraData = pendingHangup.ExtraData
-		_, err = s.write(event, messageEmitter)
 
-		if err != nil {
+		if _, err := s.write(event, messageEmitter); err != nil {
 			return err
 		}
 
@@ -786,6 +791,9 @@ func (s *Stream) emitEvents(
 		if err == transport.ErrPacketTooLarge {
 			s.hangUp(HangupOutgoingPacketTooLarge, nil)
 		} else {
+			s.options.Logger.Error().Err(err).
+				Str("transport_id", s.TransportID().String()).
+				Msg("stream_system_error")
 			s.hangUp(HangupSystem, nil)
 		}
 	}
@@ -904,54 +912,49 @@ func (s *Stream) isHungUp() bool {
 	return atomic.LoadInt32(&s.isHungUp_) == 1
 }
 
-type PendingRequest struct {
+var (
+	ErrClosed                  = errors.New("gogorpc/stream: closed")
+	ErrTooManyOutgoingRequests = errors.New("gogorpc/stream: too many outgoing requests")
+	ErrRequestExpired          = errors.New("gogorpc/stream: request expired")
+)
+
+func PutPooledPendingRequests(listOfPendingRequests *deque.List) {
+	getListNode := listOfPendingRequests.Underlying.GetNodesSafely()
+
+	for listNode := getListNode(); listNode != nil; listNode = getListNode() {
+		listNode.Remove()
+		listNode.Reset()
+		pendingRequest_ := (*pendingRequest)(listNode.GetContainer(unsafe.Offsetof(pendingRequest{}.ListNode)))
+		pendingRequestPool.Put(pendingRequest_)
+	}
+}
+
+type pendingRequest struct {
 	ListNode   intrusive.ListNode
 	Header     proto.RequestHeader
 	Underlying Message
 }
 
-type PendingResponse struct {
+type pendingResponse struct {
 	ListNode   intrusive.ListNode
 	Header     proto.ResponseHeader
 	Underlying Message
 }
 
-var (
-	ErrConcurrencyOverflow = errors.New("gogorpc/stream: concurrency overflow")
-	ErrClosed              = errors.New("gogorpc/stream: closed")
-	ErrRequestExpired      = errors.New("gogorpc/stream: request expired")
-)
-
-func PutPooledPendingRequests(listOfPendingRequests *intrusive.List) {
-	getListNode := listOfPendingRequests.GetNodesSafely()
-
-	for listNode := getListNode(); listNode != nil; listNode = getListNode() {
-		pendingRequest := (*PendingRequest)(listNode.GetContainer(unsafe.Offsetof(PendingRequest{}.ListNode)))
-		listNode.Remove()
-		listNode.Reset()
-		pendingRequestPool.Put(pendingRequest)
-	}
-}
-
-func PutPooledPendingResponses(listOfPendingResponses *intrusive.List) {
-	getListNode := listOfPendingResponses.GetNodesSafely()
-
-	for listNode := getListNode(); listNode != nil; listNode = getListNode() {
-		pendingResponse := (*PendingResponse)(listNode.GetContainer(unsafe.Offsetof(PendingResponse{}.ListNode)))
-		listNode.Remove()
-		listNode.Reset()
-		pendingResponsePool.Put(pendingResponse)
-	}
-}
-
-type pendingMessages struct {
-	List       intrusive.List
-	ListLength int
-}
-
 var errBadEvent = errors.New("gogorpc/stream: bad event")
 
 var (
-	pendingRequestPool  = sync.Pool{New: func() interface{} { return new(PendingRequest) }}
-	pendingResponsePool = sync.Pool{New: func() interface{} { return new(PendingResponse) }}
+	pendingRequestPool  = sync.Pool{New: func() interface{} { return new(pendingRequest) }}
+	pendingResponsePool = sync.Pool{New: func() interface{} { return new(pendingResponse) }}
 )
+
+func putPooledPendingResponses(listOfPendingResponses *deque.List) {
+	getListNode := listOfPendingResponses.Underlying.GetNodesSafely()
+
+	for listNode := getListNode(); listNode != nil; listNode = getListNode() {
+		listNode.Remove()
+		listNode.Reset()
+		pendingResponse_ := (*pendingResponse)(listNode.GetContainer(unsafe.Offsetof(pendingResponse{}.ListNode)))
+		pendingResponsePool.Put(pendingResponse_)
+	}
+}

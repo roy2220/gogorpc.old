@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/let-z-go/toolkit/deque"
 	"github.com/let-z-go/toolkit/uuid"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -78,7 +79,7 @@ func TestHandshake1(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{Logger: &logger}}, false, uuid.UUID{}, nil, nil, nil)
+			st := new(Stream).Init(&Options{Transport: &transport.Options{Logger: &logger}}, false, uuid.UUID{}, nil, new(deque.Deque).Init(0))
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbEmitHandshake: func() (Message, error) {
@@ -102,7 +103,7 @@ func TestHandshake1(t *testing.T) {
 			assert.True(t, ok)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{Logger: &logger}}, true, uuid.UUID{}, nil, nil, nil)
+			st := new(Stream).Init(&Options{Transport: &transport.Options{Logger: &logger}}, true, uuid.UUID{}, nil, new(deque.Deque).Init(0))
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbNewHandshake: func() Message {
@@ -132,7 +133,7 @@ func TestHandshake2(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, false, uuid.UUID{}, nil, nil, nil)
+			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, false, uuid.UUID{}, nil, new(deque.Deque).Init(0))
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.Regexp(t, "i/o timeout", err) {
@@ -141,7 +142,7 @@ func TestHandshake2(t *testing.T) {
 			assert.False(t, ok)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, true, uuid.UUID{}, nil, nil, nil)
+			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, true, uuid.UUID{}, nil, new(deque.Deque).Init(0))
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, h Message) (bool, error) {
@@ -162,7 +163,7 @@ func TestHandshake3(t *testing.T) {
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, false, uuid.UUID{}, nil, nil, nil)
+			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, false, uuid.UUID{}, nil, new(deque.Deque).Init(0))
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{
 				CbHandleHandshake: func(ctx context.Context, h Message) (bool, error) {
@@ -177,7 +178,7 @@ func TestHandshake3(t *testing.T) {
 			assert.False(t, ok)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, true, uuid.UUID{}, nil, nil, nil)
+			st := new(Stream).Init(&Options{Transport: &transport.Options{HandshakeTimeout: -1}}, true, uuid.UUID{}, nil, new(deque.Deque).Init(0))
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
@@ -606,7 +607,7 @@ func testSetup2(
 	testSetup(
 		t,
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(opts1, false, uuid.UUID{}, nil, nil, nil)
+			st := new(Stream).Init(opts1, false, uuid.UUID{}, nil, new(deque.Deque).Init(0))
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {
@@ -627,7 +628,7 @@ func testSetup2(
 			cb1(ctx, st)
 		},
 		func(ctx context.Context, conn net.Conn) {
-			st := new(Stream).Init(opts2, true, uuid.UUID{}, nil, nil, nil)
+			st := new(Stream).Init(opts2, true, uuid.UUID{}, nil, new(deque.Deque).Init(0))
 			defer st.Close()
 			ok, err := st.Establish(ctx, conn, testHandshaker{}.Init())
 			if !assert.NoError(t, err) {

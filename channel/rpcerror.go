@@ -44,6 +44,10 @@ func (re *RPCError) Describe(desc string) *RPCError {
 
 type RPCErrorType = proto.RPCErrorType
 
+func NewRPCError(rpcErrorType RPCErrorType, rpcErrorName string) *RPCError {
+	return &RPCError{rpcErrorType, rpcErrorName, ""}
+}
+
 var (
 	RPCErrBadRequest      = NewRPCError(RPCErrorBadRequest, "BadRequest")
 	RPCErrUnauthorized    = NewRPCError(RPCErrorUnauthorized, "Unauthorized")
@@ -57,7 +61,3 @@ var (
 	RPCErrServiceUnavailable = NewRPCError(RPCErrorServiceUnavailable, "ServiceUnavailable")
 	RPCErrGatewayTimeout     = NewRPCError(RPCErrorGatewayTimeout, "GatewayTimeout")
 )
-
-func NewRPCError(rpcErrorType RPCErrorType, rpcErrorName string) *RPCError {
-	return &RPCError{rpcErrorType, rpcErrorName, ""}
-}

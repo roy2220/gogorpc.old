@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/let-z-go/intrusive"
 	"github.com/let-z-go/toolkit/deque"
 	"github.com/let-z-go/toolkit/uuid"
 
@@ -40,7 +39,6 @@ func (c *Channel) Init(options *Options, isServerSide bool) *Channel {
 		uuid.UUID{},
 		c.extension.NewUserData(),
 		&c.dequeOfPendingRequests,
-		nil,
 	))
 
 	c.state_ = int32(initial)
@@ -128,7 +126,17 @@ func (c *Channel) PrepareRPC(rpc *RPC, responseFactory MessageFactory) {
 		}
 
 		rpcHandler = func(rpc *RPC) {
-			handleOutgoingRPC(rpc, rpcHasParent, rpcParent, responseFactory)
+			handleOutgoingRPC(rpc, responseFactory)
+
+			if rpcHasParent {
+				for key, value := range rpc.ResponseExtraData.Value() {
+					if !(len(key) >= 1 && key[0] == '_') {
+						continue
+					}
+
+					rpcParent.ResponseExtraData.Set(key, value)
+				}
+			}
 		}
 	}
 
@@ -201,7 +209,6 @@ ValidStateTransition:
 			oldStream.TransportID(),
 			c.extension.NewUserData(),
 			&c.dequeOfPendingRequests,
-			nil,
 		)
 
 		if value := c.pendingAbort.Load(); value != nil {
@@ -225,7 +232,7 @@ ValidStateTransition:
 		}
 	case closed:
 		c.stream().Close()
-		listOfPendingRequests := new(intrusive.List).Init()
+		listOfPendingRequests := deque.NewList()
 		c.dequeOfPendingRequests.Close(listOfPendingRequests)
 		stream.PutPooledPendingRequests(listOfPendingRequests)
 
@@ -294,7 +301,7 @@ func (s state) GoString() string {
 	}
 }
 
-func handleOutgoingRPC(rpc *RPC, rpcHasParent bool, rpcParent *RPC, responseFactory MessageFactory) {
+func handleOutgoingRPC(rpc *RPC, responseFactory MessageFactory) {
 	channel := rpc.internals.Channel
 	inflightRPC_ := getPooledInflightRPC(responseFactory)
 	channel.inflightRPCs.Store(rpc.internals.SequenceNumber, inflightRPC_)
@@ -337,14 +344,4 @@ func handleOutgoingRPC(rpc *RPC, rpcHasParent bool, rpcParent *RPC, responseFact
 	rpc.Response = inflightRPC_.Response
 	rpc.Err = inflightRPC_.Err
 	putPooledInflightRPC(inflightRPC_)
-
-	if rpcHasParent {
-		for key, value := range rpc.ResponseExtraData.Value() {
-			if !(len(key) >= 1 && key[0] == '_') {
-				continue
-			}
-
-			rpcParent.ResponseExtraData.Set(key, value)
-		}
-	}
 }
